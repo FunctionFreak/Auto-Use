@@ -14,6 +14,8 @@
 #
 # If you build on this project, please keep this header and credit
 # Autouse AI (https://github.com/auto-use/Auto-Use) in forks and derivative works.
+# A small attribution goes a long way toward a healthy open-source
+# community — thank you for contributing.
 
 """Banner — both the StatusBanner wrapper used by callers AND the
 subprocess that hosts the pywebview pill.
