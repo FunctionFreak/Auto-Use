@@ -16,6 +16,22 @@
 
 ---
 
+<div align="center">
+
+  ## ⭐ Star History
+
+  <a href="https://star-history.com/#auto-use/Auto-Use&Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=auto-use/Auto-Use&type=Date&theme=dark" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=auto-use/Auto-Use&type=Date" />
+      <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=auto-use/Auto-Use&type=Date" width="720" />
+    </picture>
+  </a>
+
+</div>
+
+---
+
 ## ✨ Features
 
 - **GUI automation via hybrid Accessibility + Vision** — Quartz screen capture annotated with the macOS Accessibility tree, then handed to a multimodal LLM. Not pure pixel-guessing, not pure DOM-walking — both at once.
