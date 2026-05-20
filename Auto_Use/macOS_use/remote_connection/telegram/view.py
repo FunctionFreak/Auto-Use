@@ -17,17 +17,18 @@
 # A small attribution goes a long way toward a healthy open-source
 # community — thank you for contributing.
 
-"""Flask Blueprint for the Windows Telegram surface.
+"""Flask Blueprint for the macOS Telegram surface.
 
-Mirror of the macOS view.py, adapted so app.py's single
-`from ...view import telegram_bp, start_bot` works on Windows. Routes:
+Lives in the telegram folder so all Telegram-related code stays here — app.py
+just imports `telegram_bp` and calls `app.register_blueprint(...)`. Routes:
 
   GET  /api/telegram/status       → {connected, bot_username?}
-  POST /api/telegram/connect      → kicks off the guided walkthrough (Edge)
+  POST /api/telegram/connect      → kicks off the Phase 4 guided walkthrough
   POST /api/telegram/disconnect   → clears the persisted token
 
-All token lookups read ONLY from api_key.txt. .env is intentionally not
-consulted — the bot treats api_key.txt as its single source of truth.
+All token lookups read ONLY from api_key.txt. We deliberately do NOT consult
+.env — that file is app.py's general env-loading concern; the Telegram bot
+treats api_key.txt as its single source of truth.
 """
 import json
 import logging
@@ -36,16 +37,15 @@ import urllib.request
 
 from flask import Blueprint, jsonify
 
-# Re-export start_bot so app.py's
-#   from Auto_Use.windows_use.remote_connection.telegram.view import telegram_bp, start_bot
-# works from a single import line, matching app.py:921.
-# _API_KEY_FILE comes from service.py too, which resolves it in a compiled-
-# build-aware way (next to the executable when frozen) — one source of truth.
-from .service import start_bot, _API_KEY_FILE  # noqa: F401
-
 logger = logging.getLogger(__name__)
 
-telegram_bp = Blueprint("telegram_windows", __name__)
+telegram_bp = Blueprint("telegram_macos", __name__)
+
+# Single source of truth for the key-file path — service.py resolves it in a
+# compiled-build-aware way (next to the executable when frozen). Importing it
+# here keeps the picker/status/disconnect routes pointed at the same file the
+# bot and the regular agent read.
+from .service import _API_KEY_FILE
 
 _bot_username_cache: str | None = None
 
@@ -132,11 +132,11 @@ def telegram_status():
 
 @telegram_bp.route("/api/telegram/connect", methods=["POST"])
 def telegram_connect():
-    """Kick off the guided walkthrough (Edge → web.telegram.org → user logs
-    in manually, paced by the floating banner). Returns immediately; the real
-    work runs on a daemon thread since it blocks on user clicks."""
+    """Kick off the Phase 4 guided walkthrough (Safari → web.telegram.org →
+    user logs in manually, paced by the floating banner). Returns immediately;
+    the real work runs on a daemon thread since it blocks on user clicks."""
     try:
-        from Auto_Use.windows_use.remote_connection.telegram.setup import (
+        from Auto_Use.macOS_use.remote_connection.telegram.setup import (
             run as run_telegram_setup,
         )
         threading.Thread(target=run_telegram_setup, daemon=True).start()

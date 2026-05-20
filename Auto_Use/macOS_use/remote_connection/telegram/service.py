@@ -35,7 +35,7 @@ Setup:
   1. @BotFather → /newbot → copy token.
   2. Paste it into .env OR api_key.txt as TELEGRAM_BOT_TOKEN=…
   3. Make sure at least one provider key (e.g. OPENROUTER_API_KEY=…) is set.
-  4. python -m Auto_Use.windows_use.remote_connection.telegram.service
+  4. python -m Auto_Use.macOS_use.remote_connection.telegram.service
   5. On phone: open Telegram, find your bot, send any message.
 """
 import asyncio
@@ -71,7 +71,7 @@ _IS_COMPILED = getattr(sys, "frozen", False) or "__compiled__" in globals()
 if _IS_COMPILED:
     _API_KEY_FILE = Path(sys.executable).parent / "Auto_Use" / "api_key" / "api_key.txt"
 else:
-    # service.py → telegram → remote_connection → windows_use → Auto_Use → repo root
+    # service.py → telegram → remote_connection → macOS_use → Auto_Use → repo root
     _API_KEY_FILE = (
         Path(__file__).resolve().parents[4] / "Auto_Use" / "api_key" / "api_key.txt"
     )
@@ -85,8 +85,8 @@ SCRATCHPAD_PATH = (
 SCRATCHPAD_POLL_SEC = 2.0
 MAX_TG_MSG_LEN = 4000  # Telegram caps at 4096; leave headroom for safety
 
-# Provider id → API-key name in the KV files. Same mapping the macOS side
-# uses ([macOS_use/remote_connection/telegram/service.py:78-85]).
+# Provider id → API-key name in the KV files. Same mapping the Windows side
+# uses ([windows_use/remote_connection/telegram/service.py:44-51]).
 PROVIDER_KEY_MAP = {
     "openrouter": "OPENROUTER_API_KEY",
     "groq":       "GROQ_API_KEY",
@@ -186,11 +186,11 @@ def _save_owner_chat_id(chat_id: int) -> None:
 
 
 def _get_models_for_provider(provider_id: str) -> list:
-    """Read MODEL_MAPPINGS from Auto_Use/windows_use/llm_provider/<id>/view.py
+    """Read MODEL_MAPPINGS from Auto_Use/macOS_use/llm_provider/<id>/view.py
     and return non-hidden entries as [{id, display_name}, …]."""
     try:
         mod = importlib.import_module(
-            f"Auto_Use.windows_use.llm_provider.{provider_id}.view"
+            f"Auto_Use.macOS_use.llm_provider.{provider_id}.view"
         )
         mappings = getattr(mod, "MODEL_MAPPINGS", {})
         return [
@@ -371,8 +371,8 @@ async def _post_init(application) -> None:
 
 async def start_cmd(update, ctx):
     chat_id = update.effective_chat.id
-    # Remember this chat so future boots can auto-greet (startup announcement).
-    # Best-effort — never let a file-write failure block /start.
+    # Remember this chat so future boots can auto-greet (Phase 10 startup
+    # announcement). Best-effort — never let a file-write failure block /start.
     try:
         _save_owner_chat_id(chat_id)
     except Exception:
@@ -627,12 +627,11 @@ def _monitor_scratchpad(chat_id, bot, loop, stop_event, start_pos):
 def _run_agent(task, provider, model, chat_id, bot, loop):
     """Run the agent and ping the chat when done. Streams scratchpad milestones
     back to the chat live while the agent works. Pops a compact pill so the
-    Windows user can see a Telegram task is running, and minimises the main
-    app window so the agent has the screen to itself. Restores phase to
-    'ready'."""
+    Mac user can see a Telegram task is running, and minimises the main app
+    window so the agent has the screen to itself. Restores phase to 'ready'."""
     # Compact "Telegram task in progress" indicator + minimise AutoUse window.
     # Both are best-effort — never let UI fluff block the actual task.
-    from Auto_Use.windows_use.remote_connection.telegram.banner import StatusBanner
+    from Auto_Use.macOS_use.remote_connection.telegram.banner import StatusBanner
     task_banner = StatusBanner(compact=True)
     try:
         task_banner.show()
@@ -656,7 +655,7 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
     # _cleanup_scratchpad() — so if we snapshotted the file's current size
     # here and the agent then deleted + rewrote it, the monitor's last_pos
     # would point mid-way into the fresh content and we'd stream a
-    # fragment (e.g. "ome." instead of "Verified: …Edge.") to the chat.
+    # fragment (e.g. "ome." instead of "Verified: …Chrome.") to the chat.
     # Deleting the file ourselves up front and starting from byte 0 keeps
     # the monitor aligned with whatever the agent writes next. Best-effort
     # — a failure here just degrades us back to the old (buggy) behavior.
@@ -678,17 +677,15 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
     try:
         # Imported lazily — pulls in tree/element → skimage etc., which we
         # don't want to load until a task actually runs.
-        from Auto_Use.windows_use.agent.service import AgentService
+        from Auto_Use.macOS_use.agent.service import AgentService
 
-        # Look up the runtime API key for the chosen provider so
-        # LLMManager doesn't fall back to an os.getenv() that the user
-        # never set. Mirrors app.py's get_provider_api_key path —
-        # Telegram users edit api_key.txt (or use the AutoUse Settings
-        # panel), they don't export env vars, so without passing
-        # `api_key=` here the agent dies before its first scan with
-        # "X API key not provided and not found in .env file".
-        # _get_available_providers already gated the picker to non-
-        # empty keys, so the lookup is guaranteed to return a value.
+        # Look up the runtime API key for the chosen provider so LLMManager
+        # doesn't fall back to an os.getenv() the user never set. Telegram
+        # users edit api_key.txt (or the AutoUse Settings panel), not env
+        # vars — and the compiled build has no .env — so without passing
+        # api_key= here the agent dies with "X API key not provided and not
+        # found in .env file". _get_available_providers already gated the
+        # picker to non-empty keys, so this lookup returns a value.
         provider_key_name = PROVIDER_KEY_MAP.get(provider)
         provider_keys = _read_all_keys(_API_KEY_FILE)
         provider_api_key = (
