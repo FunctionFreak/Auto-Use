@@ -613,6 +613,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const remoteTelegramBtn = document.getElementById('remoteTelegramBtn');
         const remoteTelegramForm = document.getElementById('remoteTelegramForm');
         const remoteConnectBtn = document.getElementById('remoteConnectBtn');
+        const remoteDeleteTokenBtn = document.getElementById('remoteDeleteTokenBtn');
         const remoteInstructions = document.getElementById('remoteInstructions');
         const telegramPromptOverlay = document.getElementById('telegramPromptOverlay');
         const telegramPromptOk = document.getElementById('telegramPromptOk');
@@ -635,12 +636,14 @@ document.addEventListener('DOMContentLoaded', () => {
                                 ? '✓ Already paired (@' + data.bot_username + ')'
                                 : '✓ Already paired';
                         }
+                        if (remoteDeleteTokenBtn) remoteDeleteTokenBtn.style.display = 'inline-block';
                         if (remoteInstructions) remoteInstructions.style.display = 'none';
                     } else {
                         if (remoteConnectBtn) {
                             remoteConnectBtn.disabled = false;
                             remoteConnectBtn.textContent = 'Connect';
                         }
+                        if (remoteDeleteTokenBtn) remoteDeleteTokenBtn.style.display = 'none';
                         if (remoteTelegramForm) remoteTelegramForm.style.display = 'none';
                         if (remoteInstructions) remoteInstructions.style.display = 'none';
                     }
@@ -685,6 +688,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 fetch('/api/telegram/disconnect', { method: 'POST' })
                     .then(() => loadRemoteStatus())
                     .catch(() => {});
+            });
+        }
+
+        if (remoteDeleteTokenBtn) {
+            remoteDeleteTokenBtn.addEventListener('click', () => {
+                remoteDeleteTokenBtn.disabled = true;
+                fetch('/api/telegram/disconnect', { method: 'POST' })
+                    .then(() => loadRemoteStatus())
+                    .catch(() => {})
+                    .finally(() => { remoteDeleteTokenBtn.disabled = false; });
             });
         }
 
