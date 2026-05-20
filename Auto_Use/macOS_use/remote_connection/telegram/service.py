@@ -42,6 +42,7 @@ import asyncio
 import datetime
 import importlib
 import logging
+import sys
 import threading
 from pathlib import Path
 
@@ -56,13 +57,24 @@ from telegram.ext import (
 
 logger = logging.getLogger(__name__)
 
-# service.py → telegram → remote_connection → macOS_use → Auto_Use → repo root
 # The Telegram surface treats api_key.txt as its single source of truth — we
 # deliberately do NOT consult .env or env vars here. .env is app.py's general
 # env-loading concern; keeping the bot self-contained against api_key.txt
 # avoids two-files-of-record confusion.
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-_API_KEY_FILE = _REPO_ROOT / "Auto_Use" / "api_key" / "api_key.txt"
+#
+# Resolve api_key.txt the same way app.py's get_auto_use_path() does: in a
+# compiled/frozen build __file__ points INSIDE the bundle, so the parents[4]
+# walk would miss the editable api_key.txt that lives next to the executable
+# (the one the Settings panel and the regular agent use). Fall back to the
+# source-tree path in dev (python app.py).
+_IS_COMPILED = getattr(sys, "frozen", False) or "__compiled__" in globals()
+if _IS_COMPILED:
+    _API_KEY_FILE = Path(sys.executable).parent / "Auto_Use" / "api_key" / "api_key.txt"
+else:
+    # service.py → telegram → remote_connection → macOS_use → Auto_Use → repo root
+    _API_KEY_FILE = (
+        Path(__file__).resolve().parents[4] / "Auto_Use" / "api_key" / "api_key.txt"
+    )
 
 # Agent writes per-step "milestone" lines here. We tail this file during a
 # task and forward each new line back to the user's Telegram chat so they
@@ -667,11 +679,25 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
         # don't want to load until a task actually runs.
         from Auto_Use.macOS_use.agent.service import AgentService
 
+        # Look up the runtime API key for the chosen provider so LLMManager
+        # doesn't fall back to an os.getenv() the user never set. Telegram
+        # users edit api_key.txt (or the AutoUse Settings panel), not env
+        # vars — and the compiled build has no .env — so without passing
+        # api_key= here the agent dies with "X API key not provided and not
+        # found in .env file". _get_available_providers already gated the
+        # picker to non-empty keys, so this lookup returns a value.
+        provider_key_name = PROVIDER_KEY_MAP.get(provider)
+        provider_keys = _read_all_keys(_API_KEY_FILE)
+        provider_api_key = (
+            provider_keys.get(provider_key_name) if provider_key_name else None
+        )
+
         agent = AgentService(
             provider=provider,
             model=model,
             save_conversation=False,
             thinking=True,
+            api_key=provider_api_key,
         )
         agent.process_request(task)
         # Stop the monitor BEFORE the done message so the final scratchpad
