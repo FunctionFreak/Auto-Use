@@ -1061,6 +1061,18 @@ body {
     color: rgba(255, 100, 100, 0.95);
 }
 
+/* Delete-token button — brighter, solid red so it reads clearly as an action */
+#remoteDeleteTokenBtn {
+    border-color: rgba(235, 70, 70, 0.9);
+    background: rgba(235, 70, 70, 0.9);
+    color: #fff;
+}
+
+#remoteDeleteTokenBtn:hover {
+    background: rgba(235, 70, 70, 1);
+    color: #fff;
+}
+
 .settings-provider-list {
     display: flex;
     flex-direction: column;

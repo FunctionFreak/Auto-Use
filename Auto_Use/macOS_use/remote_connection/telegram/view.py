@@ -34,7 +34,6 @@ import json
 import logging
 import threading
 import urllib.request
-from pathlib import Path
 
 from flask import Blueprint, jsonify
 
@@ -42,10 +41,11 @@ logger = logging.getLogger(__name__)
 
 telegram_bp = Blueprint("telegram_macos", __name__)
 
-# view.py → telegram → remote_connection → macOS_use → Auto_Use → repo root
-_API_KEY_FILE = (
-    Path(__file__).resolve().parents[4] / "Auto_Use" / "api_key" / "api_key.txt"
-)
+# Single source of truth for the key-file path — service.py resolves it in a
+# compiled-build-aware way (next to the executable when frozen). Importing it
+# here keeps the picker/status/disconnect routes pointed at the same file the
+# bot and the regular agent read.
+from .service import _API_KEY_FILE
 
 _bot_username_cache: str | None = None
 
