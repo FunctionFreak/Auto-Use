@@ -325,9 +325,9 @@ class LLMManager:
             _CLI_FALLBACK_MAP = {
                 "groq": "llama-4-scout",           # GPT-OSS fails → Scout
                 "openai": "gpt-5.1",              # GPT-5.2 fails → GPT-5.1
-                "openrouter": "gemini-3.5-flash",      # gemini-3.1-pro → gemini-3.5-flash
+                "openrouter": "gemini-3-flash",      # gemini-3-pro → gemini-3-flash
                 "anthropic": "claude-sonnet-4.5",    # Sonnet 4.6 fails → Sonnet 4.5
-                "google": "gemini-3.5-flash-vertex" if is_vertex else "gemini-3.5-flash",
+                "google": "gemini-3-flash-vertex" if is_vertex else "gemini-3-flash",
                 "perplexity": "claude-opus-4.6",      # Gemini 3.1 Pro fails → Claude Opus 4.6
             }
             self._cli_fallback_model = _CLI_FALLBACK_MAP.get(self.provider)

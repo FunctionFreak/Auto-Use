@@ -28,7 +28,7 @@ Usage:
     Options:
         --task      : Required. The question/objective for the minion to answer.
         --provider  : LLM provider (default: openrouter)
-        --model     : LLM model (default: gemini-3.5-flash)
+        --model     : LLM model (default: gemini-3-flash)
         --result    : Path to write result JSON when complete (optional)
 
 When called from the parent CLI agent (via the `minion` action):
@@ -81,8 +81,8 @@ Examples:
     parser.add_argument(
         "--model",
         type=str,
-        default="gemini-3.5-flash",
-        help="LLM model name (default: gemini-3.5-flash)"
+        default="gemini-3-flash",
+        help="LLM model name (default: gemini-3-flash)"
     )
     parser.add_argument(
         "--result",

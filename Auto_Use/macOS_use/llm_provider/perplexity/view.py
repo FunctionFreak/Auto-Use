@@ -35,10 +35,10 @@ MODEL_MAPPINGS = {
         "reasoning_support": True,
         "reasoning_effort": "medium"
     },
-    "gemini-3.5-flash": {
-        "api_name": "google/gemini-3.5-flash",
+    "gemini-3-flash": {
+        "api_name": "google/gemini-3-flash-preview",
         "vision": True,
-        "display_name": "Gemini 3.5 Flash",
+        "display_name": "Gemini 3 Flash Preview",
         "reasoning_support": True,
         "reasoning_effort": "medium"
     },

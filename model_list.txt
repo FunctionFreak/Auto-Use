@@ -15,7 +15,7 @@ PROVIDER = "openrouter"
 MODEL name
 --------------------------------------------------------------
 gemini-3.1-pro
-gemini-3.5-flash
+gemini-3-flash
 gpt-5.4-mini
 gpt-5.4-pro
 claude-opus-4.6
@@ -60,9 +60,9 @@ PROVIDER = "google"
 MODEL name
 --------------------------------------------------------------
 gemini-3.1-pro
-gemini-3.5-flash
+gemini-3-flash
 gemini-3.1-pro-vertex
-gemini-3.5-flash-vertex
+gemini-3-flash-vertex
 
 
 --------------------------------------------------------------
@@ -72,7 +72,7 @@ MODEL name
 --------------------------------------------------------------
 gpt-5.4
 gemini-3.1-pro
-gemini-3.5-flash
+gemini-3-flash
 claude-sonnet-4.6
 claude-opus-4.6
 claude-opus-4.7
