@@ -622,7 +622,7 @@ class ControllerView:
                             main_exe, "--cli-mode",
                             "--task", task_description,
                             "--provider", self.provider or "openrouter",
-                            "--model", self.model or "gemini-3-flash",
+                            "--model", self.model or "gemini-3.5-flash",
                             "--result", str(result_file)
                         ]
                     else:
@@ -630,7 +630,7 @@ class ControllerView:
                             sys.executable, "-m", "Auto_Use.macOS_use.agent.cli",
                             "--task", task_description,
                             "--provider", self.provider or "openrouter",
-                            "--model", self.model or "gemini-3-flash",
+                            "--model", self.model or "gemini-3.5-flash",
                             "--result", str(result_file)
                         ]
                     
@@ -744,7 +744,7 @@ class ControllerView:
                             main_exe, "--minion-mode",
                             "--task", minion_query,
                             "--provider", self.provider or "openrouter",
-                            "--model", self.model or "gemini-3-flash",
+                            "--model", self.model or "gemini-3.5-flash",
                             "--result", str(result_file),
                         ]
                     else:
@@ -752,7 +752,7 @@ class ControllerView:
                             sys.executable, "-m", "Auto_Use.macOS_use.agent.cli.minions",
                             "--task", minion_query,
                             "--provider", self.provider or "openrouter",
-                            "--model", self.model or "gemini-3-flash",
+                            "--model", self.model or "gemini-3.5-flash",
                             "--result", str(result_file),
                         ]
 

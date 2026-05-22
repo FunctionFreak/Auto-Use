@@ -33,7 +33,7 @@ with open(web_md_path, "r") as f:
 
 def web_search(query, api_key=None, vertex=False, vertex_project_id=None, vertex_location=None):
     """
-    Perform web search using Google Gemini 3 Flash with grounding via Google Search + thinking
+    Perform web search using Google Gemini 3.5 Flash with grounding via Google Search + thinking
 
     Args:
         query: Search query
@@ -60,7 +60,7 @@ def web_search(query, api_key=None, vertex=False, vertex_project_id=None, vertex
         )
 
         response = client.models.generate_content(
-            model="gemini-3-flash-preview",
+            model="gemini-3.5-flash",
             contents=query,
             config=config,
         )
