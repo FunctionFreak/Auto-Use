@@ -73,16 +73,16 @@ Examples:
         help="Task description for the CLI agent"
     )
     parser.add_argument(
-        "--provider", 
-        type=str, 
-        default="openrouter",
-        help="LLM provider (default: openrouter)"
+        "--provider",
+        type=str,
+        required=True,
+        help="LLM provider (inherited from the parent agent)"
     )
     parser.add_argument(
-        "--model", 
-        type=str, 
-        default="gemini-3.5-flash",
-        help="LLM model name (default: gemini-3.5-flash)"
+        "--model",
+        type=str,
+        required=True,
+        help="LLM model name (inherited from the parent agent)"
     )
     parser.add_argument(
         "--result", 

@@ -621,16 +621,16 @@ class ControllerView:
                         cli_cmd = [
                             main_exe, "--cli-mode",
                             "--task", task_description,
-                            "--provider", self.provider or "openrouter",
-                            "--model", self.model or "gemini-3.5-flash",
+                            "--provider", self.provider,
+                            "--model", self.model,
                             "--result", str(result_file)
                         ]
                     else:
                         cli_cmd = [
                             sys.executable, "-m", "Auto_Use.macOS_use.agent.cli",
                             "--task", task_description,
-                            "--provider", self.provider or "openrouter",
-                            "--model", self.model or "gemini-3.5-flash",
+                            "--provider", self.provider,
+                            "--model", self.model,
                             "--result", str(result_file)
                         ]
                     
@@ -743,16 +743,16 @@ class ControllerView:
                         cli_cmd = [
                             main_exe, "--minion-mode",
                             "--task", minion_query,
-                            "--provider", self.provider or "openrouter",
-                            "--model", self.model or "gemini-3.5-flash",
+                            "--provider", self.provider,
+                            "--model", self.model,
                             "--result", str(result_file),
                         ]
                     else:
                         cli_cmd = [
                             sys.executable, "-m", "Auto_Use.macOS_use.agent.cli.minions",
                             "--task", minion_query,
-                            "--provider", self.provider or "openrouter",
-                            "--model", self.model or "gemini-3.5-flash",
+                            "--provider", self.provider,
+                            "--model", self.model,
                             "--result", str(result_file),
                         ]
 

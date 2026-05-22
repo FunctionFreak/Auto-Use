@@ -28,12 +28,12 @@ else:
     raise RuntimeError(f"Unsupported OS: {platform.system()}")
 
 # Configuration
-PROVIDER = "local"
-MODEL = "gemma4:e4b" #refer to the model name correctly from model_list.txt.
+PROVIDER = "openrouter"
+MODEL = "gemini-3.5-flash" #refer to the model name correctly from model_list.txt.
 # Your task here
 task = """
 
-open safari
+what all files are there on my download folder
 
 """
 
