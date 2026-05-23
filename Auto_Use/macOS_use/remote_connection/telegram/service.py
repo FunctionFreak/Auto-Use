@@ -677,7 +677,7 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
     try:
         # Imported lazily — pulls in tree/element → skimage etc., which we
         # don't want to load until a task actually runs.
-        from Auto_Use.macOS_use.agent.service import AgentService
+        from Auto_Use.macOS_use.agent.main_driver.service import AgentService
 
         # Look up the runtime API key for the chosen provider so LLMManager
         # doesn't fall back to an os.getenv() the user never set. Telegram

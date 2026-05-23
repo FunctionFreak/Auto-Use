@@ -18,33 +18,35 @@
 # community — thank you for contributing.
 
 """
-Minion Sub-Agent Entry Point (macOS)
-====================================
-Subprocess entry for the read-only scout minion.
+CLI Agent Entry Point
+======================
+This module allows the CLI agent to be run as a subprocess.
 
 Usage:
-    python -m Auto_Use.macOS_use.agent.cli.minions --task "your question here"
-
+    python -m Auto_Use.windows_use.agent.coder --task "your task here"
+    
     Options:
-        --task      : Required. The question/objective for the minion to answer.
+        --task      : Required. The task for CLI agent to execute
         --provider  : LLM provider (default: openrouter)
         --model     : LLM model (default: gemini-3.5-flash)
         --result    : Path to write result JSON when complete (optional)
 
-When called from the parent CLI agent (via the `minion` action):
-    - The CLI agent's controller spawns this as a subprocess.
-    - The minion runs in its own session-isolated scratchpad (cli_minion/{sid}/).
-    - On exit, the structured summary is written to --result and surfaced to the
-      parent CLI agent as a <minion_completed> tool response.
+When called from main agent:
+    - Main agent spawns this as subprocess
+    - CLI agent runs with its own UI (pywebview on main thread)
+    - Result is written to --result file when done
 
 When called directly for testing:
-    python -m Auto_Use.macOS_use.agent.cli.minions --task "where is X defined?"
+    - Run: python -m Auto_Use.windows_use.agent.coder --task "test task"
+    - Or use cli.py at project root
 """
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
+# Import debug_log for error logging (fallback if app module not available)
 try:
     from app import debug_log, debug_exception
 except ImportError:
@@ -56,20 +58,20 @@ except ImportError:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Minion Sub-Agent - Read-only scout for the parent CLI agent",
+        description="CLI Agent - Terminal-based coding assistant",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python -m Auto_Use.macOS_use.agent.cli.minions --task "where is _read_scratchpad_from_file defined and who calls it?"
-    python -m Auto_Use.macOS_use.agent.cli.minions --task "list every file under src/ that imports requests"
+    python -m Auto_Use.windows_use.agent.coder --task "fix the bug in test.py"
+    python -m Auto_Use.windows_use.agent.coder --task "create hello world" --provider openrouter --model gemini-3.5-flash
         """
     )
-
+    
     parser.add_argument(
-        "--task",
-        type=str,
+        "--task", 
+        type=str, 
         required=True,
-        help="Question/objective for the minion to answer"
+        help="Task description for the CLI agent"
     )
     parser.add_argument(
         "--provider",
@@ -84,10 +86,10 @@ Examples:
         help="LLM model name (inherited from the parent agent)"
     )
     parser.add_argument(
-        "--result",
-        type=str,
+        "--result", 
+        type=str, 
         default=None,
-        help="Path to write result JSON when complete (for parent agent integration)"
+        help="Path to write result JSON when complete (for main agent integration)"
     )
     parser.add_argument(
         "--thinking",
@@ -101,11 +103,21 @@ Examples:
         default=None,
         help="Runtime API key for LLM provider (optional, falls back to .env)"
     )
+    parser.add_argument(
+        "--no_external_terminal",
+        action="store_true",
+        default=False,
+        help="Disable spawning sub-agents (minions) in new terminal windows. "
+             "Default: terminals ON for cli.py / main.py terminal UX. Pass this from "
+             "app.py / headless mode to keep minion subprocesses hidden."
+    )
 
     args = parser.parse_args()
 
+    # Import here to avoid circular imports at module load
     from .service import AgentService
 
+    # Callback to write result when CLI agent exits
     def on_complete(result: dict):
         if args.result:
             result_path = Path(args.result)
@@ -115,8 +127,11 @@ Examples:
             try:
                 print(f"Result written to: {args.result}")
             except (ValueError, OSError):
-                pass
+                pass  # stdout closed in compiled mode
 
+    # Create and run CLI agent. Output streams to stdout for the parent
+    # main agent's pill UI; the agent loop runs synchronously on this
+    # subprocess's main thread.
     agent = AgentService(
         provider=args.provider,
         model=args.model,
@@ -125,6 +140,7 @@ Examples:
         api_key=args.api_key,
         task=args.task,
         on_complete=on_complete if args.result else None,
+        external_terminal=not args.no_external_terminal,
     )
     agent.process_request(args.task)
 

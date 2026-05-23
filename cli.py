@@ -22,9 +22,9 @@
 import platform
 
 if platform.system() == "Darwin":
-    from Auto_Use.macOS_use.agent.cli import AgentService
+    from Auto_Use.macOS_use.agent.coder import AgentService
 elif platform.system() == "Windows":
-    from Auto_Use.windows_use.agent.cli import AgentService
+    from Auto_Use.windows_use.agent.coder import AgentService
 else:
     raise RuntimeError(f"Unsupported OS: {platform.system()}")
 

@@ -36,17 +36,17 @@ class DomainKnowledgeService:
         self.browser_keywords = ["chrome", "firefox", "edge", "opera", "brave", "safari", "vivaldi", "browser"]
     
     def _load_mappings(self) -> dict:
-        """Load domain_knowledge.json mapping file"""
+        """Load skills.json mapping file"""
         try:
-            json_path = os.path.join(self.current_dir, "domain_knowledge.json")
+            json_path = os.path.join(self.current_dir, "skills.json")
             if os.path.exists(json_path):
                 with open(json_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
             else:
-                logger.warning("domain_knowledge.json not found")
+                logger.warning("skills.json not found")
                 return {"browser": {}, "os": {}}
         except Exception as e:
-            logger.error(f"Error loading domain_knowledge.json: {str(e)}")
+            logger.error(f"Error loading skills.json: {str(e)}")
             return {"browser": {}, "os": {}}
     
     def _is_browser(self, application_name: str) -> bool:
