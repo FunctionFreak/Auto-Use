@@ -62,7 +62,7 @@ class WebService:
                 elif self.provider == "anthropic":
                     result = anthropic_web_search(query, self.api_key)  # Anthropic uses Haiku 4.5 with native web_search
                 elif self.provider == "google":
-                    result = google_web_search(query, self.api_key, self.vertex, self.vertex_project_id, self.vertex_location)  # Google uses Gemini 3 Flash with grounding
+                    result = google_web_search(query, self.api_key, self.vertex, self.vertex_project_id, self.vertex_location)  # Google uses Gemini 3.5 Flash with grounding
                 elif self.provider == "perplexity":
                     result = perplexity_web_search(query, self.api_key)  # Perplexity uses Sonar with native web search
                 else:
