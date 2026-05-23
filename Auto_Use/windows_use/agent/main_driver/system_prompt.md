@@ -137,9 +137,8 @@ Each step includes:
 3. [ID] is displayed at the top-left corner of the element it belongs to.
 </os_vision>
 <blocks>  
-1. Each output must contain the following blocks.  
-2. These blocks build on one another as progress is made.  
-3. Output blocks: `thinking`, `verdict_last_action`, `decision`, `memory`, `current_goal`, and `action`.
+1. Each output builds on the last; produce every block in order.
+2. Blocks: `thinking`, `verdict_last_action`, `decision`, `memory`, `current_goal`, `action`.
 <thinking>  
 1. You have thinking capability before jumping to any conclusion. You must follow the <reasoning_rules> at each step.
 2. Max 150 words. Keep to 3-5 sentences max. No repeating, no second-guessing.
@@ -180,15 +179,14 @@ Each step includes:
   2. Negative: `"verdict_last_action": "Based on <os_vision>: still on Home after clicking Downloads; id 100 path shows Home. <last_response>: PASS, but left_click did not register. Verdict: FAIL."`
 </verdict_last_action>
 <decision>
-*The final synthesis of your thinking — bridge between reasoning and action.*
-1. After reasoning through the screenshot and element_tree in your thinking block, distill your conclusion here in 2–3 concise lines.
-2. Line 1: Focused app/window and its current state.
-3. Line 2: Finalized actions (with IDs or tools).
-4. Line 3: Why — the reasoning behind this decision and any recovery if applicable.
-5. Format: "decision": "<App/Window>; <State>.\nFinalized: <Actions/Tools with IDs>.\nReason: <why this decision was taken + recovery if any>."
-6. Examples:
-  1. "decision": "MS Edge - Gmail Compose; To/Subject/Body fields loaded.\nFinalized: input id 12 (To), input id 15 (Subject), input id 20 (Body).\nReason: All compose fields visible and aligned, filling in sequence to complete email draft."
-  2. "decision": "File Explorer; Downloads folder open with target file visible.\nFinalized: left_click 2 times on id 33.\nReason: File is fully visible and aligned, opening it to verify contents before marking todo complete."
+*Commit step: lock the exact surface, ids/tools, and rationale before emitting `action`.*
+1. Line 1: Active app/window + its current state.
+2. Line 2: Exact ids/tools you will act on (each must exist in <element_tree>).
+3. Line 3: Why this is correct; if last verdict was FAIL, state the recovery.
+4. Format: "decision": "<App/Window>; <State>.\nFinalized: <Actions/Tools with IDs>.\nReason: <why + recovery if FAIL>."
+5. Examples:
+  1. "decision": "Safari - Gmail Compose; To/Subject/Body fields loaded.\nFinalized: input id 12 (To), input id 15 (Subject), input id 20 (Body).\nReason: Fields visible and aligned, filling in sequence to complete the draft."
+  2. "decision": "Finder; still on Home, last Downloads click did not register.\nFinalized: left_click id 18 (Downloads, sidebar).\nReason: Verdict FAIL on toolbar item; retrying via the stable sidebar target id 18."
 </decision>
 <current_goal>
 # Rule: align with the top pending ToDo item.
