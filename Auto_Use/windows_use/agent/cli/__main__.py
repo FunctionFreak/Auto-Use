@@ -28,7 +28,7 @@ Usage:
     Options:
         --task      : Required. The task for CLI agent to execute
         --provider  : LLM provider (default: openrouter)
-        --model     : LLM model (default: gemini-3-flash)
+        --model     : LLM model (default: gemini-3.5-flash)
         --result    : Path to write result JSON when complete (optional)
 
 When called from main agent:
@@ -63,7 +63,7 @@ def main():
         epilog="""
 Examples:
     python -m Auto_Use.windows_use.agent.cli --task "fix the bug in test.py"
-    python -m Auto_Use.windows_use.agent.cli --task "create hello world" --provider openrouter --model gemini-3-flash
+    python -m Auto_Use.windows_use.agent.cli --task "create hello world" --provider openrouter --model gemini-3.5-flash
         """
     )
     
@@ -74,16 +74,16 @@ Examples:
         help="Task description for the CLI agent"
     )
     parser.add_argument(
-        "--provider", 
-        type=str, 
-        default="openrouter",
-        help="LLM provider (default: openrouter)"
+        "--provider",
+        type=str,
+        required=True,
+        help="LLM provider (inherited from the parent agent)"
     )
     parser.add_argument(
-        "--model", 
-        type=str, 
-        default="gemini-3-flash",
-        help="LLM model name (default: gemini-3-flash)"
+        "--model",
+        type=str,
+        required=True,
+        help="LLM model name (inherited from the parent agent)"
     )
     parser.add_argument(
         "--result", 

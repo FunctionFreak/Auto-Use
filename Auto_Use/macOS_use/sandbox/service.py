@@ -222,6 +222,21 @@ class Sandbox:
             if not is_safe:
                 return {"success": False, "error": error_msg}
 
+        # macOS: a shell command that touches a protected folder triggers a TCC
+        # popup ("…wants to access your Desktop folder") that blocks until clicked.
+        # While the command runs, a background thread clicks Allow if one appears.
+        stop_watcher = threading.Event()
+        if sys.platform == "darwin":
+            from ..controller.tool.applescript import _click_automation_allow_button
+
+            def _watch():
+                while not stop_watcher.is_set():
+                    _click_automation_allow_button()
+                    if stop_watcher.wait(1.0):
+                        break
+
+            threading.Thread(target=_watch, daemon=True).start()
+
         try:
             process = subprocess.Popen(
                 ["/bin/zsh", "-c", command],
@@ -338,6 +353,8 @@ class Sandbox:
 
         except Exception as e:
             return {"success": False, "error": str(e)}
+        finally:
+            stop_watcher.set()
 
     def cd(self, path: str) -> dict:
         """

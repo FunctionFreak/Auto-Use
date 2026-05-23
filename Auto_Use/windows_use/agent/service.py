@@ -390,13 +390,23 @@ Respond with "action": [{"type": "shortcut_combo", "value": "alt+y"}] to accept 
             elif is_first_iteration:
                 # First iteration - user_request + todo creation rules (only needed at step 1)
                 todo_creation_rules = """<todo_capability>
-1. Track and update tasks during the agent loop.
-2. Create the ToDo list once at iteration 1. Never recreate it.
-3. Build from <user_request> (ignore typos): write a corrected objective with clear sub-tasks. Mention required tools where relevant.
-4. CLI agent tasks: prefix with 'delegating cli'.
-5. Tasks are auto-numbered #1, #2, #3, etc. when saved.
-6. Format: "action": [{"type": "todo_list", "value": "Objective: <corrected_user_request>\\n- [ ] task_1\\n- [ ] task_2"}]
-7. CLI example: "action": [{"type": "todo_list", "value": "Objective: <corrected_user_request>\\n- [ ] delegating cli: <task_1>"}]
+1. Task Tracking and Initialization
+    1.1. Track and update tasks continuously during the agent loop.
+    1.2. Create the ToDo list exactly once at iteration 1. Never recreate it.
+
+2. Building the ToDo List
+    2.1. Build from the user_request (ignore typos). Write a corrected objective with clear sub-tasks.
+    2.2. Mention the required tools for each task where relevant.
+    2.3. Planning and Data Collection: If a task requires upfront planning or extensive data gathering, explicitly define it as a dedicated sub-task.
+    2.4. CLI agent tasks: Prefix these specific tasks with 'delegating cli:'.
+    2.5. Tasks are auto-numbered (1, 2, 3) when saved.
+
+3. Format and Examples
+    3.1. Standard Format:
+        [{"type": "todo_list", "value": "Objective: <corrected_user_request>\\n1. [ ] <task_1>\\n2. [ ] <task_2>"}]
+        
+    3.2. Complex Example (Data Gathering and Web Excel Reporting):
+        [{"type": "todo_list", "value": "Objective: Make a report and save it on Excel online.\\n1. [ ] Data Gathering: Use the web tool (or alternate browser tool if unavailable) to collect data and save it to the scratchpad.\\n2. [ ] Open Excel online in the browser.\\n3. [ ] Create a new notebook.\\n4. [ ] Create a data table using the information stored in the scratchpad.\\n5. [ ] Visually confirm that the table looks clean and is nicely structured."}]
 </todo_capability>"""
 
                 user_message = f"""<user_request>
