@@ -28,10 +28,10 @@ MODEL_MAPPINGS = {
         "reasoning_support": True,
         "vertex": False
     },
-    "gemini-3-flash": {
-        "api_name": "gemini-3-flash-preview",
+    "gemini-3.5-flash": {
+        "api_name": "gemini-3.5-flash",
         "vision": True,
-        "display_name": "Gemini 3 Flash",
+        "display_name": "Gemini 3.5 Flash",
         "reasoning_support": True,
         "vertex": False
     },
@@ -42,10 +42,10 @@ MODEL_MAPPINGS = {
         "reasoning_support": True,
         "vertex": True
     },
-    "gemini-3-flash-vertex": {
-        "api_name": "gemini-3-flash-preview",
+    "gemini-3.5-flash-vertex": {
+        "api_name": "gemini-3.5-flash",
         "vision": True,
-        "display_name": "Gemini 3 Flash (Vertex)",
+        "display_name": "Gemini 3.5 Flash (Vertex)",
         "reasoning_support": True,
         "vertex": True
     }
