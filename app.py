@@ -875,7 +875,7 @@ def start_agent():
 
             try:
                 AgentService = importlib.import_module(
-                    f"Auto_Use.{PLATFORM_PKG}.agent.service"
+                    f"Auto_Use.{PLATFORM_PKG}.agent.main_driver.service"
                 ).AgentService
 
                 agent = AgentService(
@@ -1027,7 +1027,7 @@ def main():
         sys.argv.remove("--cli-mode")
         try:
             cli_main = importlib.import_module(
-                f"Auto_Use.{PLATFORM_PKG}.agent.cli.__main__"
+                f"Auto_Use.{PLATFORM_PKG}.agent.coder.__main__"
             ).main
             cli_main()
         except Exception:
@@ -1041,7 +1041,7 @@ def main():
         sys.argv.remove("--minion-mode")
         try:
             minion_main = importlib.import_module(
-                f"Auto_Use.{PLATFORM_PKG}.agent.cli.minions.__main__"
+                f"Auto_Use.{PLATFORM_PKG}.agent.minions.__main__"
             ).main
             minion_main()
         except Exception:

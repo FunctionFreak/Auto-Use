@@ -17,6 +17,7 @@
 # A small attribution goes a long way toward a healthy open-source
 # community — thank you for contributing.
 
+import copy
 import os
 import time
 from typing import Optional
@@ -438,55 +439,65 @@ class LLMManager:
             raise ValueError(f"Unsupported provider: {self.provider}")
     
     def send_request(self, messages: list, annotated_screenshot_base64: Optional[str] = None):
-        """Send request to the selected provider"""
-        # Retry up to 3 times with 1 second delay
+        """Send request to the selected provider with idempotent retries."""
+        last_error = None
         for attempt in range(3):
+            # Providers may mutate messages in-place (e.g. wrapping the last user
+            # message into multimodal content blocks); deep-copy per attempt so
+            # those mutations cannot compound across retries.
+            attempt_messages = copy.deepcopy(messages)
             try:
-                response = self.provider_instance.send_request(messages, self.model, annotated_screenshot_base64)
-                
-                # Extract the assistant's response
+                response = self.provider_instance.send_request(
+                    attempt_messages, self.model, annotated_screenshot_base64
+                )
                 return response['choices'][0]['message']['content']
             except Exception as e:
-                if attempt < 2:  # If not the last attempt
-                    print(f"⚠️ API request failed (attempt {attempt + 1}/3), retrying in 1 second...")
+                last_error = e
+                if attempt < 2:
+                    print(f"⚠️ API request failed (attempt {attempt + 1}/3): {e}")
+                    print("   Retrying in 1 second with a fresh message copy...")
                     time.sleep(1)
                     continue
-                else:
-                    # CLI agent: seamless fallback to secondary model (never die)
-                    if self.cli_agent and hasattr(self, '_cli_fallback_model') and self._cli_fallback_model:
-                        print(f"⚠️ CLI Agent: {self.display_name} failed after 3 attempts. Switching to fallback...")
-                        # Resolve fallback model info (same provider, different model)
-                        if self.provider == "openrouter":
-                            model_info = get_openrouter_model_info(self._cli_fallback_model)
-                        elif self.provider == "groq":
-                            model_info = get_groq_model_info(self._cli_fallback_model)
-                        elif self.provider == "openai":
-                            model_info = get_openai_model_info(self._cli_fallback_model)
-                        elif self.provider == "anthropic":
-                            model_info = get_anthropic_model_info(self._cli_fallback_model)
-                        elif self.provider == "google":
-                            model_info = get_google_model_info(self._cli_fallback_model)
-                        elif self.provider == "perplexity":
-                            model_info = get_perplexity_model_info(self._cli_fallback_model)
-                        else:
-                            raise e
-                        # Hot-swap model (provider stays the same, no re-init needed)
-                        self.model = model_info["api_name"]
-                        self.has_vision = model_info["vision"]
-                        self.display_name = model_info["display_name"]
-                        self.model_info = model_info
-                        # Clear fallback so we don't loop forever
-                        self._cli_fallback_model = None
-                        print(f"✅ CLI Agent: Now using {self.display_name}")
-                        # Retry with fallback (same messages, full history intact)
-                        try:
-                            response = self.provider_instance.send_request(messages, self.model, annotated_screenshot_base64)
-                            return response['choices'][0]['message']['content']
-                        except Exception as fallback_e:
-                            print(f"❌ CLI Agent: Fallback {self.display_name} also failed: {fallback_e}")
-                            raise fallback_e
-                    else:
-                        raise e
+                print(f"❌ API request failed after 3 attempts: {e}")
+                break
+
+        # All 3 attempts failed. CLI agent: seamless fallback to secondary model (never die)
+        if self.cli_agent and hasattr(self, '_cli_fallback_model') and self._cli_fallback_model:
+            print(f"⚠️ CLI Agent: {self.display_name} failed after 3 attempts. Switching to fallback...")
+            # Resolve fallback model info (same provider, different model)
+            if self.provider == "openrouter":
+                model_info = get_openrouter_model_info(self._cli_fallback_model)
+            elif self.provider == "groq":
+                model_info = get_groq_model_info(self._cli_fallback_model)
+            elif self.provider == "openai":
+                model_info = get_openai_model_info(self._cli_fallback_model)
+            elif self.provider == "anthropic":
+                model_info = get_anthropic_model_info(self._cli_fallback_model)
+            elif self.provider == "google":
+                model_info = get_google_model_info(self._cli_fallback_model)
+            elif self.provider == "perplexity":
+                model_info = get_perplexity_model_info(self._cli_fallback_model)
+            else:
+                raise last_error
+            # Hot-swap model (provider stays the same, no re-init needed)
+            self.model = model_info["api_name"]
+            self.has_vision = model_info["vision"]
+            self.display_name = model_info["display_name"]
+            self.model_info = model_info
+            # Clear fallback so we don't loop forever
+            self._cli_fallback_model = None
+            print(f"✅ CLI Agent: Now using {self.display_name}")
+            # Retry with fallback (fresh copy, full history intact)
+            try:
+                response = self.provider_instance.send_request(
+                    copy.deepcopy(messages), self.model, annotated_screenshot_base64
+                )
+                return response['choices'][0]['message']['content']
+            except Exception as fallback_e:
+                print(f"❌ CLI Agent: Fallback {self.display_name} also failed: {fallback_e}")
+                raise fallback_e
+        else:
+            raise last_error
     
     def get_model_name(self) -> str:
         """Get the current model short name (preserves vertex suffix for downstream routing)"""

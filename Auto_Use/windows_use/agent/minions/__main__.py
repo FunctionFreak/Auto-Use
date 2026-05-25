@@ -23,7 +23,7 @@ Minion Sub-Agent Entry Point
 Subprocess entry for the read-only scout minion.
 
 Usage:
-    python -m Auto_Use.windows_use.agent.cli.minions --task "your question here"
+    python -m Auto_Use.windows_use.agent.minions --task "your question here"
 
     Options:
         --task      : Required. The question/objective for the minion to answer.
@@ -38,7 +38,7 @@ When called from the parent CLI agent (via the `minion` action):
       parent CLI agent as a <minion_completed> tool response.
 
 When called directly for testing:
-    python -m Auto_Use.windows_use.agent.cli.minions --task "where is X defined?"
+    python -m Auto_Use.windows_use.agent.minions --task "where is X defined?"
 """
 
 import argparse
@@ -61,8 +61,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python -m Auto_Use.windows_use.agent.cli.minions --task "where is _read_scratchpad_from_file defined and who calls it?"
-    python -m Auto_Use.windows_use.agent.cli.minions --task "list every file under src/ that imports requests"
+    python -m Auto_Use.windows_use.agent.minions --task "where is _read_scratchpad_from_file defined and who calls it?"
+    python -m Auto_Use.windows_use.agent.minions --task "list every file under src/ that imports requests"
         """
     )
 

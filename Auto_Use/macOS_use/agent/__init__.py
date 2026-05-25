@@ -18,7 +18,7 @@
 # community — thank you for contributing.
 
 # Auto_Use/macOS_use/agent/__init__.py
-from .service import AgentService
-from .view import AgentResponseFormatter
+from .main_driver.service import AgentService
+from .main_driver.view import AgentResponseFormatter
 
 __all__ = ['AgentService', 'AgentResponseFormatter']

@@ -26,11 +26,11 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
-from ..llm_provider.llm_manager import LLMManager
+from ...llm_provider.llm_manager import LLMManager
 from .view import AgentResponseFormatter
-from ..tree.element import UIElementScanner, ELEMENT_CONFIG
-from ..controller import ControllerView
-from .domain_knowledge import DomainKnowledgeService
+from ...tree.element import UIElementScanner, ELEMENT_CONFIG
+from ...controller import ControllerView
+from ..skills import DomainKnowledgeService
 from PIL import Image
 from io import BytesIO
 
@@ -111,7 +111,7 @@ class AgentService:
         self.controller = ControllerView(provider=provider, model=self.llm_manager.get_model_name(), web_callback=web_callback, shell_callback=shell_callback, cli_callback=cli_callback, api_key=api_key, stop_event=stop_event, external_terminal=external_terminal)
         
         # Initialize Domain Knowledge Service
-        self.domain_knowledge = DomainKnowledgeService()
+        self.skills = DomainKnowledgeService()
         
         # Save conversation flag
         self.save_conversation = save_conversation
@@ -384,7 +384,7 @@ Respond with "action": [{"type": "shortcut_combo", "value": "alt+y"}] to accept 
                 formatted_element_tree = f"<element_tree>\n{element_tree_text}\n</element_tree>"
 
                 # Fetch domain-specific knowledge if available
-                domain_block = self.domain_knowledge.get_knowledge(
+                domain_block = self.skills.get_knowledge(
                     self.scanner.application_name,
                     element_tree_text
                 )
