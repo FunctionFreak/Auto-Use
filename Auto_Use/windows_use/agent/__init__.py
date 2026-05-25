@@ -17,7 +17,7 @@
 # A small attribution goes a long way toward a healthy open-source
 # community — thank you for contributing.
 
-from .service import AgentService
-from .view import AgentResponseFormatter
+from .main_driver.service import AgentService
+from .main_driver.view import AgentResponseFormatter
 
 __all__ = ['AgentService', 'AgentResponseFormatter']

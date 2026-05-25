@@ -569,7 +569,7 @@ class ControllerView:
                         ]
                     else:
                         cli_cmd = [
-                            sys.executable, "-m", "Auto_Use.windows_use.agent.cli",
+                            sys.executable, "-m", "Auto_Use.windows_use.agent.coder",
                             "--task", task_description,
                             "--provider", self.provider,
                             "--model", self.model,
@@ -706,7 +706,7 @@ class ControllerView:
                         ]
                     else:
                         cli_cmd = [
-                            sys.executable, "-m", "Auto_Use.windows_use.agent.cli.minions",
+                            sys.executable, "-m", "Auto_Use.windows_use.agent.minions",
                             "--task", minion_query,
                             "--provider", self.provider,
                             "--model", self.model,

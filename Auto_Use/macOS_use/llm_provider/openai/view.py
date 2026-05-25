@@ -34,6 +34,20 @@ MODEL_MAPPINGS = {
         "display_name": "GPT-5.4",
         "reasoning_support": True,
         "json_mode": True
+    },
+    "gpt-5.5": {
+        "api_name": "gpt-5.5",
+        "vision": True,
+        "display_name": "GPT-5.5",
+        "reasoning_support": True,
+        "json_mode": True
+    },
+    "gpt-5.5-pro": {
+        "api_name": "gpt-5.5-pro",
+        "vision": True,
+        "display_name": "GPT-5.5 Pro",
+        "reasoning_support": True,
+        "json_mode": True
     }
 }
 
