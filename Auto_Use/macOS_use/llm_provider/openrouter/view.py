@@ -47,6 +47,18 @@ MODEL_MAPPINGS = {
         "display_name": "GPT-5.4 Pro",
         "reasoning_support": False
     },
+    "gpt-5.5": {
+        "api_name": "openai/gpt-5.5",
+        "vision": True,
+        "display_name": "GPT-5.5",
+        "reasoning_support": True
+    },
+    "gpt-5.5-pro": {
+        "api_name": "openai/gpt-5.5-pro",
+        "vision": True,
+        "display_name": "GPT-5.5 Pro",
+        "reasoning_support": True
+    },
     "claude-opus-4.7": {
         "api_name": "anthropic/claude-opus-4.7",
         "vision": True,
@@ -75,10 +87,36 @@ MODEL_MAPPINGS = {
         "reasoning_support": True,
         "reasoning_effort": "low"
     },
+    "grok-4.3": {
+        "api_name": "x-ai/grok-4.3",
+        "vision": True,
+        "display_name": "Grok 4.3",
+        "reasoning_support": True,
+        "reasoning_effort": "low"
+    },
     "kimi-k2.6": {
         "api_name": "moonshotai/kimi-k2.6",
         "vision": True,
         "display_name": "Kimi K2.6",
+        "reasoning_support": False
+    },
+    "claude-opus-4.7-fast": {
+        "api_name": "anthropic/claude-opus-4.7-fast",
+        "vision": True,
+        "display_name": "Claude Opus 4.7 Fast",
+        "reasoning_support": True,
+        "reasoning_effort": "low"
+    },
+    "mistral-medium-3.5": {
+        "api_name": "mistralai/mistral-medium-3-5",
+        "vision": True,
+        "display_name": "Mistral Medium 3.5",
+        "reasoning_support": False
+    },
+    "qwen-3.6-plus": {
+        "api_name": "qwen/qwen3.6-plus",
+        "vision": True,
+        "display_name": "Qwen 3.6 Plus",
         "reasoning_support": False
     }
 }

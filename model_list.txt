@@ -18,11 +18,17 @@ gemini-3.1-pro
 gemini-3.5-flash
 gpt-5.4-mini
 gpt-5.4-pro
+gpt-5.5
+gpt-5.5-pro
 claude-opus-4.6
+claude-opus-4.7-fast
 claude-sonnet-4.6
 grok-4-fast
 grok-4.1-fast
-kimi-k2.5
+grok-4.3
+kimi-k2.6
+mistral-medium-3.5
+qwen-3.6-plus
 
 
 --------------------------------------------------------------

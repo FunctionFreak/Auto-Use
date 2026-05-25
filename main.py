@@ -29,7 +29,7 @@ else:
 
 # Configuration
 PROVIDER = "openrouter"
-MODEL = "gemini-3.5-flash" #refer to the model name correctly from model_list.txt.
+MODEL = "qwen-3.6-flash" #refer to the model name correctly from model_list.txt.
 # Your task here
 task = """
 
