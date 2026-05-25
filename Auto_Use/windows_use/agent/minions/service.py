@@ -44,8 +44,8 @@ from datetime import datetime
 from typing import Optional
 import threading
 
-from ....llm_provider.llm_manager import LLMManager
-from ....controller.view import ControllerView
+from ...llm_provider.llm_manager import LLMManager
+from ...controller.view import ControllerView
 from .view import MinionResponseFormatter
 
 try:

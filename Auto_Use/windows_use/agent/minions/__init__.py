@@ -18,10 +18,10 @@
 # community — thank you for contributing.
 
 # Minion sub-agent package.
-# Mirrors the cli/ package structure:
+# Mirrors the coder/ package structure:
 #   - service.py        : full agent loop (read-only scout variant)
 #   - view.py           : MinionResponseFormatter (next_goal-shape JSON validator)
-#   - __main__.py       : subprocess entry — `python -m ...agent.cli.minions`
+#   - __main__.py       : subprocess entry — `python -m ...agent.minions`
 #   - system_prompt.md  : read-only scout system prompt
 
 from .service import AgentService

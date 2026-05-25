@@ -23,8 +23,8 @@ CLI Agent Entry Point
 This module allows the CLI agent to be run as a subprocess.
 
 Usage:
-    python -m Auto_Use.windows_use.agent.cli --task "your task here"
-    
+    python -m Auto_Use.macOS_use.agent.coder --task "your task here"
+
     Options:
         --task      : Required. The task for CLI agent to execute
         --provider  : LLM provider (default: openrouter)
@@ -37,13 +37,12 @@ When called from main agent:
     - Result is written to --result file when done
 
 When called directly for testing:
-    - Run: python -m Auto_Use.windows_use.agent.cli --task "test task"
+    - Run: python -m Auto_Use.macOS_use.agent.coder --task "test task"
     - Or use cli.py at project root
 """
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 # Import debug_log for error logging (fallback if app module not available)
@@ -62,8 +61,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python -m Auto_Use.windows_use.agent.cli --task "fix the bug in test.py"
-    python -m Auto_Use.windows_use.agent.cli --task "create hello world" --provider openrouter --model gemini-3.5-flash
+    python -m Auto_Use.macOS_use.agent.coder --task "fix the bug in test.py"
+    python -m Auto_Use.macOS_use.agent.coder --task "create hello world" --provider openrouter --model gemini-3.5-flash
         """
     )
     
@@ -107,7 +106,7 @@ Examples:
         "--no_external_terminal",
         action="store_true",
         default=False,
-        help="Disable spawning sub-agents (minions) in new terminal windows. "
+        help="Disable spawning sub-agents (minions) in new Terminal.app windows. "
              "Default: terminals ON for cli.py / main.py terminal UX. Pass this from "
              "app.py / headless mode to keep minion subprocesses hidden."
     )

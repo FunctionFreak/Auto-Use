@@ -81,10 +81,10 @@ Each Minion runs in its own session-isolated scratchpad at `cli_minion/{session_
 python cli.py
 
 # CLI Agent with a specific task
-python -m Auto_Use.macOS_use.agent.cli --task "refactor the auth module"
+python -m Auto_Use.macOS_use.agent.coder --task "refactor the auth module"
 
 # Single Minion for a quick read-only question
-python -m Auto_Use.macOS_use.agent.cli.minions --task "where is _validate_token defined and who calls it?"
+python -m Auto_Use.macOS_use.agent.minions --task "where is _validate_token defined and who calls it?"
 ```
 
 <div align="center">

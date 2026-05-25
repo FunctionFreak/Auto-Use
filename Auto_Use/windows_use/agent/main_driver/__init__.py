@@ -17,8 +17,8 @@
 # A small attribution goes a long way toward a healthy open-source
 # community — thank you for contributing.
 
-# Auto_Use/macOS_use/agent/__init__.py
-from .main_driver.service import AgentService
-from .main_driver.view import AgentResponseFormatter
+# Auto_Use/windows_use/agent/main_driver/__init__.py
+from .service import AgentService
+from .view import AgentResponseFormatter
 
 __all__ = ['AgentService', 'AgentResponseFormatter']
