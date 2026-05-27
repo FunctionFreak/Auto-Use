@@ -47,6 +47,7 @@ import threading
 from pathlib import Path
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -734,6 +735,15 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
 
 # ── entry points ─────────────────────────────────────────────────────────────
 
+async def _on_error(update, context):
+    err = context.error
+    # Benign: user tapped the same inline button twice, so the edit produces
+    # identical content. Telegram rejects it; swallow quietly.
+    if isinstance(err, BadRequest) and "Message is not modified" in str(err):
+        return
+    logger.error("Unhandled exception in telegram handler", exc_info=err)
+
+
 def _build_telegram_app(token: str):
     """Build a python-telegram-bot Application with all our handlers wired.
 
@@ -747,6 +757,7 @@ def _build_telegram_app(token: str):
         .post_init(_post_init)
         .build()
     )
+    app.add_error_handler(_on_error)
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("reset", reset_cmd))
     app.add_handler(CallbackQueryHandler(callback_handler))
