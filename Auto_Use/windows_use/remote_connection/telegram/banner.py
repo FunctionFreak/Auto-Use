@@ -77,14 +77,19 @@ _IS_COMPILED = getattr(sys, "frozen", False) or "__compiled__" in globals()
 
 PILL_WIDTH = 580
 PILL_HEIGHT = 72
-# COMPACT_SIZE is the target square dimension for the small "telegram
-# task running" indicator pill. WinForms imposes an OS-level minimum
-# width (~SM_CXMINTRACK = 132+ logical pixels) on freshly created Forms,
-# which stretches a smaller create_window request into a wide pill — so
-# we always force the final size via window.resize() after the form is
-# alive (see _on_shown). 80 is the sweet spot: small enough to read as
-# an indicator, big enough to hold the 42 px orb with breathing room.
-COMPACT_SIZE = 80
+# Compact pill geometry. Starts as a 50×50 white circle (orb only). When
+# the bot streams text into the .msg span the pill grows rightward into
+# a 580×50 stadium — a single-line ticker. Height never changes. Long
+# messages page through one line at a time (fill, pause, clear, resume).
+# WinForms imposes an OS-level minimum width (~SM_CXMINTRACK = 132+
+# logical pixels) on freshly created Forms, but a programmatic
+# window.resize() AFTER the form is alive bypasses that clamp (see
+# _on_shown). COMPACT_MAX_W matches PILL_WIDTH so the pill never grows
+# past the setup-wizard banner's footprint.
+COMPACT_MIN_W = 50   # square → circle when only the orb is visible
+COMPACT_MIN_H = 50
+COMPACT_MAX_W = 580  # = PILL_WIDTH (the setup-wizard banner's max width)
+COMPACT_MAX_H = 50   # single-line height — pill never grows taller
 SCREEN_MARGIN = 20
 
 
@@ -525,11 +530,24 @@ BANNER_HTML = r"""<!DOCTYPE html>
 
 COMPACT_HTML = r"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><style>
-  html, body { margin: 0; padding: 0; height: 100%; width: 100%;
-    background: #ffffff; overflow: hidden;
-    display: flex; align-items: center; justify-content: center; }
+  /* Compact pill visual model:
+     - Empty state: 50×50 white circle, just the orb.
+     - has-text state: 580×50 single-line stadium pill. Orb on left,
+       text streams to its right; height never changes. Long messages
+       page through one line at a time (fill, pause, clear, continue). */
+  html { margin: 0; padding: 0; background: #ffffff;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-user-select: none; user-select: none; }
+  body { margin: 0; padding: 4px; box-sizing: border-box;
+    background: #ffffff;
+    display: flex; align-items: center; gap: 10px;
+    width: 50px; height: 50px; overflow: hidden; }
+  body.has-text { width: 580px; }
+
   .stop-agent-button { position: relative; width: 42px; height: 42px;
-    background: transparent; display: flex; align-items: center; justify-content: center; }
+    flex-shrink: 0; background: transparent;
+    display: flex; align-items: center; justify-content: center; }
   .stop-orb { position: relative; width: 100%; height: 100%;
     display: flex; align-items: center; justify-content: center; pointer-events: none; }
   .stop-circle-1 { width: 42px; height: 42px; border-radius: 50%; position: absolute;
@@ -583,6 +601,16 @@ COMPACT_HTML = r"""<!DOCTYPE html>
      = cross-fade back. ease-in-out timing makes the swap feel soft. */
   @keyframes icon-cycle-pc { 0%, 40% { opacity: 1 } 50%, 90% { opacity: 0 } 100% { opacity: 1 } }
   @keyframes icon-cycle-tg { 0%, 40% { opacity: 0 } 50%, 90% { opacity: 1 } 100% { opacity: 0 } }
+
+  /* Single-line streaming text. white-space: nowrap keeps tokens
+     flowing left-to-right with no wrapping; overflow: hidden clips
+     anything past max-width. Pager watches scrollWidth and starts a
+     new page before content actually overflows.
+       4 padding-l + 42 orb + 10 gap + 520 msg + 4 padding-r = 580.   */
+  .msg { font-size: 13px; color: #374151; line-height: 1.4;
+    white-space: nowrap; overflow: hidden;
+    max-width: 520px; }
+  .msg:empty { display: none; }
 </style></head>
 <body>
   <div class="stop-agent-button">
@@ -605,6 +633,105 @@ COMPACT_HTML = r"""<!DOCTYPE html>
       </div>
     </div>
   </div>
+  <span class="msg" id="msg"></span>
+  <script>
+    // Stream `text` LETTER-BY-LETTER into .msg, paging through one line
+    // at a time. After each letter, sync-read scrollWidth — if it
+    // exceeds clientWidth (max-width on .msg), this letter overflows:
+    // yank it, hold the visible line briefly, clear, continue streaming
+    // the rest on a fresh line. Loops until every letter has shown.
+    //
+    // First setMsg() of a task waits 350 ms so the WinForms window can
+    // finish its 50→580 width expansion before any text appears (no
+    // per-letter jitter). Subsequent calls start immediately.
+    const _CHAR_DELAY_MS = 8;      // per-letter cadence — fast typewriter feel
+    const _FADE_MS = 60;           // per-letter fade-in duration
+    const _PAGE_HOLD_MS = 400;     // how long a full line lingers before clearing
+    let _revealTimer = null;
+
+    function setMsg(fullText) {
+      if (_revealTimer) { clearTimeout(_revealTimer); _revealTimer = null; }
+      const el = document.getElementById('msg');
+      if (!el) return;
+      const text = (fullText || '').toString();
+      const wasEmpty = !document.body.classList.contains('has-text');
+      document.body.classList.toggle('has-text', !!text);
+      el.textContent = '';
+      if (!text) return;
+
+      // Array.from splits by code point so 🧠 / 🎯 / etc. stay intact.
+      const chars = Array.from(text);
+      let i = 0;
+
+      const streamChar = () => {
+        if (i >= chars.length) {
+          // End of message — hold the final page briefly so the user
+          // can read it, then clear and drop the has-text class so body
+          // shrinks back to the 50×50 circle. A new setMsg() during the
+          // hold cancels this timer (cleared at the top of setMsg).
+          _revealTimer = setTimeout(() => {
+            el.textContent = '';
+            document.body.classList.remove('has-text');
+            _revealTimer = null;
+          }, _PAGE_HOLD_MS);
+          return;
+        }
+
+        const span = document.createElement('span');
+        span.textContent = chars[i];
+        span.style.opacity = '0';
+        span.style.transition = 'opacity ' + _FADE_MS + 'ms ease-out';
+        el.appendChild(span);
+
+        if (el.scrollWidth > el.clientWidth + 0.5) {
+          // Defensive: a single letter too wide for the whole line —
+          // keep it (overflow:hidden clips) and advance so we don't loop.
+          if (el.children.length === 1) {
+            requestAnimationFrame(() => { span.style.opacity = '1'; });
+            i++;
+            _revealTimer = setTimeout(streamChar, _CHAR_DELAY_MS);
+            return;
+          }
+          el.removeChild(span);
+          _revealTimer = setTimeout(() => {
+            el.textContent = '';
+            while (i < chars.length && /\s/.test(chars[i])) i++;
+            streamChar();
+          }, _PAGE_HOLD_MS);
+          return;
+        }
+
+        requestAnimationFrame(() => { span.style.opacity = '1'; });
+        i++;
+        _revealTimer = setTimeout(streamChar, _CHAR_DELAY_MS);
+      };
+
+      const startDelay = wasEmpty ? 350 : 0;
+      _revealTimer = setTimeout(streamChar, startDelay);
+    }
+    window.setMsg = setMsg;
+
+    // Report body size to Python on the empty ↔ has-text toggle (the
+    // only time dimensions change — both states are fixed). Last-value
+    // debounce avoids a resize feedback loop.
+    (function () {
+      let lastW = -1, lastH = -1;
+      const report = () => {
+        if (!window.pywebview || !window.pywebview.api) return;
+        const w = Math.ceil(document.body.getBoundingClientRect().width);
+        const h = Math.ceil(document.body.getBoundingClientRect().height);
+        if (w === lastW && h === lastH) return;
+        lastW = w; lastH = h;
+        try { window.pywebview.api.size_changed(w, h); } catch (e) {}
+      };
+      window.addEventListener('load', () => setTimeout(report, 30));
+      window.addEventListener('pywebviewready', () => setTimeout(report, 30));
+      try {
+        const ro = new ResizeObserver(report);
+        ro.observe(document.body);
+      } catch (e) {}
+    })();
+  </script>
 </body>
 </html>
 """
@@ -624,13 +751,25 @@ class _BannerState:
 
     Deliberately NOT used as `js_api` — see _make_js_handlers."""
 
-    def __init__(self, title: str, width: int, min_h: int, compact: bool):
+    def __init__(self, title: str, width: int, min_h: int, compact: bool,
+                 screen_w: int = 1920, top_margin: int = SCREEN_MARGIN,
+                 right_margin: int = SCREEN_MARGIN):
         self.window = None
         self.title = title
         self.width = width
         self.min_h = min_h
         self.compact = compact
         self.last_h = min_h
+        # Last reported width — only relevant for compact mode where both
+        # axes grow. Standard mode keeps a fixed width so this stays at
+        # init value.
+        self.last_w = width
+        # Screen geometry the resize handler uses to anchor the pill's
+        # top-right corner. Without this the pill would drift leftward
+        # across the screen as it grew wider.
+        self.screen_w = screen_w
+        self.top_margin = top_margin
+        self.right_margin = right_margin
 
 
 def _make_js_handlers(state: _BannerState):
@@ -661,8 +800,9 @@ def _make_js_handlers(state: _BannerState):
     def height_changed(h=0):
         """Resize the window to fit the reported body height, then
         re-clip the (possibly taller) window into a stadium so the end
-        caps follow the new height. No-op for the compact pill which
-        has no scrollable content and a constant 80×80 size."""
+        caps follow the new height. Used by the STANDARD banner only —
+        the compact pill posts {w, h} to size_changed instead, which
+        animates both axes."""
         if state.compact or state.window is None:
             return None
         try:
@@ -679,7 +819,41 @@ def _make_js_handlers(state: _BannerState):
             pass
         return None
 
-    return next_clicked, choice_clicked, save_clicked, height_changed
+    def size_changed(w=0, h=0):
+        """Resize the compact pill in both axes to fit its natural body
+        size, then re-position so the top-right corner stays anchored to
+        its screen position (without this, growing wider would push the
+        pill leftward across the screen). Compact mode only — the
+        standard banner has a fixed width and uses height_changed."""
+        if not state.compact or state.window is None:
+            return None
+        try:
+            new_w = max(COMPACT_MIN_W, min(COMPACT_MAX_W, int(w)))
+            new_h = max(COMPACT_MIN_H, min(COMPACT_MAX_H, int(h)))
+            if new_w == state.last_w and new_h == state.last_h:
+                return None
+            state.last_w = new_w
+            state.last_h = new_h
+            # window.move BEFORE resize: when we shrink the pill, resizing
+            # first leaves a brief 1-frame gap on the right; moving first
+            # closes that gap. Both APIs schedule on the GUI thread so the
+            # ordering is honoured by WinForms.
+            new_x = max(0, state.screen_w - new_w - state.right_margin)
+            new_y = state.top_margin
+            try:
+                state.window.move(new_x, new_y)
+            except Exception:
+                pass
+            state.window.resize(new_w, new_h)
+            # Region clip is sized in absolute pixels — recompute for the
+            # new dimensions or the pill renders with hard rectangle
+            # corners on its excess area.
+            _apply_rounded_region(state.title)
+        except Exception:
+            pass
+        return None
+
+    return next_clicked, choice_clicked, save_clicked, height_changed, size_changed
 
 
 # ── stdin reader thread (subprocess-side only) ───────────────────────────
@@ -781,16 +955,19 @@ def _run_subprocess_banner() -> None:
         except Exception:
             screen_w = 1920
 
-        w = COMPACT_SIZE if compact else PILL_WIDTH
-        h = COMPACT_SIZE if compact else PILL_HEIGHT
+        w = COMPACT_MIN_W if compact else PILL_WIDTH
+        h = COMPACT_MIN_H if compact else PILL_HEIGHT
         x = max(0, screen_w - w - SCREEN_MARGIN)
         y = SCREEN_MARGIN
         html = COMPACT_HTML if compact else BANNER_HTML
         title = f"AutoUseBanner_{uuid.uuid4().hex[:8]}"
-        state = _BannerState(title=title, width=w, min_h=h, compact=compact)
-        next_clicked, choice_clicked, save_clicked, height_changed = (
-            _make_js_handlers(state)
+        state = _BannerState(
+            title=title, width=w, min_h=h, compact=compact,
+            screen_w=screen_w, top_margin=SCREEN_MARGIN,
+            right_margin=SCREEN_MARGIN,
         )
+        (next_clicked, choice_clicked, save_clicked,
+         height_changed, size_changed) = _make_js_handlers(state)
 
         # No js_api here — methods on a Nuitka-compiled class fail pywebview's
         # `inspect.ismethod` filter and never get exposed to JS. We register
@@ -809,30 +986,41 @@ def _run_subprocess_banner() -> None:
             resizable=False,
         )
         state.window = window
-        window.expose(next_clicked, choice_clicked, save_clicked, height_changed)
+        window.expose(next_clicked, choice_clicked, save_clicked,
+                      height_changed, size_changed)
         _log("window created and handlers exposed")
 
         def _on_shown():
             _log("on_shown: entered")
             # Compact mode: WinForms stretches our small create_window
-            # request to its OS-imposed minimum width (~132+ logical px),
-            # producing a wide pill instead of the tight circle we want.
+            # request to its OS-imposed minimum width (~132+ logical px).
             # A programmatic window.resize() AFTER the form is alive
-            # bypasses that minimum — Form.Size setter doesn't go through
-            # the SM_CXMINTRACK clamp the way the initial size does. We
-            # then re-clip the (now smaller, square) window into a circle.
+            # bypasses that minimum. We size to COMPACT_MIN_W × COMPACT_MIN_H
+            # initially; once the page loads and the ResizeObserver fires,
+            # size_changed will resize the window to fit the natural
+            # content (orb-only until text streams in).
             if compact:
                 try:
-                    window.resize(COMPACT_SIZE, COMPACT_SIZE)
+                    window.resize(COMPACT_MIN_W, COMPACT_MIN_H)
+                    # Reposition to anchor top-right based on the actual
+                    # initial size — without this WinForms may have placed
+                    # the wider initial window further left than we want.
+                    new_x = max(
+                        0, state.screen_w - COMPACT_MIN_W - state.right_margin
+                    )
+                    try:
+                        window.move(new_x, state.top_margin)
+                    except Exception:
+                        pass
                     # Give WinForms one frame to actually realise the new
                     # rect before _apply_rounded_region reads it — without
                     # this the region clip runs against the old wide-pill
-                    # geometry and we lose the circle shape.
+                    # geometry.
                     time.sleep(0.1)
                 except Exception:
                     pass
-            # Clip into a pill (or circle, in compact mode) and emit READY
-            # so the parent's show() unblocks.
+            # Clip into a stadium pill and emit READY so the parent's
+            # show() unblocks.
             _apply_rounded_region(title)
             # Compact indicator is purely visual — drop mouse input so the
             # user can click the desktop or any window underneath it. Only
@@ -991,8 +1179,8 @@ class StatusBanner:
             _stderr("banner subprocess never emitted READY")
 
     def update(self, text: str) -> None:
-        if self._compact:
-            return
+        # Both modes accept MSG now — the compact pill renders the
+        # thinking-stream text in its msg span and grows to fit.
         self._send({"cmd": "MSG", "text": text or ""})
 
     def wait_for_next(self, timeout: float | None = None) -> bool:

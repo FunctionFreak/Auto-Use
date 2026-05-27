@@ -696,12 +696,26 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
             provider_keys.get(provider_key_name) if provider_key_name else None
         )
 
+        # Pipe each step's formatted response (thinking + current_goal +
+        # memory + verdict, with action stripped) into the compact banner.
+        # The agent already calls text_callback at
+        # main_driver/service.py with exactly this content — same path the
+        # frontend's streamAgentText uses in app.py. update() forwards via
+        # the MSG stdin command to the banner subprocess; the call returns
+        # quickly so the agent loop never blocks on it.
+        def _banner_update(text: str) -> None:
+            try:
+                task_banner.update(text)
+            except Exception:
+                logger.warning("banner.update failed", exc_info=True)
+
         agent = AgentService(
             provider=provider,
             model=model,
             save_conversation=False,
             thinking=True,
             api_key=provider_api_key,
+            text_callback=_banner_update,
         )
         agent.process_request(task)
         # Stop the monitor BEFORE the done message so the final scratchpad
