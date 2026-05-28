@@ -723,92 +723,111 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
     
-    // Milestone streaming - word by word, stacking vertically
+    // Milestone streaming — letter by letter, stacking vertically. Each
+    // char gets its own opacity-fade-in span so the line types out
+    // smoothly (matching the Telegram banner's typewriter feel).
     window.streamMilestone = (text) => {
         const milestoneStream = document.getElementById('milestoneStream');
         if (!milestoneStream) return;
-        
-        // Create new milestone line
+
         const milestoneLine = document.createElement('div');
         milestoneLine.className = 'milestone-line';
         milestoneStream.appendChild(milestoneLine);
-        
-        // Split text into words
-        const words = text.split(/\s+/).filter(w => w.length > 0);
-        let currentIndex = 0;
-        
-        // Fast streaming speed (milliseconds per word)
-        const speed = 30;
-        
-        const streamWord = () => {
-            if (currentIndex < words.length) {
-                // Add word with space
-                if (currentIndex > 0) {
-                    milestoneLine.textContent += ' ';
-                }
-                milestoneLine.textContent += words[currentIndex];
-                currentIndex++;
-                
-                // Auto-scroll to bottom
-                milestoneStream.parentElement.scrollTop = milestoneStream.parentElement.scrollHeight;
-                
-                setTimeout(streamWord, speed);
-            }
+
+        // Array.from splits by code point so emoji (🧠 / 🎯 / ✅) stay intact.
+        const chars = Array.from(text);
+        let i = 0;
+        const CHAR_DELAY_MS = 5;
+        const FADE_MS = 60;
+
+        const streamChar = () => {
+            if (i >= chars.length) return;
+            const span = document.createElement('span');
+            span.textContent = chars[i];
+            span.style.opacity = '0';
+            span.style.transition = 'opacity ' + FADE_MS + 'ms ease-out';
+            milestoneLine.appendChild(span);
+            requestAnimationFrame(() => { span.style.opacity = '1'; });
+
+            // Auto-scroll keeps the newest line pinned to the bottom.
+            milestoneStream.parentElement.scrollTop = milestoneStream.parentElement.scrollHeight;
+
+            i++;
+            setTimeout(streamChar, CHAR_DELAY_MS);
         };
-        
-        // Start streaming
-        streamWord();
+
+        streamChar();
     };
 
-    // Word-by-word streaming for agent text in the response strip
+    // Letter-by-letter streaming for agent text in the response strip.
+    // Each char is its own span with an opacity fade so the line types
+    // out smoothly. When a char would overflow the strip's right edge,
+    // we clear and restart with that same char at the left (matches the
+    // Telegram banner's pager behavior, just inside a single-line strip
+    // instead of a pill).
     let streamingTimeout = null;
     window.streamAgentText = (text) => {
         const agentText = document.getElementById('agentText');
         const agentStrip = document.getElementById('agentResponseStrip');
-        
+
         if (!agentText || !agentStrip) return;
-        
-        // Make sure strip is visible
+
         agentStrip.classList.add('active');
-        
-        // Clear any existing streaming
+
         if (streamingTimeout) {
             clearTimeout(streamingTimeout);
         }
-        
-        // Split text into words
-        const words = text.split(/\s+/).filter(w => w.length > 0);
-        let currentIndex = 0;
-        let currentLine = '';
-        
-        // Speed in milliseconds per word (fast but readable)
-        const baseSpeed = 25;
-        
-        const streamWord = () => {
-            if (currentIndex < words.length) {
-                // Add next word to current line
-                const testLine = currentLine ? currentLine + ' ' + words[currentIndex] : words[currentIndex];
-                
-                // Temporarily set to measure width
-                agentText.textContent = testLine;
-                
-                // Check if text overflows the container
-                if (agentText.scrollWidth > agentText.clientWidth) {
-                    // Reset - start fresh from left with current word
-                    currentLine = words[currentIndex];
-                    agentText.textContent = currentLine;
-                } else {
-                    // Fits - keep adding
-                    currentLine = testLine;
-                }
-                
-                currentIndex++;
-                streamingTimeout = setTimeout(streamWord, baseSpeed);
-            }
+
+        // Array.from preserves emoji as single tokens.
+        const chars = Array.from(text);
+        let i = 0;
+        const CHAR_DELAY_MS = 4;
+        const FADE_MS = 60;
+
+        // Start with a clean strip — previous step's text would otherwise
+        // be measured into the new overflow check.
+        agentText.textContent = '';
+
+        const appendCharFade = (ch) => {
+            const span = document.createElement('span');
+            span.textContent = ch;
+            span.style.opacity = '0';
+            span.style.transition = 'opacity ' + FADE_MS + 'ms ease-out';
+            agentText.appendChild(span);
+            requestAnimationFrame(() => { span.style.opacity = '1'; });
+            return span;
         };
-        
-        // Start streaming
-        streamWord();
+
+        const streamChar = () => {
+            if (i >= chars.length) return;
+
+            const span = appendCharFade(chars[i]);
+
+            // Sync layout read forces reflow → we see whether this char
+            // pushed past the strip's right edge. If yes (and it isn't
+            // the only char), clear the strip and re-place this char at
+            // the left edge of a fresh line.
+            if (agentText.scrollWidth > agentText.clientWidth + 0.5) {
+                if (agentText.childElementCount === 1) {
+                    // Single char wider than the strip — accept and move on
+                    // so we don't loop forever.
+                    i++;
+                    streamingTimeout = setTimeout(streamChar, CHAR_DELAY_MS);
+                    return;
+                }
+                agentText.textContent = '';
+                // Skip leading whitespace so the new line doesn't open
+                // with a hanging space.
+                while (i < chars.length && /\s/.test(chars[i])) i++;
+                streamChar();
+                return;
+            }
+
+            i++;
+            streamingTimeout = setTimeout(streamChar, CHAR_DELAY_MS);
+        };
+
+        streamChar();
     };
 
 
@@ -1819,8 +1838,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (_tickFadeTimer) { clearTimeout(_tickFadeTimer); _tickFadeTimer = null; }
     };
 
-    // Per-word fade-in stagger. Higher = calmer reading pace.
-    const CLI_WORD_STAGGER_MS  = 45;
+    // Per-character cadence — matches the Telegram banner's 8 ms feel.
+    const CLI_CHAR_STAGGER_MS  = 8;
+    // Per-character fade-in duration (opacity 0→1).
+    const CLI_CHAR_FADE_MS     = 60;
     // Hold a finished page (full pill width filled) before clearing for the next page.
     const CLI_PAGE_HOLD_MS     = 550;
     // Hold between distinct lines (after the final page of a line completes).
@@ -1832,9 +1853,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // millisecond. We're explicitly OK with the UI lagging behind real time —
     // smoothness matters more than catching up.
     //
-    // Each line is "paginated": words stream left-to-right; when the next
-    // word would overflow the pill width, the current page holds, the
-    // output clears, and that word starts the next page from the left.
+    // Each line is "paginated": characters stream left-to-right letter by
+    // letter; when the next char would overflow the pill width, the current
+    // page holds, the output clears, and that char starts the next page
+    // from the left.
     const _cliPillRunners = new WeakMap();
 
     function _getRunner(pill) {
@@ -1859,10 +1881,12 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const words = String(text).split(/\s+/).filter(w => w.length > 0);
+        // Array.from splits by code point so emoji stay intact (text.split('')
+        // would split them into surrogate halves).
+        const chars = Array.from(String(text));
         const lineClass = stream === 'err' ? 'cli-line cli-line-err' : 'cli-line cli-line-out';
 
-        if (words.length === 0) {
+        if (chars.length === 0) {
             runner.running = false;
             _pumpCliRunner(pill, runner);
             return;
@@ -1878,7 +1902,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         let i = 0;
         const tick = () => {
-            if (i >= words.length) {
+            if (i >= chars.length) {
                 // Final page rendered — hold, then drop the run flag so the
                 // next queued line gets pulled.
                 setTimeout(() => {
@@ -1890,29 +1914,36 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const isFirstOnPage = pageDiv.childElementCount === 0;
             const span = document.createElement('span');
-            span.className = 'cli-word';
-            span.textContent = (isFirstOnPage ? '' : ' ') + words[i];
+            span.className = 'cli-char';
+            span.textContent = chars[i];
+            span.style.opacity = '0';
+            span.style.transition = 'opacity ' + CLI_CHAR_FADE_MS + 'ms ease-out';
             pageDiv.appendChild(span);
 
-            // Did this word push past the pill's right edge? Measure on the
+            // Did this char push past the pill's right edge? Measure on the
             // page div itself — `.cli-line` has overflow:hidden so the
-            // overflow doesn't propagate up to `.cli-output`. If the word
-            // doesn't fit (and it isn't the only word on this page), retract
-            // it, hold the current page, then start fresh with this word at
+            // overflow doesn't propagate up to `.cli-output`. If the char
+            // doesn't fit (and it isn't the only char on this page), retract
+            // it, hold the current page, then start fresh with this char at
             // the left edge of a new page.
             const overflowed = pageDiv.scrollWidth > pageDiv.clientWidth + 1;
             if (overflowed && !isFirstOnPage) {
                 pageDiv.removeChild(span);
                 setTimeout(() => {
                     startNewPage();
-                    tick();  // retry placing this word as the start of the new page
+                    // Skip leading whitespace so the new page doesn't open
+                    // with a hanging space.
+                    while (i < chars.length && /\s/.test(chars[i])) i++;
+                    tick();  // retry placing this char as the start of the new page
                 }, CLI_PAGE_HOLD_MS);
                 return;
             }
 
-            // Word fits (or it's a lone oversized word we accept as-is).
+            // Char fits (or it's a lone oversized char we accept as-is). Kick
+            // off the opacity fade on the next frame.
+            requestAnimationFrame(() => { span.style.opacity = '1'; });
             i++;
-            setTimeout(tick, CLI_WORD_STAGGER_MS);
+            setTimeout(tick, CLI_CHAR_STAGGER_MS);
         };
 
         tick();

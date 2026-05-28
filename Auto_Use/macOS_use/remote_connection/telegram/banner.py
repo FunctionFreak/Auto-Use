@@ -291,18 +291,53 @@ body { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
 """
 
 
-# Compact HTML — used when StatusBanner(compact=True). Just the orb in a tiny
-# circular pill, no message span, no Next button, no JS message handlers. The
-# centred PC monitor icon cross-fades with a Telegram paper-plane every ~5s
-# so the user can tell at a glance this is a Telegram-triggered task.
+# Compact HTML — used when StatusBanner(compact=True).
+#
+# Visual model:
+#   Empty state (no task running):
+#     ┌──┐
+#     │○ │   44×44 white circle, just the orb.
+#     └──┘
+#
+#   Text streaming (during a task):
+#     ┌────────────────────────────────────────┐
+#     │○  single-line text streams to the right│
+#     └────────────────────────────────────────┘
+#                                            440 px
+#
+# Pre-expand width, then stream (no jitter):
+#  - body has fixed empty width (44) and fixed has-text width (440); the
+#    height stays at 44 in both states. On first setMsg(), JS toggles
+#    body.has-text, body width snaps 44→440, ResizeObserver fires once,
+#    Python animates the NSPanel over ~0.25 s. JS then waits 350 ms
+#    before appending the first word, so streaming starts AFTER the
+#    banner finishes expanding.
+#
+# Paging through long messages:
+#  - .msg is `white-space: nowrap; overflow: hidden` and capped at
+#    max-width: 388 px. After each word, JS does a sync layout read to
+#    check if scrollWidth has exceeded the visible width. If yes, the
+#    word that overflowed is removed, we hold the current line briefly,
+#    then clear and continue streaming the remaining words on a fresh
+#    line. Loops until every word has been displayed.
 COMPACT_HTML = """
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
-html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: transparent;
-  overflow: hidden; }
-body { display: flex; align-items: center; justify-content: center; }
+html { margin: 0; padding: 0; background: transparent;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+
+/* Empty state: 44×44 perfect circle (orb only). has-text: 440×44
+   stadium — height stays the same, only width animates. Python's
+   setFrame_display_animate_ handles the smooth NSPanel animation while
+   the WKWebView frame follows it via its autoresizing mask. */
+body { margin: 0; padding: 4px; box-sizing: border-box;
+  background: transparent;
+  display: flex; align-items: center; gap: 8px;
+  width: 44px; height: 44px; overflow: hidden; }
+body.has-text { width: 440px; }
 
 .orb-wrap { position: relative; width: 36px; height: 36px;
+  flex-shrink: 0;
   display: flex; align-items: center; justify-content: center; }
 
 .stop-circle-1 {
@@ -362,6 +397,17 @@ body { display: flex; align-items: center; justify-content: center; }
 .stop-eye { width: 1.5px; height: 2.5px; border-radius: 1px; background: white; animation: stop-blink 4s infinite; }
 .stop-base { width: 14px; height: 1px; background: white; border-radius: 0.5px; }
 
+/* Single-line streaming text. white-space: nowrap means tokens line up
+   left-to-right and never wrap. max-width caps the visible portion at
+   exactly the remaining body width (388 = 440 - 4 pad - 36 orb - 8 gap
+   - 4 pad), overflow: hidden clips anything past it. The JS pager
+   watches scrollWidth and starts a new "page" before content actually
+   overflows. */
+.msg { font-size: 12.5px; color: #6b6b75; line-height: 1.35;
+  white-space: nowrap; overflow: hidden;
+  max-width: 388px; padding: 0; }
+.msg:empty { display: none; }
+
 @keyframes stop-pulse  { 0%{transform:scale(.97)} 15%{transform:scale(1)} 30%{transform:scale(.98)} 45%{transform:scale(1)} 60%{transform:scale(.97)} 85%{transform:scale(1)} 100%{transform:scale(.97)} }
 @keyframes stop-pulse2 { 0%{transform:scale(1)} 15%{transform:scale(1.03)} 30%{transform:scale(.98)} 45%{transform:scale(1.04)} 60%{transform:scale(.97)} 85%{transform:scale(1.03)} 100%{transform:scale(1)} }
 @keyframes stop-bgRotate { 0%{transform:rotate(0)} 20%{transform:rotate(90deg)} 40%{transform:rotate(180deg) scale(.95,1)} 60%,100%{transform:rotate(360deg)} }
@@ -384,6 +430,114 @@ body { display: flex; align-items: center; justify-content: center; }
     </div>
   </div>
 </div>
+<span class="msg" id="msg"></span>
+<script>
+  // Stream `text` LETTER-BY-LETTER into the msg element. Long messages
+  // are PAGED — after each letter we check if scrollWidth has exceeded
+  // the visible line width; if so we yank the offending letter, hold
+  // the line briefly so the user can read it, clear, and continue on a
+  // fresh line. Loops until every letter has been displayed.
+  //
+  // First setMsg() of a task waits ~350 ms before streaming so the
+  // NSPanel finishes its 44→440 width expansion before any text appears.
+  // Subsequent calls (next agent step, banner already wide) start
+  // immediately.
+  const _CHAR_DELAY_MS = 8;      // per-letter cadence — fast typewriter feel
+  const _FADE_MS = 60;           // per-letter fade-in duration
+  const _PAGE_HOLD_MS = 400;     // how long a full line lingers before clearing
+  let _revealTimer = null;
+
+  function setMsg(fullText) {
+    if (_revealTimer) { clearTimeout(_revealTimer); _revealTimer = null; }
+    const el = document.getElementById('msg');
+    if (!el) return;
+    const text = (fullText || '').toString();
+    const wasEmpty = !document.body.classList.contains('has-text');
+    document.body.classList.toggle('has-text', !!text);
+    el.textContent = '';
+    if (!text) return;
+
+    // Array.from splits by code point so 🧠 / 🎯 / etc. stay intact
+    // (text.split('') would split them into surrogate halves).
+    const chars = Array.from(text);
+    let i = 0;
+
+    const streamChar = () => {
+      if (i >= chars.length) {
+        // End of message — hold the final page briefly so the user can
+        // read it, then clear and drop the has-text class so body
+        // shrinks back to the 44×44 circle. A new setMsg() during the
+        // hold cancels this timer (cleared at the top of setMsg).
+        _revealTimer = setTimeout(() => {
+          el.textContent = '';
+          document.body.classList.remove('has-text');
+          _revealTimer = null;
+        }, _PAGE_HOLD_MS);
+        return;
+      }
+
+      const span = document.createElement('span');
+      span.textContent = chars[i];
+      span.style.opacity = '0';
+      span.style.transition = 'opacity ' + _FADE_MS + 'ms ease-out';
+      el.appendChild(span);
+
+      // Sync layout read forces reflow → we see whether this letter
+      // overflowed the visible line. clientWidth is the max-width cap
+      // (388), scrollWidth is the natural width of all spans appended
+      // so far. If scrollWidth > clientWidth this letter doesn't fit —
+      // yank it out, hold the line briefly, then resume on a fresh page
+      // from the same letter.
+      if (el.scrollWidth > el.clientWidth + 0.5) {
+        // Defensive: single letter wider than the line (huge font?)
+        // can't be paged out — keep it (overflow:hidden clips) and
+        // advance so we don't loop forever.
+        if (el.children.length === 1) {
+          requestAnimationFrame(() => { span.style.opacity = '1'; });
+          i++;
+          _revealTimer = setTimeout(streamChar, _CHAR_DELAY_MS);
+          return;
+        }
+        el.removeChild(span);
+        _revealTimer = setTimeout(() => {
+          el.textContent = '';
+          // Skip leading whitespace so the new page doesn't open with
+          // a space gap.
+          while (i < chars.length && /\\s/.test(chars[i])) i++;
+          streamChar();
+        }, _PAGE_HOLD_MS);
+        return;
+      }
+
+      requestAnimationFrame(() => { span.style.opacity = '1'; });
+      i++;
+      _revealTimer = setTimeout(streamChar, _CHAR_DELAY_MS);
+    };
+
+    const startDelay = wasEmpty ? 350 : 0;
+    _revealTimer = setTimeout(streamChar, startDelay);
+  }
+  window.setMsg = setMsg;
+
+  // Report body size to Python whenever it changes (basically just on
+  // the empty ↔ has-text toggle, since the dimensions are fixed in
+  // both states). Last-value debounce avoids a resize feedback loop.
+  (function () {
+    let lastW = -1, lastH = -1;
+    const report = () => {
+      const w = Math.ceil(document.body.getBoundingClientRect().width);
+      const h = Math.ceil(document.body.getBoundingClientRect().height);
+      if (w === lastW && h === lastH) return;
+      lastW = w; lastH = h;
+      try {
+        webkit.messageHandlers.size_changed.postMessage({w: w, h: h});
+      } catch (e) {}
+    };
+    window.addEventListener('load', () => setTimeout(report, 30));
+    const ro = new ResizeObserver(report);
+    ro.observe(document.body);
+  })();
+</script>
 </body></html>
 """
 
@@ -471,21 +625,46 @@ if _COCOA_OK:
                 self._event.set()
             except Exception:
                 pass
+
+    class _SizeHandler(NSObject):
+        """WKScriptMessageHandler — receives `{w, h}` from JS (compact
+        pill's ResizeObserver) and routes to banner._on_size_changed on
+        the main thread. Used for the compact pill which animates BOTH
+        width and height as thinking text streams in; the standard
+        banner keeps using _HeightHandler since its width is fixed."""
+        def userContentController_didReceiveScriptMessage_(self, controller, message):
+            try:
+                banner = self._banner
+                if banner is None:
+                    return
+                body = message.body()
+                # JS posts a plain object → arrives as NSDictionary in
+                # PyObjC. Either dict-style access works in modern PyObjC.
+                w = int(body["w"]) if "w" in body else 0
+                h = int(body["h"]) if "h" in body else 0
+                banner._on_size_changed(w, h)
+            except Exception:
+                pass
 else:
     _NextHandler = None
     _HeightHandler = None
     _ChoiceHandler = None
     _SaveHandler = None
     _RevealHandler = None
+    _SizeHandler = None
 
 
 class StatusBanner:
     W, MIN_H, MAX_H, TOP_MARGIN, RIGHT_MARGIN = 440, 44, 200, 56, 20
-    # Compact variant: just the orb, no msg / button / scripts. Fixed-size
-    # circular pill (W == H, radius == W/2). Used for "Telegram task running"
-    # indicator — pure visual, click-through. Sized to hug the 36 px orb with
-    # ~4 px breathing room — anything taller and the pill looks padded.
-    COMPACT_W = COMPACT_H = 44
+    # Compact variant: starts as a 44×44 white circle (orb only). When
+    # streaming text arrives the pill grows rightward into a 440×44
+    # stadium — a single-line ticker. Height never changes. Long messages
+    # page through one line at a time (fill, pause, clear, continue).
+    # Top-right corner stays anchored so width grows leftward only.
+    COMPACT_MIN_W = 44      # square → circle when only the orb is visible
+    COMPACT_MIN_H = 44
+    COMPACT_MAX_W = 440     # = self.W (the setup-wizard banner's max width)
+    COMPACT_MAX_H = 44      # single-line height — pill never grows taller
 
     def __init__(self, compact: bool = False):
         self._compact = compact
@@ -496,6 +675,7 @@ class StatusBanner:
         self._choice_handler = None
         self._save_handler = None
         self._reveal_handler = None
+        self._size_handler = None
         self._next_event = threading.Event()
         self._choice_event = threading.Event()
         self._save_event = threading.Event()
@@ -503,7 +683,10 @@ class StatusBanner:
         # update() clears this; the JS reveal_done handler re-sets it.
         self._reveal_event = threading.Event()
         self._reveal_event.set()
-        self._current_h = self.COMPACT_H if compact else self.MIN_H
+        # Track both axes so _on_size_changed can detect no-ops and skip
+        # the AppKit setFrame call (which would re-trigger the animation).
+        self._current_w = self.COMPACT_MIN_W if compact else self.W
+        self._current_h = self.COMPACT_MIN_H if compact else self.MIN_H
 
     # ---- public API (callable from any thread) ----
 
@@ -513,13 +696,13 @@ class StatusBanner:
         callAfter(self._create)
 
     def update(self, text):
-        # Compact pills have no msg span — silently no-op so callers don't
-        # have to branch.
-        if not _COCOA_OK or self._compact:
+        if not _COCOA_OK:
             return
         # A streaming reveal is about to start in JS; clear the event so any
-        # following wait_for_* call blocks until JS posts reveal_done.
-        self._reveal_event.clear()
+        # following wait_for_* call blocks until JS posts reveal_done. Only
+        # relevant in standard mode (compact pill never waits on reveals).
+        if not self._compact:
+            self._reveal_event.clear()
         callAfter(self._set_text, text)
 
     # Cap the wait-for-reveal so a JS hiccup that drops the reveal_done
@@ -614,8 +797,10 @@ class StatusBanner:
         try:
             scr = NSScreen.mainScreen().frame()
             if self._compact:
-                w_px, h_px = self.COMPACT_W, self.COMPACT_H
-                corner = w_px / 2.0
+                w_px, h_px = self.COMPACT_MIN_W, self.COMPACT_MIN_H
+                # Stadium pill — same corner radius as the standard banner
+                # so the shape stays consistent as the pill grows.
+                corner = self.COMPACT_MIN_H / 2.0
                 html = COMPACT_HTML
                 ignores_mouse = True  # click-through; purely visual
             else:
@@ -662,8 +847,13 @@ class StatusBanner:
 
             cfg = WKWebViewConfiguration.alloc().init()
 
-            # JS→Python bridges only relevant in standard mode (compact pill
-            # has no Next button and a fixed size — no need for either handler).
+            # JS→Python bridges. The compact pill only needs setMsg + the
+            # size_changed bridge (it has no buttons, no input, no reveal
+            # gating). The standard banner registers the full set.
+            size_h = _SizeHandler.alloc().init()
+            size_h._banner = self
+            cfg.userContentController().addScriptMessageHandler_name_(size_h, "size_changed")
+
             if not self._compact:
                 nh = _NextHandler.alloc().init()
                 nh._event = self._next_event
@@ -726,6 +916,8 @@ class StatusBanner:
             self._next_handler, self._height_handler = nh, hh
             self._choice_handler, self._save_handler = ch, sh
             self._reveal_handler = rh
+            self._size_handler = size_h
+            self._current_w = w_px
             self._current_h = h_px
         except Exception as e:
             logger.warning(f"banner: _create failed ({e})")
@@ -816,6 +1008,45 @@ class StatusBanner:
         except Exception:
             pass
 
+    def _on_size_changed(self, requested_w, requested_h):
+        """Resize the compact pill to fit its natural content.
+
+        Compact mode only. Top-right corner stays anchored — the pill
+        grows leftward and downward. Sizes are clamped to
+        [COMPACT_MIN_W..COMPACT_MAX_W] × [COMPACT_MIN_H..COMPACT_MAX_H].
+        The contentView's corner radius is updated to half the smaller
+        dimension so the pill is a perfect circle when 44×44 (empty
+        state) and a proper stadium when 440×78 (has-text state).
+        Standard mode never gets here because its width is fixed; height
+        changes for the standard banner come through _on_height_changed."""
+        try:
+            if self._window is None or not self._compact:
+                return
+            new_w = max(self.COMPACT_MIN_W, min(int(requested_w), self.COMPACT_MAX_W))
+            new_h = max(self.COMPACT_MIN_H, min(int(requested_h), self.COMPACT_MAX_H))
+            if abs(new_w - self._current_w) < 1 and abs(new_h - self._current_h) < 1:
+                return
+            self._current_w = new_w
+            self._current_h = new_h
+            frame = self._window.frame()
+            # NSWindow origin is bottom-left. Anchor top-right by shifting
+            # origin x leftward as width grows AND shifting origin y down
+            # so the top edge stays fixed.
+            new_x = frame.origin.x + frame.size.width - new_w
+            new_y = frame.origin.y + frame.size.height - new_h
+            new_frame = NSMakeRect(new_x, new_y, new_w, new_h)
+            self._window.setFrame_display_animate_(new_frame, True, True)
+            # Update the rounded clip — half the smaller dimension keeps
+            # the shape stadium-pill (or perfect circle at 44×44).
+            try:
+                content = self._window.contentView()
+                if content is not None:
+                    content.layer().setCornerRadius_(min(new_w, new_h) / 2.0)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning(f"banner: _on_size_changed failed ({e})")
+
     def _on_height_changed(self, requested_h):
         """Resize the NSWindow to match the WebView's content height.
 
@@ -858,6 +1089,7 @@ class StatusBanner:
                         uc.removeScriptMessageHandlerForName_("choice_clicked")
                         uc.removeScriptMessageHandlerForName_("save_clicked")
                         uc.removeScriptMessageHandlerForName_("reveal_done")
+                        uc.removeScriptMessageHandlerForName_("size_changed")
                 except Exception:
                     pass
             if self._window is not None:
@@ -878,3 +1110,4 @@ class StatusBanner:
             self._choice_handler = None
             self._save_handler = None
             self._reveal_handler = None
+            self._size_handler = None
