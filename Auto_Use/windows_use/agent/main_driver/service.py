@@ -684,7 +684,7 @@ No image and element tree provided. Focus on digesting the web response below.
                 # Note: messages_for_api has previous responses with Step 1 replaced if applicable
                 # normalized_json is current response (with thinking)
                 self._save_conversation(messages_for_api, user_message, normalized_json, image_sent, step_number)
-                
+
                 # Remove thinking from response before adding to memory (saves tokens)
                 normalized_json_without_thinking = self._remove_thinking_from_response(normalized_json)
                 
