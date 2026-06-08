@@ -75,8 +75,15 @@ _IS_COMPILED = getattr(sys, "frozen", False) or "__compiled__" in globals()
 
 # ── Pill geometry ─────────────────────────────────────────────────────────
 
-PILL_WIDTH = 580
-PILL_HEIGHT = 72
+# Setup-wizard banner. A clean white stadium pill that matches the
+# standalone pill.py reference exactly — 350 × 42, no orb, no grow
+# animation: it simply appears at full size and streams status text.
+# (The colourful animated orb still lives on the compact task-progress
+# pill below — only the setup wizard was asked to drop it "for now".)
+# The pill grows taller only when a wizard message wraps to multiple
+# lines (see height_changed); a single-line message stays exactly 42 px.
+PILL_WIDTH = 350
+PILL_HEIGHT = 42
 # Compact pill geometry. Starts as a 50×50 white circle (orb only). When
 # the bot streams text into the .msg span the pill grows rightward into
 # a 580×50 stadium — a single-line ticker. Height never changes. Long
@@ -84,11 +91,11 @@ PILL_HEIGHT = 72
 # WinForms imposes an OS-level minimum width (~SM_CXMINTRACK = 132+
 # logical pixels) on freshly created Forms, but a programmatic
 # window.resize() AFTER the form is alive bypasses that clamp (see
-# _on_shown). COMPACT_MAX_W matches PILL_WIDTH so the pill never grows
-# past the setup-wizard banner's footprint.
+# _on_shown). COMPACT_MAX_W is the compact pill's own ceiling — it is no
+# longer tied to PILL_WIDTH, which now tracks the smaller setup pill.
 COMPACT_MIN_W = 50   # square → circle when only the orb is visible
 COMPACT_MIN_H = 50
-COMPACT_MAX_W = 580  # = PILL_WIDTH (the setup-wizard banner's max width)
+COMPACT_MAX_W = 580  # compact task-progress pill's max width
 COMPACT_MAX_H = 50   # single-line height — pill never grows taller
 SCREEN_MARGIN = 20
 
@@ -240,37 +247,46 @@ BANNER_HTML = r"""<!DOCTYPE html>
     padding: 0;
     height: 100%;
     width: 100%;
-    background: #ffffff;
+    background: transparent;     /* window is transparent — only the .banner
+                                    pill below is opaque, so its CSS rounded
+                                    corners become the real window shape. */
     overflow: hidden;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     -webkit-user-select: none;
     user-select: none;
   }
 
+  /* The white stadium pill itself. border-radius: 999px clamps to half the
+     height → full-semicircle end caps (a true pill like pill.py, NOT a
+     rounded rectangle); the corners outside it stay transparent. This is
+     what actually draws the shape — WebView2 renders it anti-aliased on the
+     pixels, the way pill.py draws its alpha rounded rectangle. No orb; the
+     Next/Save/choice controls sit to the right of the streaming text. */
   .banner {
     width: 100%;
     height: 100%;
+    background: #ffffff;
+    border-radius: 999px;
+    overflow: hidden;            /* clip streamed text to the rounded edge */
     display: flex;
     align-items: center;
-    gap: 14px;
-    padding: 0 12px 0 15px;
+    gap: 10px;
+    padding: 0 20px;             /* clears the rounded end caps */
     box-sizing: border-box;
   }
 
   .banner-text {
     flex: 1;
-    min-width: 0;                /* lets flex shrink-below-content so the
-                                    next-btn never gets pushed out of the
-                                    pill by a long unwrapped word. */
-    color: #374151;
-    font-size: 16px;
-    font-weight: 500;
-    line-height: 1.35;
-    white-space: normal;
-    overflow-wrap: break-word;
-    word-wrap: break-word;
-    padding: 10px 0;             /* breathing room top/bottom when the
-                                    text wraps to multiple lines. */
+    min-width: 0;                /* lets flex shrink so the next-btn keeps
+                                    its place; text streams within the
+                                    remaining width and pages, never wraps. */
+    color: #333333;              /* matches pill.py's text fill */
+    font-size: 13px;             /* matches pill.py's 13px label */
+    font-weight: 600;
+    line-height: 1.4;
+    white-space: nowrap;         /* single line — the pill stays an
+                                    elongated stadium, never grows taller. */
+    overflow: hidden;            /* the streamer pages before text spills. */
   }
 
   .next-btn {
@@ -278,9 +294,9 @@ BANNER_HTML = r"""<!DOCTYPE html>
     color: #ffffff;
     border: none;
     font-family: inherit;
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 600;
-    padding: 10px 22px;
+    padding: 6px 14px;
     border-radius: 999px;
     cursor: pointer;
     transition: background 0.15s ease;
@@ -289,155 +305,27 @@ BANNER_HTML = r"""<!DOCTYPE html>
   .next-btn:hover  { background: #4f46e5; }
   .next-btn:active { background: #4338ca; }
 
-  .choice-row { display: none; flex-shrink: 0; gap: 8px; }
-  .choice-row .next-btn { padding: 8px 16px; font-size: 13px; }
+  .choice-row { display: none; flex-shrink: 0; gap: 6px; }
+  .choice-row .next-btn { padding: 6px 12px; font-size: 12px; }
 
-  .input-row { display: none; flex: 1; align-items: center; gap: 8px; }
+  .input-row { display: none; flex: 1; align-items: center; gap: 6px; }
   #token-input {
     flex: 1;
-    height: 32px;
+    height: 28px;
     border: 1px solid #d1d5db;
-    border-radius: 16px;
+    border-radius: 14px;
     padding: 0 12px;
-    font-size: 13px;
+    font-size: 12px;
     font-family: inherit;
     color: #374151;
     background: #ffffff;
     outline: none;
   }
   #token-input:focus { border-color: #6366f1; }
-
-  .stop-agent-button {
-    position: relative;
-    width: 42px;
-    height: 42px;
-    flex-shrink: 0;
-    background: transparent;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: visible;
-  }
-  .stop-orb {
-    position: relative;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    pointer-events: none;
-  }
-  .stop-circle-1 {
-    width: 42px;
-    height: 42px;
-    border-radius: 50%;
-    position: absolute;
-    background: transparent;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    animation: stop-pulse 4.2s ease-in-out infinite 0.3s;
-    z-index: 1;
-  }
-  .stop-circle-1::before, .stop-circle-1::after {
-    content: ""; position: absolute; border-radius: 50%; filter: blur(8px); width: 30%; height: 30%;
-  }
-  .stop-circle-1::before { background: #ff0073; top: 30%; right: 30%; }
-  .stop-circle-1::after  { background: #00baff; bottom: 10%; left: 30%; }
-
-  .stop-circle-2 {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    position: absolute;
-    inset: 0;
-    margin: auto;
-    background-color: white;
-    z-index: 9;
-    animation: stop-pulse2 4.2s ease-in-out infinite;
-  }
-  .stop-circle-2::before, .stop-circle-2::after {
-    content: ""; position: absolute; border-radius: 50%; filter: blur(6px); z-index: 1;
-  }
-  .stop-circle-2::before { background: #ff0073; width: 30%; height: 30%; top: 20%; right: 20%; }
-  .stop-circle-2::after  { background: #00bbff; width: 20%; height: 20%; bottom: 10%; left: 40%; }
-
-  .stop-bg {
-    position: absolute; inset: 0; border-radius: 50%;
-    box-shadow: inset 0 0 5px 2px rgba(255,255,255,0.8), 0 0 2px 2px rgba(255,255,255,0.9);
-    background-color: #9292d8;
-    animation: stop-bgRotate 2.5s linear infinite;
-  }
-  .stop-bg::before {
-    content: ""; position: absolute; inset: 0; border-radius: inherit;
-    animation: stop-bgColor 4s linear infinite;
-    box-shadow: inset 0 0 5px 2px rgba(255,255,255,0.8);
-    opacity: 0.2;
-  }
-
-  .stop-pc {
-    position: absolute; inset: 0; margin: auto;
-    width: 32px; height: 32px; z-index: 10;
-    display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
-    box-sizing: border-box; gap: 1px;
-  }
-  .stop-monitor {
-    width: 12px; height: 10px; background: transparent;
-    border-radius: 1px; border: 1px solid white; box-sizing: border-box;
-  }
-  .stop-screen {
-    width: 100%; height: 100%; border-radius: 0.5px;
-    display: flex; justify-content: center; align-items: center; gap: 2px;
-  }
-  .stop-eye {
-    width: 1.5px; height: 2.5px; border-radius: 1px;
-    background: white; animation: stop-blink 4s infinite;
-  }
-  .stop-base { width: 16px; height: 1px; background: white; border-radius: 0.5px; }
-
-  @keyframes stop-pulse {
-    0%{transform:scale(.97)} 15%{transform:scale(1)} 30%{transform:scale(.98)}
-    45%{transform:scale(1)} 60%{transform:scale(.97)} 85%{transform:scale(1)}
-    100%{transform:scale(.97)}
-  }
-  @keyframes stop-pulse2 {
-    0%{transform:scale(1)} 15%{transform:scale(1.03)} 30%{transform:scale(.98)}
-    45%{transform:scale(1.04)} 60%{transform:scale(.97)} 85%{transform:scale(1.03)}
-    100%{transform:scale(1)}
-  }
-  @keyframes stop-bgRotate {
-    0%{transform:rotate(0deg)} 20%{transform:rotate(90deg)}
-    40%{transform:rotate(180deg) scale(.95,1)} 60%,100%{transform:rotate(360deg)}
-  }
-  @keyframes stop-bgColor {
-    20%{background-color:red} 40%{background-color:#5eff7e}
-    60%{background-color:#2cb5ff} 80%{background-color:#fc63ff}
-  }
-  @keyframes stop-blink {
-    0%,85%,100%{transform:scaleY(1)} 92%{transform:scaleY(.1)}
-  }
 </style>
 </head>
 <body>
   <div class="banner">
-    <div class="stop-agent-button">
-      <div class="stop-orb">
-        <div class="stop-circle-1"></div>
-        <div class="stop-circle-2"><div class="stop-bg"></div></div>
-        <div class="stop-pc">
-          <div class="stop-monitor">
-            <div class="stop-screen">
-              <div class="stop-eye"></div>
-              <div class="stop-eye"></div>
-            </div>
-          </div>
-          <div class="stop-base"></div>
-        </div>
-      </div>
-    </div>
-
     <div class="banner-text" id="msg">Starting…</div>
 
     <button class="next-btn" id="next" style="display:none"
@@ -459,9 +347,70 @@ BANNER_HTML = r"""<!DOCTYPE html>
   </div>
 
   <script>
-    function setMsg(text) {
-      var el = document.getElementById('msg');
-      if (el) el.textContent = text || '';
+    // Single-line streaming pill (mirrors the compact task pill). The
+    // pill is fixed at 350×42 — text never wraps. setMsg reveals the
+    // message letter-by-letter; when a line fills the available width it
+    // holds briefly, clears, and continues on a fresh line (paging), so
+    // a long wizard message flows through one line at a time while the
+    // stadium shape stays exactly the same size.
+    const _CHAR_DELAY_MS = 8;     // per-letter cadence — fast typewriter feel
+    const _FADE_MS = 60;          // per-letter fade-in duration
+    const _PAGE_HOLD_MS = 1600;   // how long a full line lingers before paging
+    let _revealTimer = null;
+
+    function setMsg(fullText) {
+      if (_revealTimer) { clearTimeout(_revealTimer); _revealTimer = null; }
+      const el = document.getElementById('msg');
+      if (!el) return;
+      const text = (fullText || '').toString();
+      el.textContent = '';
+      if (!text) return;
+
+      // Array.from splits by code point so emoji stay intact.
+      const chars = Array.from(text);
+      let i = 0;
+
+      const streamChar = () => {
+        if (i >= chars.length) {
+          // End of message — leave the final line up; the wizard is
+          // waiting on the user to read it and click. A fresh setMsg()
+          // replaces it (and cancels this stream at its top).
+          _revealTimer = null;
+          return;
+        }
+
+        const span = document.createElement('span');
+        span.textContent = chars[i];
+        span.style.opacity = '0';
+        span.style.transition = 'opacity ' + _FADE_MS + 'ms ease-out';
+        el.appendChild(span);
+
+        if (el.scrollWidth > el.clientWidth + 0.5) {
+          // This letter overflows the line. If it's the only one, the
+          // line is narrower than a single glyph — keep it (overflow
+          // clips) and advance so we don't loop. Otherwise yank it, hold
+          // the visible line briefly, clear, and continue on a new line.
+          if (el.children.length === 1) {
+            requestAnimationFrame(() => { span.style.opacity = '1'; });
+            i++;
+            _revealTimer = setTimeout(streamChar, _CHAR_DELAY_MS);
+            return;
+          }
+          el.removeChild(span);
+          _revealTimer = setTimeout(() => {
+            el.textContent = '';
+            while (i < chars.length && /\s/.test(chars[i])) i++;
+            streamChar();
+          }, _PAGE_HOLD_MS);
+          return;
+        }
+
+        requestAnimationFrame(() => { span.style.opacity = '1'; });
+        i++;
+        _revealTimer = setTimeout(streamChar, _CHAR_DELAY_MS);
+      };
+
+      streamChar();
     }
     function showNext()  {
       clearAll();
@@ -504,24 +453,13 @@ BANNER_HTML = r"""<!DOCTYPE html>
       }
     });
 
-    // Report body height to Python so the pywebview window can grow
-    // vertically when a long wizard message wraps to multiple lines.
-    // A ResizeObserver on document.body fires automatically after any
-    // setMsg / setChoice / setInput / clearAll content change — we
-    // don't need explicit calls inside those helpers.
-    (function () {
-      function reportHeight() {
-        if (window.pywebview && window.pywebview.api) {
-          var h = Math.ceil(document.body.scrollHeight);
-          try { window.pywebview.api.height_changed(h); } catch (e) {}
-        }
-      }
-      window.addEventListener('load', function () { setTimeout(reportHeight, 30); });
-      window.addEventListener('pywebviewready', function () { setTimeout(reportHeight, 30); });
-      try {
-        new ResizeObserver(reportHeight).observe(document.body);
-      } catch (e) {}
-    })();
+    // The setup pill is a fixed 350×42 stadium — it never resizes, so
+    // there is no height/width reporting back to Python (unlike the
+    // compact pill, which grows to fit). Long text fits by streaming and
+    // paging within the fixed single line, handled entirely in setMsg
+    // above. The rounded pill shape is the .banner CSS border-radius on a
+    // transparent window, plus a SetWindowRgn clip on the opaque form
+    // behind it (both done from Python — see create_window / _on_shown).
   </script>
 </body>
 </html>
@@ -922,6 +860,600 @@ def _stdin_reader(window) -> None:
     _log("stdin_reader: thread exiting (stdin EOF or pipe break)")
 
 
+# ── layered-window setup pill (pill.py technique, no WebView2) ────────────
+
+
+def _run_layered_setup_banner() -> None:
+    """Setup-wizard pill rendered exactly like pill.py: a Win32 WS_EX_LAYERED
+    window painted via UpdateLayeredWindow with a real 32-bit alpha channel.
+    The pill is drawn by Pillow at 4x and downsampled with LANCZOS, so the
+    rounded edges blend smoothly into the wallpaper — no border, no halo, no
+    aliasing (which is what the WebView2 + region-clip approach could never do,
+    because WebView2 composites separately and a GDI region is a hard 1-bit
+    mask).
+
+    Speaks the same JSON-over-stdio wire protocol as the pywebview path so
+    StatusBanner / setup.py drive it unchanged: reads MSG / SHOW_NEXT /
+    HIDE_NEXT / SHOW_CHOICE / SHOW_INPUT / CLEAR / CLOSE on stdin; emits
+    READY / NEXT / CHOICE / SAVE / CLOSED on stdout.
+    """
+    _log("layered setup banner: start")
+    try:
+        import ctypes as C
+        from ctypes import wintypes
+        from PIL import Image, ImageDraw, ImageChops, ImageFont
+    except Exception:
+        import traceback
+        _log("layered banner: import failed:\n" + traceback.format_exc())
+        raise
+
+    user32 = C.windll.user32
+    gdi32 = C.windll.gdi32
+    kernel32 = C.windll.kernel32
+
+    # DPI-aware so the bitmap is rendered at native resolution (crisp); the
+    # actual scale factor is read after the GDI signatures are set, below.
+    try:
+        user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+    # ----- Win32 plumbing (mirrors pill.py) -----
+    WNDPROC = C.WINFUNCTYPE(
+        C.c_ssize_t, C.c_void_p, C.c_uint, C.c_size_t, C.c_ssize_t)
+
+    class WNDCLASS(C.Structure):
+        _fields_ = [
+            ("style", C.c_uint), ("lpfnWndProc", WNDPROC),
+            ("cbClsExtra", C.c_int), ("cbWndExtra", C.c_int),
+            ("hInstance", C.c_void_p), ("hIcon", C.c_void_p),
+            ("hCursor", C.c_void_p), ("hbrBackground", C.c_void_p),
+            ("lpszMenuName", wintypes.LPCWSTR),
+            ("lpszClassName", wintypes.LPCWSTR)]
+
+    class POINT(C.Structure):
+        _fields_ = [("x", C.c_long), ("y", C.c_long)]
+
+    class SIZE(C.Structure):
+        _fields_ = [("cx", C.c_long), ("cy", C.c_long)]
+
+    class BLENDFUNCTION(C.Structure):
+        _fields_ = [("BlendOp", C.c_ubyte), ("BlendFlags", C.c_ubyte),
+                    ("SourceConstantAlpha", C.c_ubyte), ("AlphaFormat", C.c_ubyte)]
+
+    class BITMAPINFOHEADER(C.Structure):
+        _fields_ = [
+            ("biSize", C.c_uint32), ("biWidth", C.c_int32),
+            ("biHeight", C.c_int32), ("biPlanes", C.c_uint16),
+            ("biBitCount", C.c_uint16), ("biCompression", C.c_uint32),
+            ("biSizeImage", C.c_uint32), ("biXPelsPerMeter", C.c_int32),
+            ("biYPelsPerMeter", C.c_int32), ("biClrUsed", C.c_uint32),
+            ("biClrImportant", C.c_uint32)]
+
+    class BITMAPINFO(C.Structure):
+        _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", C.c_uint32 * 3)]
+
+    class MSG(C.Structure):
+        _fields_ = [("hwnd", C.c_void_p), ("message", C.c_uint),
+                    ("wParam", C.c_size_t), ("lParam", C.c_ssize_t),
+                    ("time", wintypes.DWORD), ("pt", POINT)]
+
+    P = C.POINTER
+    kernel32.GetModuleHandleW.restype = C.c_void_p
+    kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+    user32.RegisterClassW.restype = wintypes.ATOM
+    user32.RegisterClassW.argtypes = [P(WNDCLASS)]
+    user32.LoadCursorW.restype = C.c_void_p
+    user32.LoadCursorW.argtypes = [C.c_void_p, C.c_void_p]
+    user32.CreateWindowExW.restype = C.c_void_p
+    user32.CreateWindowExW.argtypes = [
+        wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+        C.c_int, C.c_int, C.c_int, C.c_int,
+        C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p]
+    user32.DefWindowProcW.restype = C.c_ssize_t
+    user32.DefWindowProcW.argtypes = [C.c_void_p, C.c_uint, C.c_size_t, C.c_ssize_t]
+    user32.GetDC.restype = C.c_void_p
+    user32.GetDC.argtypes = [C.c_void_p]
+    user32.ReleaseDC.argtypes = [C.c_void_p, C.c_void_p]
+    gdi32.CreateCompatibleDC.restype = C.c_void_p
+    gdi32.CreateCompatibleDC.argtypes = [C.c_void_p]
+    gdi32.CreateDIBSection.restype = C.c_void_p
+    gdi32.CreateDIBSection.argtypes = [
+        C.c_void_p, P(BITMAPINFO), C.c_uint, P(C.c_void_p), C.c_void_p, wintypes.DWORD]
+    gdi32.SelectObject.restype = C.c_void_p
+    gdi32.SelectObject.argtypes = [C.c_void_p, C.c_void_p]
+    user32.UpdateLayeredWindow.restype = wintypes.BOOL
+    user32.UpdateLayeredWindow.argtypes = [
+        C.c_void_p, C.c_void_p, P(POINT), P(SIZE),
+        C.c_void_p, P(POINT), wintypes.DWORD, P(BLENDFUNCTION), wintypes.DWORD]
+    user32.SetWindowPos.argtypes = [
+        C.c_void_p, C.c_void_p, C.c_int, C.c_int, C.c_int, C.c_int, C.c_uint]
+    user32.SetCapture.restype = C.c_void_p
+    user32.SetCapture.argtypes = [C.c_void_p]
+    user32.GetCursorPos.argtypes = [P(POINT)]
+    user32.DestroyWindow.argtypes = [C.c_void_p]
+    user32.PostMessageW.argtypes = [C.c_void_p, C.c_uint, C.c_size_t, C.c_ssize_t]
+    user32.GetSystemMetrics.restype = C.c_int
+    user32.SetTimer.restype = C.c_size_t
+    user32.SetTimer.argtypes = [C.c_void_p, C.c_size_t, C.c_uint, C.c_void_p]
+    user32.GetMessageW.argtypes = [P(MSG), C.c_void_p, C.c_uint, C.c_uint]
+    user32.GetMessageW.restype = C.c_int
+    user32.DispatchMessageW.restype = C.c_ssize_t
+    user32.DispatchMessageW.argtypes = [P(MSG)]
+    user32.TranslateMessage.argtypes = [P(MSG)]
+    user32.ShowWindow.argtypes = [C.c_void_p, C.c_int]
+    user32.ReleaseCapture.restype = wintypes.BOOL
+    user32.PostQuitMessage.argtypes = [C.c_int]
+    user32.KillTimer.argtypes = [C.c_void_p, C.c_size_t]
+    user32.SetFocus.restype = C.c_void_p
+    user32.SetFocus.argtypes = [C.c_void_p]
+    user32.SetForegroundWindow.restype = wintypes.BOOL
+    user32.SetForegroundWindow.argtypes = [C.c_void_p]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.OpenClipboard.argtypes = [C.c_void_p]
+    user32.CloseClipboard.restype = wintypes.BOOL
+    user32.GetClipboardData.restype = C.c_void_p
+    user32.GetClipboardData.argtypes = [C.c_uint]
+    gdi32.DeleteObject.argtypes = [C.c_void_p]
+    gdi32.DeleteDC.argtypes = [C.c_void_p]
+    gdi32.GetDeviceCaps.restype = C.c_int
+    gdi32.GetDeviceCaps.argtypes = [C.c_void_p, C.c_int]
+    kernel32.GlobalLock.restype = C.c_void_p
+    kernel32.GlobalLock.argtypes = [C.c_void_p]
+    kernel32.GlobalUnlock.argtypes = [C.c_void_p]
+
+    # Now that GetDC / GetDeviceCaps signatures are set (so the 64-bit DC
+    # handle isn't truncated), read the DPI scale and derive every pixel
+    # dimension from it.
+    _hdc0 = user32.GetDC(None)
+    try:
+        dpi = gdi32.GetDeviceCaps(_hdc0, 88) or 96   # LOGPIXELSX
+    except Exception:
+        dpi = 96
+    user32.ReleaseDC(None, _hdc0)
+    scale = (dpi or 96) / 96.0
+
+    def S(v):
+        return max(1, int(round(v * scale)))
+
+    PILL_W, PILL_H, MARGIN = S(350), S(42), S(10)
+    CW, CH = PILL_W + 2 * MARGIN, PILL_H + 2 * MARGIN
+    SS = 4
+    PAD_L, PAD_R, GAP = S(20), S(16), S(10)
+    BTN_H, BTN_PAD_X = S(26), S(14)
+    SCREEN_M = S(SCREEN_MARGIN)
+    TEXT_COL = (51, 51, 51, 255)
+    PURPLE = (99, 102, 241, 255)
+    PURPLE_TXT = (255, 255, 255, 255)
+    FIELD_BORDER = (209, 213, 219, 255)
+    PLACEHOLDER = (156, 163, 175, 255)
+    HOLD_TICKS = 95          # ~1.5 s page hold at the 16 ms timer
+
+    WS_POPUP = 0x80000000
+    WS_EX_LAYERED, WS_EX_TOPMOST, WS_EX_TOOLWINDOW = 0x80000, 0x8, 0x80
+    SW_SHOW, ULW_ALPHA, AC_SRC_OVER, AC_SRC_ALPHA = 5, 2, 0, 1
+    BI_RGB, DIB_RGB_COLORS = 0, 0
+    WM_DESTROY, WM_MOUSEMOVE = 0x2, 0x200
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_TIMER, WM_CHAR = 0x201, 0x202, 0x113, 0x102
+    WM_APP_CLOSE, WM_APP_REPAINT, WM_APP_FOCUS = 0x8000 + 1, 0x8000 + 2, 0x8000 + 3
+    SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE = 0x1, 0x4, 0x10
+    IDC_ARROW = 32512
+
+    def _font(size, bold=True):
+        names = ("segoeuib.ttf", "segoeui.ttf") if bold else ("segoeui.ttf",)
+        for n in names:
+            try:
+                return ImageFont.truetype(n, size)
+            except Exception:
+                pass
+        return ImageFont.load_default()
+
+    FONT_TEXT = _font(S(13), bold=True)
+    FONT_BTN = _font(S(12), bold=True)
+    _NEXT_LABEL = "Next"
+    _next_btn_w = int(FONT_TEXT.getlength(_NEXT_LABEL)) + 2 * BTN_PAD_X
+
+    def _clip_text_avail(mode):
+        w = PILL_W - PAD_L - PAD_R
+        if mode == "next":
+            w -= _next_btn_w + GAP
+        return max(S(20), w)
+
+    def _read_clipboard():
+        try:
+            CF_UNICODETEXT = 13
+            if not user32.OpenClipboard(None):
+                return ""
+            try:
+                h = user32.GetClipboardData(CF_UNICODETEXT)
+                if not h:
+                    return ""
+                kernel32.GlobalLock.restype = C.c_void_p
+                ptr = kernel32.GlobalLock(C.c_void_p(h))
+                if not ptr:
+                    return ""
+                try:
+                    return C.wstring_at(ptr)
+                finally:
+                    kernel32.GlobalUnlock(C.c_void_p(h))
+            finally:
+                user32.CloseClipboard()
+        except Exception:
+            return ""
+
+    class Pill:
+        def __init__(self):
+            sw = user32.GetSystemMetrics(0)
+            pill_x = sw - SCREEN_M - PILL_W      # pill's left edge (screen)
+            self.x = pill_x - MARGIN             # canvas left
+            self.y = SCREEN_M - MARGIN           # canvas top
+            self.mode = "msg"
+            self.text = "Starting…"
+            self.i = 0
+            self.page_start = 0
+            self.hold = 0
+            self.left_label = ""
+            self.right_label = ""
+            self.save_label = "Save"
+            self.input_buf = ""
+            self.btn_rects = {}                  # name -> (x1,y1,x2,y2) canvas
+            self.dragging = False
+            self.drag_cursor = (0, 0)
+            self.drag_win = (0, 0)
+            self.pending = None
+            self.dirty = True
+            self.lock = threading.Lock()
+
+            self._make_window()
+            self._make_dib()
+            self._blit()
+            user32.SetTimer(self.hwnd, 1, 16, None)
+            _emit("READY")
+            _log("layered setup banner: READY")
+            threading.Thread(target=self._stdin, daemon=True).start()
+            self._loop()
+
+        # ----- window / bitmap -----
+        def _make_window(self):
+            self.hinst = kernel32.GetModuleHandleW(None)
+            self._wndproc = WNDPROC(self._on_message)   # strong ref
+            wc = WNDCLASS()
+            wc.lpfnWndProc = self._wndproc
+            wc.hInstance = self.hinst
+            wc.hCursor = user32.LoadCursorW(None, C.c_void_p(IDC_ARROW))
+            wc.lpszClassName = "AutoUseLayeredPill"
+            self._wc = wc
+            user32.RegisterClassW(C.byref(wc))
+            ex = WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW
+            self.hwnd = user32.CreateWindowExW(
+                ex, "AutoUseLayeredPill", "AutoUseBanner", WS_POPUP,
+                self.x, self.y, CW, CH, None, None, self.hinst, None)
+            user32.ShowWindow(self.hwnd, SW_SHOW)
+
+        def _make_dib(self):
+            self.screen_dc = user32.GetDC(None)
+            self.mem_dc = gdi32.CreateCompatibleDC(self.screen_dc)
+            bmi = BITMAPINFO()
+            bmi.bmiHeader.biSize = C.sizeof(BITMAPINFOHEADER)
+            bmi.bmiHeader.biWidth = CW
+            bmi.bmiHeader.biHeight = -CH         # top-down
+            bmi.bmiHeader.biPlanes = 1
+            bmi.bmiHeader.biBitCount = 32
+            bmi.bmiHeader.biCompression = BI_RGB
+            self._bmi = bmi
+            self.bits = C.c_void_p()
+            self.hbmp = gdi32.CreateDIBSection(
+                self.screen_dc, C.byref(bmi), DIB_RGB_COLORS,
+                C.byref(self.bits), None, 0)
+            self.old_obj = gdi32.SelectObject(self.mem_dc, self.hbmp)
+
+        # ----- rendering -----
+        def _pill_image(self):
+            img = Image.new("RGBA", (CW, CH), (0, 0, 0, 0))
+            big = Image.new("RGBA", (CW * SS, CH * SS), (0, 0, 0, 0))
+            ImageDraw.Draw(big).rounded_rectangle(
+                [MARGIN * SS, MARGIN * SS,
+                 (MARGIN + PILL_W) * SS - 1, (MARGIN + PILL_H) * SS - 1],
+                radius=(PILL_H / 2) * SS, fill=(255, 255, 255, 255))
+            return Image.alpha_composite(img, big.resize((CW, CH), Image.LANCZOS))
+
+        def _draw_button(self, d, x1, y1, x2, y2, label, name, font=FONT_BTN):
+            d.rounded_rectangle([x1, y1, x2, y2], radius=(y2 - y1) / 2, fill=PURPLE)
+            tw = d.textlength(label, font=font)
+            bb = d.textbbox((0, 0), label, font=font)
+            d.text(((x1 + x2) / 2 - tw / 2,
+                    (y1 + y2) / 2 - (bb[3] + bb[1]) / 2),
+                   label, font=font, fill=PURPLE_TXT)
+            self.btn_rects[name] = (x1, y1, x2, y2)
+
+        def _vtext(self, d, x, cy, text, font, fill):
+            bb = d.textbbox((0, 0), text or "Ag", font=font)
+            d.text((x, cy - (bb[3] + bb[1]) / 2), text, font=font, fill=fill)
+
+        def _render(self):
+            with self.lock:
+                mode = self.mode
+                page = self.text[self.page_start:self.i]
+                left_label, right_label = self.left_label, self.right_label
+                save_label, input_buf = self.save_label, self.input_buf
+            img = self._pill_image()
+            d = ImageDraw.Draw(img)
+            self.btn_rects = {}
+            cy = MARGIN + PILL_H / 2
+            left = MARGIN + PAD_L
+            right = MARGIN + PILL_W - PAD_R
+
+            if mode in ("msg", "next"):
+                if mode == "next":
+                    bw = _next_btn_w
+                    self._draw_button(d, right - bw, cy - BTN_H / 2,
+                                      right, cy + BTN_H / 2, _NEXT_LABEL, "next")
+                self._vtext(d, left, cy, page, FONT_TEXT, TEXT_COL)
+            elif mode == "choice":
+                # Two buttons, right-aligned, side by side.
+                rw = int(d.textlength(right_label, font=FONT_BTN)) + 2 * BTN_PAD_X
+                lw = int(d.textlength(left_label, font=FONT_BTN)) + 2 * BTN_PAD_X
+                rx2 = right
+                rx1 = rx2 - rw
+                lx2 = rx1 - GAP
+                lx1 = lx2 - lw
+                self._draw_button(d, lx1, cy - BTN_H / 2, lx2, cy + BTN_H / 2,
+                                  left_label, "left")
+                self._draw_button(d, rx1, cy - BTN_H / 2, rx2, cy + BTN_H / 2,
+                                  right_label, "right")
+            elif mode == "input":
+                sw_ = int(d.textlength(save_label, font=FONT_BTN)) + 2 * BTN_PAD_X
+                sx2 = right
+                sx1 = sx2 - sw_
+                self._draw_button(d, sx1, cy - BTN_H / 2, sx2, cy + BTN_H / 2,
+                                  save_label, "save")
+                fx1 = left
+                fx2 = sx1 - GAP
+                fy1, fy2 = cy - S(14), cy + S(14)
+                d.rounded_rectangle([fx1, fy1, fx2, fy2], radius=S(13),
+                                    outline=FIELD_BORDER, width=max(1, S(1)),
+                                    fill=(255, 255, 255, 255))
+                inner_l = fx1 + S(12)
+                inner_w = fx2 - inner_l - S(8)
+                if input_buf:
+                    shown = input_buf
+                    while shown and d.textlength(shown, font=FONT_TEXT) > inner_w:
+                        shown = shown[1:]            # scroll to keep the tail
+                    self._vtext(d, inner_l, cy, shown, FONT_TEXT, TEXT_COL)
+                    caret_x = inner_l + d.textlength(shown, font=FONT_TEXT) + S(1)
+                    d.line([(caret_x, cy - S(8)), (caret_x, cy + S(8))],
+                           fill=TEXT_COL, width=max(1, S(1)))
+                else:
+                    self._vtext(d, inner_l, cy, "Paste your token…",
+                                FONT_TEXT, PLACEHOLDER)
+
+            r, g, b, a = img.split()
+            out = Image.merge("RGBA", (ImageChops.multiply(b, a),
+                                       ImageChops.multiply(g, a),
+                                       ImageChops.multiply(r, a), a))
+            return out.tobytes()
+
+        def _blit(self):
+            data = self._render()
+            C.memmove(self.bits, data, len(data))
+            ptDst = POINT(self.x, self.y)
+            size = SIZE(CW, CH)
+            ptSrc = POINT(0, 0)
+            blend = BLENDFUNCTION(AC_SRC_OVER, 0, 255, AC_SRC_ALPHA)
+            user32.UpdateLayeredWindow(
+                self.hwnd, self.screen_dc, C.byref(ptDst), C.byref(size),
+                self.mem_dc, C.byref(ptSrc), 0, C.byref(blend), ULW_ALPHA)
+
+        # ----- hit-testing -----
+        def _hit(self):
+            p = POINT()
+            user32.GetCursorPos(C.byref(p))
+            rx, ry = p.x - self.x, p.y - self.y
+            for name, (x1, y1, x2, y2) in self.btn_rects.items():
+                if x1 <= rx <= x2 and y1 <= ry <= y2:
+                    return name
+            return None
+
+        # ----- message handling -----
+        def _on_message(self, hwnd, msg, wparam, lparam):
+            if msg == WM_TIMER:
+                self._tick()
+                return 0
+            if msg == WM_APP_REPAINT:
+                self._blit()
+                return 0
+            if msg == WM_APP_CLOSE:
+                user32.DestroyWindow(self.hwnd)
+                return 0
+            if msg == WM_APP_FOCUS:
+                # Token-input step needs keyboard focus so typing / Ctrl+V
+                # land in the pill. Best-effort: foreground may be denied by
+                # the OS if we're not the active app, in which case a click on
+                # the pill (which calls SetFocus below) still focuses it.
+                try:
+                    user32.SetForegroundWindow(self.hwnd)
+                    user32.SetFocus(self.hwnd)
+                except Exception:
+                    pass
+                return 0
+            if msg == WM_LBUTTONDOWN:
+                user32.SetFocus(self.hwnd)        # clicking focuses the pill
+                self.pending = self._hit()
+                if self.pending is None:
+                    self.dragging = True
+                    user32.SetCapture(self.hwnd)
+                    p = POINT()
+                    user32.GetCursorPos(C.byref(p))
+                    self.drag_cursor = (p.x, p.y)
+                    self.drag_win = (self.x, self.y)
+                return 0
+            if msg == WM_MOUSEMOVE and self.dragging:
+                p = POINT()
+                user32.GetCursorPos(C.byref(p))
+                self.x = self.drag_win[0] + (p.x - self.drag_cursor[0])
+                self.y = self.drag_win[1] + (p.y - self.drag_cursor[1])
+                user32.SetWindowPos(self.hwnd, None, self.x, self.y, 0, 0,
+                                    SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+                return 0
+            if msg == WM_LBUTTONUP:
+                if self.dragging:
+                    self.dragging = False
+                    user32.ReleaseCapture()
+                    return 0
+                name = self._hit()
+                if name and name == self.pending:
+                    self._fire(name)
+                self.pending = None
+                return 0
+            if msg == WM_CHAR:
+                with self.lock:
+                    is_input = self.mode == "input"
+                if is_input:
+                    ch = wparam
+                    if ch == 0x08:                       # backspace
+                        with self.lock:
+                            self.input_buf = self.input_buf[:-1]
+                    elif ch in (0x0D, 0x0A):             # enter -> save
+                        with self.lock:
+                            val = self.input_buf
+                        _emit("SAVE", value=val.strip())
+                    elif ch == 0x16:                     # Ctrl+V -> paste
+                        pasted = _read_clipboard()
+                        if pasted:
+                            with self.lock:
+                                self.input_buf += pasted.replace("\r", "").replace("\n", "")
+                    elif ch >= 0x20:                     # printable
+                        with self.lock:
+                            self.input_buf += chr(ch)
+                    self._post_repaint()
+                return 0
+            if msg == WM_DESTROY:
+                self._cleanup()
+                user32.PostQuitMessage(0)
+                return 0
+            return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+        def _fire(self, name):
+            if name == "next":
+                _emit("NEXT")
+            elif name in ("left", "right"):
+                _emit("CHOICE", value=name)
+            elif name == "save":
+                with self.lock:
+                    val = self.input_buf
+                _emit("SAVE", value=val.strip())
+
+        def _post_repaint(self):
+            user32.PostMessageW(self.hwnd, WM_APP_REPAINT, 0, 0)
+
+        # ----- streaming / paging (msg & next modes) -----
+        def _tick(self):
+            redraw = False
+            with self.lock:
+                mode = self.mode
+                if mode in ("msg", "next"):
+                    avail = _clip_text_avail(mode)
+                    if self.hold > 0:
+                        self.hold -= 1
+                        if self.hold == 0:
+                            self.page_start = self.i
+                            while (self.page_start < len(self.text)
+                                   and self.text[self.page_start] == " "):
+                                self.page_start += 1
+                            self.i = self.page_start
+                            redraw = True
+                    elif self.i < len(self.text):
+                        cand = self.text[self.page_start:self.i + 1]
+                        if (FONT_TEXT.getlength(cand) > avail
+                                and self.i > self.page_start):
+                            self.hold = HOLD_TICKS    # page is full; pause
+                        else:
+                            self.i += 1
+                            redraw = True
+                if self.dirty:
+                    self.dirty = False
+                    redraw = True
+            if redraw:
+                self._blit()
+
+        # ----- stdin command reader -----
+        def _set(self, **kw):
+            with self.lock:
+                for k, v in kw.items():
+                    setattr(self, k, v)
+                self.dirty = True
+
+        def _stdin(self):
+            _log("layered setup banner: stdin reader started")
+            try:
+                for line in sys.stdin:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        m = json.loads(line)
+                    except Exception:
+                        continue
+                    cmd = m.get("cmd")
+                    if cmd == "MSG":
+                        self._set(text=m.get("text", "") or "", i=0,
+                                  page_start=0, hold=0)
+                    elif cmd == "SHOW_NEXT":
+                        self._set(mode="next")
+                    elif cmd == "HIDE_NEXT":
+                        self._set(mode="msg")
+                    elif cmd == "SHOW_CHOICE":
+                        self._set(mode="choice",
+                                  left_label=m.get("left", ""),
+                                  right_label=m.get("right", ""))
+                    elif cmd == "SHOW_INPUT":
+                        self._set(mode="input",
+                                  save_label=m.get("label", "Save"),
+                                  input_buf="")
+                        user32.PostMessageW(self.hwnd, WM_APP_FOCUS, 0, 0)
+                    elif cmd == "CLEAR":
+                        self._set(mode="msg")
+                    elif cmd == "CLOSE":
+                        user32.PostMessageW(self.hwnd, WM_APP_CLOSE, 0, 0)
+                        return
+            except Exception:
+                import traceback
+                _log("layered setup banner: stdin raised:\n"
+                     + traceback.format_exc())
+
+        def _cleanup(self):
+            try:
+                user32.KillTimer(self.hwnd, 1)
+            except Exception:
+                pass
+            try:
+                if getattr(self, "old_obj", None):
+                    gdi32.SelectObject(self.mem_dc, self.old_obj)
+                if getattr(self, "hbmp", None):
+                    gdi32.DeleteObject(self.hbmp)
+                if getattr(self, "mem_dc", None):
+                    gdi32.DeleteDC(self.mem_dc)
+                if getattr(self, "screen_dc", None):
+                    user32.ReleaseDC(None, self.screen_dc)
+            except Exception:
+                pass
+
+        def _loop(self):
+            msg = MSG()
+            while user32.GetMessageW(C.byref(msg), None, 0, 0) > 0:
+                user32.TranslateMessage(C.byref(msg))
+                user32.DispatchMessageW(C.byref(msg))
+
+    try:
+        Pill()
+    except Exception:
+        import traceback
+        _log("layered setup banner: crashed:\n" + traceback.format_exc())
+        raise
+    _emit("CLOSED")
+    _log("layered setup banner: exit (CLOSED)")
+
+
 # ── subprocess entry point ────────────────────────────────────────────────
 
 
@@ -938,10 +1470,18 @@ def _run_subprocess_banner() -> None:
     # vanish with nothing to point at. Each step is also wrapped individually
     # so we know exactly which one died.
     try:
+        compact = "--compact" in sys.argv[1:]
+        if not compact:
+            # Setup-wizard pill: rendered with pill.py's layered-window
+            # technique (Win32 UpdateLayeredWindow + per-pixel alpha, no
+            # WebView2) for a clean, borderless, anti-aliased pill that blends
+            # into the wallpaper. Only the compact task-progress pill below
+            # still uses pywebview.
+            _run_layered_setup_banner()
+            return
+
         import webview
         _log("webview imported")
-
-        compact = "--compact" in sys.argv[1:]
 
         # Primary-screen width via Win32. GetSystemMetrics(SM_CXSCREEN=0)
         # returns the DPI-virtualised value in this freshly spawned,
@@ -984,6 +1524,18 @@ def _run_subprocess_banner() -> None:
             on_top=True,
             easy_drag=True,
             resizable=False,
+            # Setup pill: a TRANSPARENT WebView2 window so the CSS
+            # border-radius can draw the rounded pill on the actual pixels
+            # (the web equivalent of pill.py's alpha-drawn rounded rect).
+            # This alone is NOT enough: pywebview makes the WebView2 *content*
+            # transparent but leaves the WinForms *form* opaque white behind
+            # it (that white form was the "container"). So _on_shown also
+            # clips the form into the matching stadium with SetWindowRgn —
+            # transparency rounds the content, the region clip rounds the
+            # form, and together they give a clean pill with the desktop
+            # showing through the corners. The compact pill stays opaque
+            # (transparent=False) + SetWindowRgn.
+            transparent=(not compact),
         )
         state.window = window
         window.expose(next_clicked, choice_clicked, save_clicked,
@@ -1019,15 +1571,48 @@ def _run_subprocess_banner() -> None:
                     time.sleep(0.1)
                 except Exception:
                     pass
-            # Clip into a stadium pill and emit READY so the parent's
-            # show() unblocks.
+            else:
+                # Setup pill: do NOT resize after show. Resizing a
+                # transparent WebView2 window after its page has loaded does
+                # not reflow the content — the pill keeps rendering at the
+                # pre-resize size while the OS window is the new size, and the
+                # mismatch clips the pill into a square-edged RECTANGLE
+                # (reproduced + verified visually). The window is created at
+                # PILL_WIDTH × PILL_HEIGHT with min_size=(PILL_WIDTH,
+                # PILL_HEIGHT), which bypasses the WinForms min-size clamp at
+                # CREATE time, so it is already the right size and positioned
+                # top-right by create_window's x/y.
+                pass
+            # Clip the window into a stadium with SetWindowRgn — for BOTH
+            # modes, but for different reasons:
+            #   • Compact pill: its body is opaque white, so the region clip
+            #     rounds the visible pill directly.
+            #   • Setup pill: transparent=True makes the WebView2 *content*
+            #     transparent (so the CSS border-radius pill shows), but
+            #     pywebview leaves the WinForms *form* opaque white behind it
+            #     — that white form is the "container" you saw. SetWindowRgn
+            #     CAN clip the GDI form (it just can't clip WebView2's
+            #     composited content), so the region carves the white form
+            #     into the same stadium the CSS draws → the corners show the
+            #     desktop, container gone. (Verified: transparent + region =
+            #     clean stadium; transparent alone = white rounded-rect.)
             _apply_rounded_region(title)
-            # Compact indicator is purely visual — drop mouse input so the
-            # user can click the desktop or any window underneath it. Only
-            # applied to compact mode; the standard wizard pill needs
-            # Next / Save / choice clicks to land.
             if compact:
                 _make_click_through(title)
+            else:
+                # WinForms can reset a raw SetWindowRgn during its post-show
+                # layout passes, which would bring the white form-corners
+                # back. Re-apply a few times over the first ~2 s so the clip
+                # sticks. (The compact pill re-clips via size_changed; the
+                # fixed-size setup pill has no such follow-up.)
+                def _reclip_setup():
+                    for delay in (0.3, 0.7, 1.3, 2.2):
+                        time.sleep(delay)
+                        try:
+                            _apply_rounded_region(title)
+                        except Exception:
+                            pass
+                threading.Thread(target=_reclip_setup, daemon=True).start()
             _log("on_shown: about to emit READY")
             _emit("READY")
             _log("on_shown: READY emitted")
