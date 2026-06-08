@@ -858,6 +858,13 @@ def _stdin_reader(window) -> None:
         import traceback
         _log("stdin_reader: outer loop raised:\n" + traceback.format_exc())
     _log("stdin_reader: thread exiting (stdin EOF or pipe break)")
+    # EOF / pipe break without a CLOSE means the parent process is gone (e.g.
+    # the frontend UI was closed). Destroy the window so this subprocess exits
+    # with it instead of lingering as an orphan tied to nothing.
+    try:
+        window.destroy()
+    except Exception:
+        pass
 
 
 # ── layered-window setup pill (pill.py technique, no WebView2) ────────────
@@ -879,9 +886,10 @@ def _run_layered_setup_banner() -> None:
     """
     _log("layered setup banner: start")
     try:
+        import math
         import ctypes as C
         from ctypes import wintypes
-        from PIL import Image, ImageDraw, ImageChops, ImageFont
+        from PIL import Image, ImageDraw, ImageChops, ImageFont, ImageFilter
     except Exception:
         import traceback
         _log("layered banner: import failed:\n" + traceback.format_exc())
@@ -1016,18 +1024,39 @@ def _run_layered_setup_banner() -> None:
     def S(v):
         return max(1, int(round(v * scale)))
 
-    PILL_W, PILL_H, MARGIN = S(350), S(42), S(10)
-    CW, CH = PILL_W + 2 * MARGIN, PILL_H + 2 * MARGIN
+    PILL_W, MARGIN = S(435), S(10)
+    PILL_H_MIN = S(44)            # default (single-line) pill height
+    MAX_PILL_H = S(200)          # grows downward up to here for long messages
+    CW = PILL_W + 2 * MARGIN
+    MIN_CH = PILL_H_MIN + 2 * MARGIN
+    MAX_CH = MAX_PILL_H + 2 * MARGIN
     SS = 4
-    PAD_L, PAD_R, GAP = S(20), S(16), S(10)
+    PAD_R, GAP = S(16), S(10)
     BTN_H, BTN_PAD_X = S(26), S(14)
+    CORNER = PILL_H_MIN / 2.0    # fixed radius: stadium at MIN, rounded-rect grown
+    # Orb (animated colourful indicator) — bigger than before and CENTRED on
+    # the pill's left semicircular cap so it nests perfectly inside the curve
+    # (its centre = the cap's centre). It's clipped to a feathered circle so
+    # its square sprite corners never poke past the pill's rounded edge.
+    ORB = S(40)
+    ORB_GAP = S(10)             # gap between the orb and the text column
+    ORB_CX = MARGIN + CORNER    # orb centre x = centre of the left cap
+    ORB_CY = MARGIN + PILL_H_MIN / 2.0
+    TEXT_X0 = int(round(ORB_CX + ORB / 2.0)) + ORB_GAP   # text column left (canvas px)
+    # The FIRST text line is vertically centred on the orb (= pill centre at
+    # MIN height). Extra lines flow BELOW it and the pill grows downward, so
+    # the first line never shifts. LINE_Y0 is that first-line centre, in
+    # pill-relative px (LINE_H is added once fonts are loaded).
+    CTRL_GAP = S(8)             # gap between wrapped text and the control row
+    N_ORB_FRAMES = 36
+    ORB_TICKS_PER_FRAME = 5     # advance one orb frame every ~80 ms
     SCREEN_M = S(SCREEN_MARGIN)
     TEXT_COL = (51, 51, 51, 255)
-    PURPLE = (99, 102, 241, 255)
+    MSG_COL = (107, 107, 117, 255)   # macOS message grey #6b6b75
+    PURPLE = (94, 106, 210, 255)     # macOS button #5e6ad2
     PURPLE_TXT = (255, 255, 255, 255)
-    FIELD_BORDER = (209, 213, 219, 255)
+    FIELD_BORDER = (212, 212, 220, 255)
     PLACEHOLDER = (156, 163, 175, 255)
-    HOLD_TICKS = 95          # ~1.5 s page hold at the 16 ms timer
 
     WS_POPUP = 0x80000000
     WS_EX_LAYERED, WS_EX_TOPMOST, WS_EX_TOOLWINDOW = 0x80000, 0x8, 0x80
@@ -1048,16 +1077,169 @@ def _run_layered_setup_banner() -> None:
                 pass
         return ImageFont.load_default()
 
-    FONT_TEXT = _font(S(13), bold=True)
+    FONT_TEXT = _font(S(13), bold=False)
     FONT_BTN = _font(S(12), bold=True)
     _NEXT_LABEL = "Next"
-    _next_btn_w = int(FONT_TEXT.getlength(_NEXT_LABEL)) + 2 * BTN_PAD_X
+    _next_btn_w = int(FONT_BTN.getlength(_NEXT_LABEL)) + 2 * BTN_PAD_X
 
-    def _clip_text_avail(mode):
-        w = PILL_W - PAD_L - PAD_R
+    _asc, _desc = FONT_TEXT.getmetrics()
+    LINE_H = _asc + _desc + S(3)
+    LINE_Y0 = CORNER             # first-line centre (pill-relative) = pill centre
+    TEXT_RIGHT = MARGIN + PILL_W - PAD_R
+
+    def _text_width():
+        # Full text column width (orb column → right padding). In 'next' mode
+        # the button flows inline AFTER the text, so we don't reserve a column
+        # for it — it only pushes to a new line if it can't fit after the last
+        # word (see _layout).
+        return max(S(40), TEXT_RIGHT - TEXT_X0)
+
+    def _wrap(text, max_w):
+        lines = []
+        for para in (text or "").split("\n"):
+            cur = ""
+            for word in para.split(" "):
+                trial = (cur + " " + word).strip()
+                if not cur or FONT_TEXT.getlength(trial) <= max_w:
+                    cur = trial
+                else:
+                    lines.append(cur)
+                    cur = word
+            lines.append(cur)
+        return lines or [""]
+
+    def _layout(mode, text):
+        # Returns (lines, btn_newline). In 'next' mode the Next button sits
+        # right AFTER the last word. To keep "word [Next]" together, if they
+        # don't fit on the last line we push the last word down to its own
+        # line (with the button after it). btn_newline is set only if even a
+        # lone word + button can't fit, so the button drops below by itself.
+        lines = _wrap(text, _text_width())
+        btn_newline = False
         if mode == "next":
-            w -= _next_btn_w + GAP
-        return max(S(20), w)
+            last_w = FONT_TEXT.getlength(lines[-1])
+            if TEXT_X0 + last_w + GAP + _next_btn_w > TEXT_RIGHT:
+                words = lines[-1].split(" ")
+                if len(words) > 1:
+                    lines[-1] = " ".join(words[:-1])
+                    lines.append(words[-1])
+                    last_w = FONT_TEXT.getlength(lines[-1])
+                if TEXT_X0 + last_w + GAP + _next_btn_w > TEXT_RIGHT:
+                    btn_newline = True
+        return lines, btn_newline
+
+    def _lerp(a, b, t):
+        return tuple(int(a[k] + (b[k] - a[k]) * t) for k in range(3))
+
+    def _orb_frame(p):
+        # One animation frame of the orb — a Pillow recreation of the
+        # frontend's .stop-agent-button (css/style.css): a soft lavender
+        # (#9292d8) disc with a bright INSET white rim-glow, FIXED pink
+        # (top-right) / blue (bottom-left) accents bleeding at the edge, a
+        # faint colour shimmer, and a white PC-monitor icon with blinking
+        # eyes. Gentle pulse only — matches the pearly, mostly-static look of
+        # the real button (NOT the over-saturated cycling gradient before).
+        ss = 3
+        sz = ORB * ss
+        c = sz / 2.0
+        pulse = 1.0 + 0.04 * math.sin(2 * math.pi * p)
+        R = sz * 0.44 * pulse
+        img = Image.new("RGBA", (sz, sz), (0, 0, 0, 0))
+
+        # Outer pink/blue glow halo behind the disc (stop-circle-1 ::before /
+        # ::after): pink fixed top-right, blue fixed bottom-left, blurred.
+        glow = Image.new("RGBA", (sz, sz), (0, 0, 0, 0))
+        gd = ImageDraw.Draw(glow)
+        gb, off = R * 0.5, R * 0.62
+        gd.ellipse([c + off - gb, c - off - gb, c + off + gb, c - off + gb],
+                   fill=(255, 0, 115, 160))            # top-right pink
+        gd.ellipse([c - off - gb, c + off - gb, c - off + gb, c + off + gb],
+                   fill=(0, 186, 255, 160))            # bottom-left blue
+        glow = glow.filter(ImageFilter.GaussianBlur(R * 0.5))
+        img = Image.alpha_composite(img, glow)
+
+        d = ImageDraw.Draw(img)
+        # Lavender base disc (#9292d8 — the stop-bg colour).
+        d.ellipse([c - R, c - R, c + R, c + R], fill=(146, 146, 216, 255))
+
+        # Faint colour shimmer (stop-bgColor @ ~0.2 opacity), clipped to disc.
+        pal = [(255, 40, 40), (94, 255, 126), (44, 181, 255), (252, 99, 255)]
+        n = len(pal)
+        fp = (p % 1.0) * n
+        i0 = int(fp) % n
+        tcol = _lerp(pal[i0], pal[(i0 + 1) % n], fp - int(fp))
+        tint = Image.new("RGBA", (sz, sz), (0, 0, 0, 0))
+        ImageDraw.Draw(tint).ellipse([c - R, c - R, c + R, c + R], fill=tcol + (52,))
+        img = Image.alpha_composite(img, tint)
+
+        # Inset white rim-glow (the stop-bg box-shadow inset white) — the
+        # bright pearly sheen that defines the look. A thick white ring at the
+        # disc edge, blurred inward, clipped to the disc.
+        mask = Image.new("L", (sz, sz), 0)
+        ImageDraw.Draw(mask).ellipse([c - R, c - R, c + R, c + R], fill=255)
+        ring = Image.new("RGBA", (sz, sz), (0, 0, 0, 0))
+        ImageDraw.Draw(ring).ellipse(
+            [c - R, c - R, c + R, c + R], outline=(255, 255, 255, 255),
+            width=max(1, int(R * 0.24)))
+        ring = ring.filter(ImageFilter.GaussianBlur(R * 0.14))
+        ring.putalpha(ImageChops.multiply(ring.split()[3], mask))
+        img = Image.alpha_composite(img, ring)
+
+        # White PC-monitor icon + blinking eyes (stop-pc).
+        d2 = ImageDraw.Draw(img)
+        mw, mh = sz * 0.34, sz * 0.27
+        mx1, my1 = c - mw / 2, c - mh / 2 - sz * 0.03
+        mx2, my2 = mx1 + mw, my1 + mh
+        d2.rounded_rectangle([mx1, my1, mx2, my2], radius=sz * 0.04,
+                             outline=(255, 255, 255, 255),
+                             width=max(1, int(sz * 0.035)))
+        ew, eh = sz * 0.05, sz * 0.10
+        eh2 = eh * (0.18 if 0.90 <= p <= 0.97 else 1.0)
+        ey = (my1 + my2) / 2 - eh2 / 2
+        for ex in (c - ew * 1.4, c + ew * 0.4):
+            d2.rounded_rectangle([ex, ey, ex + ew, ey + eh2], radius=ew / 2,
+                                 fill=(255, 255, 255, 255))
+        bw = sz * 0.46
+        by = my2 + sz * 0.07
+        d2.rounded_rectangle([c - bw / 2, by, c + bw / 2, by + max(1.0, sz * 0.025)],
+                             radius=sz * 0.02, fill=(255, 255, 255, 255))
+
+        # Clip the whole orb to a clean circle so the blurred glow can't tint
+        # the square corners of the frame.
+        circ = Image.new("L", (sz, sz), 0)
+        ImageDraw.Draw(circ).ellipse([0, 0, sz - 1, sz - 1], fill=255)
+        img.putalpha(ImageChops.multiply(img.split()[3], circ))
+        return img.resize((ORB, ORB), Image.LANCZOS)
+
+    def _load_orb_sprite():
+        # Prefer the REAL frontend orb: orb_sprite.png next to this module is a
+        # static sprite sheet of the actual .stop-agent-button (from
+        # frontend/css/style.css) on a TRANSPARENT background, so each frame
+        # composites straight onto the pill. Each square frame is downscaled to
+        # the orb size. Falls back to the hand-drawn orb below if the sprite is
+        # missing (e.g. not bundled in a build).
+        try:
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "orb_sprite.png")
+            sheet = Image.open(path).convert("RGBA")
+            fw = sheet.width
+            count = sheet.height // fw
+            if count < 1:
+                return None
+            return [sheet.crop((0, k * fw, fw, (k + 1) * fw))
+                    .resize((ORB, ORB), Image.LANCZOS) for k in range(count)]
+        except Exception:
+            return None
+
+    ORB_FRAMES = _load_orb_sprite() or [_orb_frame(k / N_ORB_FRAMES)
+                                        for k in range(N_ORB_FRAMES)]
+
+    # The sprite frames already have a TRANSPARENT background (the white was
+    # flood-filled out at generation time, leaving only the orb), and the
+    # hand-drawn fallback is drawn on transparent too — so the orb composites
+    # straight onto the white pill with no white fill / circle edge to leave a
+    # grey line. Nothing to clip here.
+    N_ORB_FRAMES = len(ORB_FRAMES)
 
     def _read_clipboard():
         try:
@@ -1089,9 +1271,6 @@ def _run_layered_setup_banner() -> None:
             self.y = SCREEN_M - MARGIN           # canvas top
             self.mode = "msg"
             self.text = "Starting…"
-            self.i = 0
-            self.page_start = 0
-            self.hold = 0
             self.left_label = ""
             self.right_label = ""
             self.save_label = "Save"
@@ -1103,9 +1282,19 @@ def _run_layered_setup_banner() -> None:
             self.pending = None
             self.dirty = True
             self.lock = threading.Lock()
+            self.cur_h = MIN_CH                  # current canvas height
+            self.target_h = MIN_CH
+            self.orb_i = 0
+            self.orb_counter = 0
+            self.orb_x = int(round(ORB_CX - ORB / 2.0))
+            self.orb_y = int(round(ORB_CY - ORB / 2.0))
+            self._base = None
 
             self._make_window()
             self._make_dib()
+            self.target_h = self._compute_target_h()
+            self.cur_h = self.target_h
+            self._build_base()
             self._blit()
             user32.SetTimer(self.hwnd, 1, 16, None)
             _emit("READY")
@@ -1127,16 +1316,19 @@ def _run_layered_setup_banner() -> None:
             ex = WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW
             self.hwnd = user32.CreateWindowExW(
                 ex, "AutoUseLayeredPill", "AutoUseBanner", WS_POPUP,
-                self.x, self.y, CW, CH, None, None, self.hinst, None)
+                self.x, self.y, CW, MIN_CH, None, None, self.hinst, None)
             user32.ShowWindow(self.hwnd, SW_SHOW)
 
         def _make_dib(self):
+            # DIB is allocated at the MAX height once; each blit renders the
+            # pill into the top `cur_h` rows and UpdateLayeredWindow uses only
+            # that many rows, so the pill can grow/shrink without realloc.
             self.screen_dc = user32.GetDC(None)
             self.mem_dc = gdi32.CreateCompatibleDC(self.screen_dc)
             bmi = BITMAPINFO()
             bmi.bmiHeader.biSize = C.sizeof(BITMAPINFOHEADER)
             bmi.bmiHeader.biWidth = CW
-            bmi.bmiHeader.biHeight = -CH         # top-down
+            bmi.bmiHeader.biHeight = -MAX_CH     # top-down, max height
             bmi.bmiHeader.biPlanes = 1
             bmi.bmiHeader.biBitCount = 32
             bmi.bmiHeader.biCompression = BI_RGB
@@ -1148,17 +1340,54 @@ def _run_layered_setup_banner() -> None:
             self.old_obj = gdi32.SelectObject(self.mem_dc, self.hbmp)
 
         # ----- rendering -----
-        def _pill_image(self):
-            img = Image.new("RGBA", (CW, CH), (0, 0, 0, 0))
-            big = Image.new("RGBA", (CW * SS, CH * SS), (0, 0, 0, 0))
+        def _compute_target_h(self):
+            """Canvas height to show the full message (wrapped) plus any
+            control row, clamped to [MIN_CH, MAX_CH]. The first line is
+            centred on the orb at MIN height; each extra line adds LINE_H and
+            the pill grows downward (the first line never moves)."""
+            with self.lock:
+                mode, text = self.mode, self.text
+            lines, btn_newline = _layout(mode, text)
+            n = len(lines) + (1 if btn_newline else 0)
+            if mode in ("choice", "input"):
+                pill_h = PILL_H_MIN + (len(lines) - 1) * LINE_H + CTRL_GAP + BTN_H
+            else:
+                pill_h = PILL_H_MIN + (n - 1) * LINE_H
+            pill_h = max(PILL_H_MIN, min(MAX_PILL_H, pill_h))
+            return pill_h + 2 * MARGIN
+
+        def _pill_bg(self, h):
+            # White rounded-rect pill of canvas height h. Corner radius is
+            # FIXED (CORNER) so it's a stadium at MIN_CH and a clean rounded-
+            # rectangle when grown — never a fat oval (matches macOS).
+            pill_h = h - 2 * MARGIN
+            big = Image.new("RGBA", (CW * SS, h * SS), (0, 0, 0, 0))
             ImageDraw.Draw(big).rounded_rectangle(
                 [MARGIN * SS, MARGIN * SS,
-                 (MARGIN + PILL_W) * SS - 1, (MARGIN + PILL_H) * SS - 1],
-                radius=(PILL_H / 2) * SS, fill=(255, 255, 255, 255))
-            return Image.alpha_composite(img, big.resize((CW, CH), Image.LANCZOS))
+                 (MARGIN + PILL_W) * SS - 1, (MARGIN + pill_h) * SS - 1],
+                radius=CORNER * SS, fill=(255, 255, 255, 255))
+            return big.resize((CW, h), Image.LANCZOS)
 
-        def _draw_button(self, d, x1, y1, x2, y2, label, name, font=FONT_BTN):
-            d.rounded_rectangle([x1, y1, x2, y2], radius=(y2 - y1) / 2, fill=PURPLE)
+        def _aa_rrect(self, img, x1, y1, x2, y2, radius, fill=None,
+                      outline=None, width=1):
+            # Anti-aliased rounded rectangle: drawn at 4x on its own layer,
+            # downscaled with LANCZOS, then composited. Pillow's
+            # rounded_rectangle is otherwise 1-bit/aliased — that's the
+            # staircase on the buttons' curved ends. (The pill body is already
+            # supersampled in _pill_bg; this fixes the inner content only.)
+            w = max(1, int(round(x2 - x1)))
+            h = max(1, int(round(y2 - y1)))
+            s = 4
+            layer = Image.new("RGBA", (w * s, h * s), (0, 0, 0, 0))
+            ImageDraw.Draw(layer).rounded_rectangle(
+                [0, 0, w * s - 1, h * s - 1], radius=max(0.0, radius) * s,
+                fill=fill, outline=outline, width=max(1, int(round(width * s))))
+            img.alpha_composite(layer.resize((w, h), Image.LANCZOS),
+                                (int(round(x1)), int(round(y1))))
+
+        def _draw_button(self, img, x1, y1, x2, y2, label, name, font=FONT_BTN):
+            self._aa_rrect(img, x1, y1, x2, y2, (y2 - y1) / 2.0, fill=PURPLE)
+            d = ImageDraw.Draw(img)
             tw = d.textlength(label, font=font)
             bb = d.textbbox((0, 0), label, font=font)
             d.text(((x1 + x2) / 2 - tw / 2,
@@ -1170,74 +1399,94 @@ def _run_layered_setup_banner() -> None:
             bb = d.textbbox((0, 0), text or "Ag", font=font)
             d.text((x, cy - (bb[3] + bb[1]) / 2), text, font=font, fill=fill)
 
-        def _render(self):
+        def _build_base(self):
+            """Render pill + wrapped text + controls (everything EXCEPT the
+            orb, which is composited per-frame in _blit) into self._base at
+            the current canvas height. Records button hit-rects."""
             with self.lock:
                 mode = self.mode
-                page = self.text[self.page_start:self.i]
+                text = self.text
                 left_label, right_label = self.left_label, self.right_label
                 save_label, input_buf = self.save_label, self.input_buf
-            img = self._pill_image()
+            h = self.cur_h
+            img = self._pill_bg(h)
             d = ImageDraw.Draw(img)
             self.btn_rects = {}
-            cy = MARGIN + PILL_H / 2
-            left = MARGIN + PAD_L
-            right = MARGIN + PILL_W - PAD_R
+            right = TEXT_RIGHT
 
-            if mode in ("msg", "next"):
-                if mode == "next":
-                    bw = _next_btn_w
-                    self._draw_button(d, right - bw, cy - BTN_H / 2,
-                                      right, cy + BTN_H / 2, _NEXT_LABEL, "next")
-                self._vtext(d, left, cy, page, FONT_TEXT, TEXT_COL)
+            # Message text, wrapped. The FIRST line is centred on the orb
+            # (LINE_Y0 = pill centre at MIN height); each extra line flows
+            # below at LINE_H spacing, so the first line stays put as the pill
+            # grows downward — to the right of the orb.
+            lines, btn_newline = _layout(mode, text)
+            for i, ln in enumerate(lines):
+                self._vtext(d, TEXT_X0, MARGIN + LINE_Y0 + i * LINE_H,
+                            ln, FONT_TEXT, MSG_COL)
+            last_cy = MARGIN + LINE_Y0 + (len(lines) - 1) * LINE_H
+            ctrl_cy = last_cy + LINE_H / 2 + CTRL_GAP + BTN_H / 2
+
+            if mode == "next":
+                # Button right AFTER the last word (same line); drops to its
+                # own line below only if it can't fit there.
+                last_w = FONT_TEXT.getlength(lines[-1])
+                if btn_newline:
+                    bx1 = TEXT_X0
+                    bcy = MARGIN + LINE_Y0 + len(lines) * LINE_H
+                else:
+                    bx1 = TEXT_X0 + last_w + GAP
+                    bcy = last_cy
+                self._draw_button(img, bx1, bcy - BTN_H / 2,
+                                  bx1 + _next_btn_w, bcy + BTN_H / 2,
+                                  _NEXT_LABEL, "next")
             elif mode == "choice":
-                # Two buttons, right-aligned, side by side.
                 rw = int(d.textlength(right_label, font=FONT_BTN)) + 2 * BTN_PAD_X
                 lw = int(d.textlength(left_label, font=FONT_BTN)) + 2 * BTN_PAD_X
-                rx2 = right
-                rx1 = rx2 - rw
+                rx1 = right - rw
                 lx2 = rx1 - GAP
                 lx1 = lx2 - lw
-                self._draw_button(d, lx1, cy - BTN_H / 2, lx2, cy + BTN_H / 2,
-                                  left_label, "left")
-                self._draw_button(d, rx1, cy - BTN_H / 2, rx2, cy + BTN_H / 2,
-                                  right_label, "right")
+                self._draw_button(img, lx1, ctrl_cy - BTN_H / 2, lx2,
+                                  ctrl_cy + BTN_H / 2, left_label, "left")
+                self._draw_button(img, rx1, ctrl_cy - BTN_H / 2, right,
+                                  ctrl_cy + BTN_H / 2, right_label, "right")
             elif mode == "input":
                 sw_ = int(d.textlength(save_label, font=FONT_BTN)) + 2 * BTN_PAD_X
-                sx2 = right
-                sx1 = sx2 - sw_
-                self._draw_button(d, sx1, cy - BTN_H / 2, sx2, cy + BTN_H / 2,
-                                  save_label, "save")
-                fx1 = left
+                sx1 = right - sw_
+                self._draw_button(img, sx1, ctrl_cy - BTN_H / 2, right,
+                                  ctrl_cy + BTN_H / 2, save_label, "save")
+                fx1 = TEXT_X0
                 fx2 = sx1 - GAP
-                fy1, fy2 = cy - S(14), cy + S(14)
-                d.rounded_rectangle([fx1, fy1, fx2, fy2], radius=S(13),
-                                    outline=FIELD_BORDER, width=max(1, S(1)),
-                                    fill=(255, 255, 255, 255))
+                fy1, fy2 = ctrl_cy - S(14), ctrl_cy + S(14)
+                self._aa_rrect(img, fx1, fy1, fx2, fy2, S(13),
+                               outline=FIELD_BORDER, width=max(1, S(1)),
+                               fill=(255, 255, 255, 255))
                 inner_l = fx1 + S(12)
                 inner_w = fx2 - inner_l - S(8)
                 if input_buf:
                     shown = input_buf
                     while shown and d.textlength(shown, font=FONT_TEXT) > inner_w:
                         shown = shown[1:]            # scroll to keep the tail
-                    self._vtext(d, inner_l, cy, shown, FONT_TEXT, TEXT_COL)
+                    self._vtext(d, inner_l, ctrl_cy, shown, FONT_TEXT, TEXT_COL)
                     caret_x = inner_l + d.textlength(shown, font=FONT_TEXT) + S(1)
-                    d.line([(caret_x, cy - S(8)), (caret_x, cy + S(8))],
+                    d.line([(caret_x, ctrl_cy - S(8)), (caret_x, ctrl_cy + S(8))],
                            fill=TEXT_COL, width=max(1, S(1)))
                 else:
-                    self._vtext(d, inner_l, cy, "Paste your token…",
+                    self._vtext(d, inner_l, ctrl_cy, "Paste your token…",
                                 FONT_TEXT, PLACEHOLDER)
+            self._base = img
 
-            r, g, b, a = img.split()
+        def _blit(self):
+            if self._base is None:
+                self._build_base()
+            frame = self._base.copy()
+            frame.alpha_composite(ORB_FRAMES[self.orb_i], (self.orb_x, self.orb_y))
+            r, g, b, a = frame.split()
             out = Image.merge("RGBA", (ImageChops.multiply(b, a),
                                        ImageChops.multiply(g, a),
                                        ImageChops.multiply(r, a), a))
-            return out.tobytes()
-
-        def _blit(self):
-            data = self._render()
+            data = out.tobytes()
             C.memmove(self.bits, data, len(data))
             ptDst = POINT(self.x, self.y)
-            size = SIZE(CW, CH)
+            size = SIZE(CW, self.cur_h)
             ptSrc = POINT(0, 0)
             blend = BLENDFUNCTION(AC_SRC_OVER, 0, 255, AC_SRC_ALPHA)
             user32.UpdateLayeredWindow(
@@ -1260,6 +1509,9 @@ def _run_layered_setup_banner() -> None:
                 self._tick()
                 return 0
             if msg == WM_APP_REPAINT:
+                # Used by token-input typing: input_buf changed, height is
+                # unchanged, so just rebuild the base (new text) and blit.
+                self._build_base()
                 self._blit()
                 return 0
             if msg == WM_APP_CLOSE:
@@ -1346,34 +1598,41 @@ def _run_layered_setup_banner() -> None:
         def _post_repaint(self):
             user32.PostMessageW(self.hwnd, WM_APP_REPAINT, 0, 0)
 
-        # ----- streaming / paging (msg & next modes) -----
+        # ----- per-frame tick: orb animation + smooth height growth -----
         def _tick(self):
-            redraw = False
+            # Advance the orb animation (cycle pre-rendered frames).
+            self.orb_counter += 1
+            orb_changed = False
+            if self.orb_counter >= ORB_TICKS_PER_FRAME:
+                self.orb_counter = 0
+                self.orb_i = (self.orb_i + 1) % N_ORB_FRAMES
+                orb_changed = True
+
+            # Pick up state changes (new text / mode) → recompute target size.
+            relayout = False
             with self.lock:
-                mode = self.mode
-                if mode in ("msg", "next"):
-                    avail = _clip_text_avail(mode)
-                    if self.hold > 0:
-                        self.hold -= 1
-                        if self.hold == 0:
-                            self.page_start = self.i
-                            while (self.page_start < len(self.text)
-                                   and self.text[self.page_start] == " "):
-                                self.page_start += 1
-                            self.i = self.page_start
-                            redraw = True
-                    elif self.i < len(self.text):
-                        cand = self.text[self.page_start:self.i + 1]
-                        if (FONT_TEXT.getlength(cand) > avail
-                                and self.i > self.page_start):
-                            self.hold = HOLD_TICKS    # page is full; pause
-                        else:
-                            self.i += 1
-                            redraw = True
                 if self.dirty:
                     self.dirty = False
-                    redraw = True
-            if redraw:
+                    relayout = True
+            if relayout:
+                self.target_h = self._compute_target_h()
+
+            # Smoothly animate the canvas height toward the target. Top edge
+            # is anchored (self.y fixed), so the pill grows/shrinks downward.
+            height_changed = False
+            if self.cur_h != self.target_h:
+                diff = self.target_h - self.cur_h
+                step = max(S(6), abs(diff) // 3)
+                if abs(diff) <= step:
+                    self.cur_h = self.target_h
+                else:
+                    self.cur_h += step if diff > 0 else -step
+                height_changed = True
+
+            if relayout or height_changed:
+                self._build_base()
+                self._blit()
+            elif orb_changed:
                 self._blit()
 
         # ----- stdin command reader -----
@@ -1396,8 +1655,7 @@ def _run_layered_setup_banner() -> None:
                         continue
                     cmd = m.get("cmd")
                     if cmd == "MSG":
-                        self._set(text=m.get("text", "") or "", i=0,
-                                  page_start=0, hold=0)
+                        self._set(text=m.get("text", "") or "")
                     elif cmd == "SHOW_NEXT":
                         self._set(mode="next")
                     elif cmd == "HIDE_NEXT":
@@ -1420,6 +1678,15 @@ def _run_layered_setup_banner() -> None:
                 import traceback
                 _log("layered setup banner: stdin raised:\n"
                      + traceback.format_exc())
+            # stdin reached EOF (or broke) without a CLOSE command — the
+            # parent process is gone (e.g. the frontend UI was closed, which
+            # kills the app that spawned us). Tear the banner down so it's
+            # tied to the UI's lifetime and never lingers as an orphan.
+            _log("layered setup banner: stdin EOF — parent gone, closing")
+            try:
+                user32.PostMessageW(self.hwnd, WM_APP_CLOSE, 0, 0)
+            except Exception:
+                pass
 
         def _cleanup(self):
             try:
