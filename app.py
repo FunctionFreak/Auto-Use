@@ -541,6 +541,23 @@ def serve_static(filename):
         return send_from_directory(app.static_folder, filename)
     return "Not found", 404
 
+@app.route('/telegram/telergam_animation.html')
+def serve_telegram_orb():
+    """Serve the Telegram banner orb (the PC⇄Telegram flip) so the floating
+    banner's webview can iframe it from http://127.0.0.1:5000/ — single source
+    of truth, so edits to telergam_animation.html show up in the banner.
+    Resolves the platform-correct copy (windows_use vs macOS_use) and works in
+    both dev (filesystem) and compiled (embedded resources) builds."""
+    rel = f"Auto_Use/{PLATFORM_PKG}/remote_connection/telegram/telergam_animation.html"
+    if IS_COMPILED:
+        response = serve_embedded_file(rel)
+        if response:
+            return response
+        return "Not found", 404
+    tg_dir = os.path.join(os.path.dirname(__file__), 'Auto_Use', PLATFORM_PKG,
+                          'remote_connection', 'telegram')
+    return send_from_directory(tg_dir, 'telergam_animation.html')
+
 @app.route('/logo.png')
 def serve_logo():
     """Serve the Auto Use logo for the splash screen"""

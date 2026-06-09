@@ -278,15 +278,15 @@ BANNER_HTML = r"""<!DOCTYPE html>
     display: flex; align-items: center; gap: 9px;
     padding: 6px 18px 8px 7px; box-sizing: border-box;
   }
+  /* Orb slot reserves the 42px the layout expects; the actual orb is the
+     pc_button.html file embedded in an iframe (single source of truth). The
+     iframe is a touch bigger and centred so the orb's glow isn't clipped, and
+     click-through so it never eats the wizard's button clicks. */
   .stop-agent-button { position: relative; flex-shrink: 0;
     width: 42px; height: 42px; background: transparent; }
-""" + _ORB_CSS + r"""
-  /* Setup orb is PC-ONLY: no Telegram plane, no PC⇄Telegram cross-fade. The
-     switch belongs to the compact task pill (a command arriving from Telegram
-     while the agent works), never the setup wizard. So freeze the PC layer
-     fully visible and hide the Telegram layer. */
-  .icon-pc { animation: none; opacity: 1; }
-  .icon-tg { display: none; }
+  .orb-frame { position: absolute; top: 50%; left: 50%;
+    width: 50px; height: 50px; transform: translate(-50%, -50%);
+    border: 0; background: transparent; pointer-events: none; }
 
   /* Text + controls flow inline and WRAP. The fixed line-height keeps vertical
      centring stable whether or not the (slightly taller) Next button is on the
@@ -321,7 +321,10 @@ BANNER_HTML = r"""<!DOCTYPE html>
 <body>
   <div class="banner">
     <div class="measure">
-""" + _ORB_MARKUP + r"""
+      <div class="stop-agent-button">
+        <iframe id="orbFrame" class="orb-frame" src="http://127.0.0.1:5000/pc_button.html"
+                scrolling="no" frameborder="0"></iframe>
+      </div>
       <div class="body">
         <span class="banner-text" id="msg">Starting…</span><button class="next-btn" id="next" style="display:none"
               onclick="if(window.bridge) bridge.next_clicked()">Next</button>
@@ -343,6 +346,12 @@ BANNER_HTML = r"""<!DOCTYPE html>
 
   <script>
 """ + _CHANNEL_CONNECT + r"""
+    // The orb is pc_button.html in an iframe; it starts hidden and shows when
+    // told, so nudge it visible once the iframe has loaded.
+    var __orb = document.getElementById('orbFrame');
+    if (__orb) __orb.addEventListener('load', function () {
+      try { __orb.contentWindow.postMessage('pcbtn:show', '*'); } catch (e) {}
+    });
     // Multi-line streaming pill. The message reveals letter-by-letter and
     // WRAPS naturally; as it grows past a line the pill expands downward (the
     // window height is animated from Python on the height the observer below
@@ -505,7 +514,9 @@ COMPACT_HTML = r"""<!DOCTYPE html>
      as the pill grows. */
   .stop-agent-button { position: absolute; left: 4px; top: 4px;
     width: 42px; height: 42px; background: transparent; }
-""" + _ORB_CSS + r"""
+  .orb-frame { position: absolute; top: 50%; left: 50%;
+    width: 50px; height: 50px; transform: translate(-50%, -50%);
+    border: 0; background: transparent; pointer-events: none; }
   /* Vertically centred via top/translateY — NOT display:flex. With flex, each
      streamed per-character <span> becomes a flex item and a space-only item
      collapses to zero width, eating the spaces between words. Plain inline
@@ -520,7 +531,10 @@ COMPACT_HTML = r"""<!DOCTYPE html>
 </head>
 <body>
   <div class="pill">
-""" + _ORB_MARKUP + r"""
+    <div class="stop-agent-button">
+      <iframe class="orb-frame" src="http://127.0.0.1:5000/telegram/telergam_animation.html"
+              scrolling="no" frameborder="0"></iframe>
+    </div>
     <span class="msg" id="msg"></span>
   </div>
 
@@ -682,6 +696,7 @@ def _run_subprocess_banner() -> None:
         from PySide6.QtGui import QColor
         from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout
         from PySide6.QtWebEngineWidgets import QWebEngineView
+        from PySide6.QtWebEngineCore import QWebEngineSettings
         from PySide6.QtWebChannel import QWebChannel
     except Exception:
         import traceback
@@ -786,6 +801,12 @@ def _run_subprocess_banner() -> None:
             self.view.setStyleSheet("background: transparent;")
             self.view.page().setBackgroundColor(QColor(0, 0, 0, 0))  # transparent page
             self.view.setContextMenuPolicy(Qt.NoContextMenu)
+            # The pill page loads as local (qrc:///) content but embeds the orb
+            # from http://127.0.0.1:5000 (pc_button.html / telergam_animation.html),
+            # so let local content load that remote URL.
+            _wa = (QWebEngineSettings.WebAttribute
+                   if hasattr(QWebEngineSettings, "WebAttribute") else QWebEngineSettings)
+            self.view.settings().setAttribute(_wa.LocalContentCanAccessRemoteUrls, True)
             layout.addWidget(self.view)
 
             self.channel = QWebChannel()

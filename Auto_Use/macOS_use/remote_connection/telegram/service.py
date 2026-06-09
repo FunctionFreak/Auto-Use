@@ -632,7 +632,7 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
     window so the agent has the screen to itself. Restores phase to 'ready'."""
     # Compact "Telegram task in progress" indicator + minimise AutoUse window.
     # Both are best-effort — never let UI fluff block the actual task.
-    from Auto_Use.macOS_use.remote_connection.telegram.banner import StatusBanner
+    from Auto_Use.macOS_use.remote_connection.banner import StatusBanner
     task_banner = StatusBanner(compact=True)
     try:
         task_banner.show()
