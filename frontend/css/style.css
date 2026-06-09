@@ -6,7 +6,7 @@
 
 /* WebKit click responsiveness — eliminates tap delay and ghost highlights */
 button, input, textarea, select, a, [role="button"],
-.glass-button-wrapper, .settings-btn, .stop-agent-button,
+.glass-button-wrapper, .settings-btn, .stop-agent-frame,
 .model-option, .provider-item, .settings-save-btn,
 .settings-delete-btn, .gcp-vertex-btn, .vertex-done-btn {
     -webkit-tap-highlight-color: transparent;
@@ -1701,212 +1701,23 @@ body {
     color: rgba(90, 90, 90, 0.6);
 }
 
-.stop-agent-button {
+/* Stop-agent orb: embedded from pc_button.html (single source of truth for the orb).
+   The iframe is larger than the 42px orb so its glow and the 1.3x click-pop aren't
+   clipped; it's transparent and click-through until the orb is live. */
+.stop-agent-frame {
     position: absolute;
-    right: 6px;
     top: 50%;
-    
-    width: 42px;
-    height: 42px;
-    flex-shrink: 0;
-    
-    background: transparent;
-    border-radius: 50%;
-    
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    
-    /* Initially Hidden */
-    opacity: 0;
-    pointer-events: none;
-    transform: translateY(-50%) scale(0.8);
-    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-    
-    overflow: visible; /* Allow glow to show */
-    z-index: 20;
-}
-
-.stop-agent-button.active {
-    opacity: 1;
-    pointer-events: auto;
-    transform: translateY(-50%) scale(1);
-}
-
-.stop-agent-button.pop-vanish {
-    animation: stopPopVanish 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-    pointer-events: none;
-    transition: none;
-}
-
-@keyframes stopPopVanish {
-    0%   { transform: translateY(-50%) scale(1); opacity: 1; }
-    30%  { transform: translateY(-50%) scale(1.6); opacity: 1; }
-    100% { transform: translateY(-50%) scale(0); opacity: 0; }
-}
-
-.stop-agent-button:hover {
+    right: -9px;            /* ~72px frame centred where the 42px orb sat (right:6px) */
+    width: 72px;
+    height: 72px;
     transform: translateY(-50%);
-    filter: brightness(1.2);
-}
-
-.stop-orb {
-    position: relative;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    pointer-events: none;
-}
-
-.stop-circle-1 {
-    width: 42px;
-    height: 42px;
-    border-radius: 50%;
-    position: absolute;
     background: transparent;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    animation: stop-pulse 4.2s ease-in-out infinite 0.3s;
-    z-index: 1;
+    border: none;
+    z-index: 20;
+    pointer-events: none;   /* let the input through until the orb is live */
 }
-.stop-circle-1::before,
-.stop-circle-1::after {
-    content: "";
-    position: absolute;
-    border-radius: 50%;
-    filter: blur(8px);
-    width: 30%;
-    height: 30%;
-}
-.stop-circle-1::before { background: #ff0073; top: 30%; right: 30%; }
-.stop-circle-1::after { background: #00baff; bottom: 10%; left: 30%; }
-
-.stop-circle-2 {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    position: absolute;
-    inset: 0;
-    margin: auto;
-    background-color: white;
-    z-index: 9;
-    animation: stop-pulse2 4.2s ease-in-out infinite;
-}
-.stop-circle-2::before,
-.stop-circle-2::after {
-    content: "";
-    position: absolute;
-    border-radius: 50%;
-    filter: blur(6px);
-    z-index: 1;
-}
-.stop-circle-2::before { background: #ff0073; width: 30%; height: 30%; top: 20%; right: 20%; }
-.stop-circle-2::after { background: #00bbff; width: 20%; height: 20%; bottom: 10%; left: 40%; }
-
-.stop-bg {
-    position: absolute;
-    inset: 0;
-    border-radius: 50%;
-    box-shadow: inset 0 0 5px 2px rgba(255,255,255,0.8), 0 0 2px 2px rgba(255,255,255,0.9);
-    background-color: #9292d8;
-    animation: stop-bgRotate 2.5s linear infinite;
-}
-.stop-bg::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    animation: stop-bgColor 4s linear infinite;
-    box-shadow: inset 0 0 5px 2px rgba(255,255,255,0.8);
-    opacity: 0.2;
-}
-
-.stop-pc {
-    position: absolute;
-    inset: 0;
-    margin: auto;
-    width: 32px;
-    height: 32px;
-    z-index: 10;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    box-sizing: border-box;
-    gap: 1px;
-}
-.stop-monitor {
-    width: 12px;
-    height: 10px;
-    background: transparent;
-    border-radius: 1px;
-    padding: 0;
-    border: 1px solid white;
-    box-sizing: border-box;
-    box-shadow: none;
-}
-.stop-screen {
-    width: 100%;
-    height: 100%;
-    background-color: transparent;
-    border-radius: 0.5px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 2px;
-    box-shadow: none;
-}
-.stop-eye {
-    width: 1.5px;
-    height: 2.5px;
-    border-radius: 1px;
-    background: white;
-    animation: stop-blink 4s infinite;
-}
-.stop-base {
-    width: 16px;
-    height: 1px;
-    background: white;
-    border-radius: 0.5px;
-}
-
-@keyframes stop-pulse {
-    0%   { transform: scale(0.97); }
-    15%  { transform: scale(1); }
-    30%  { transform: scale(0.98); }
-    45%  { transform: scale(1); }
-    60%  { transform: scale(0.97); }
-    85%  { transform: scale(1); }
-    100% { transform: scale(0.97); }
-}
-@keyframes stop-pulse2 {
-    0%   { transform: scale(1); }
-    15%  { transform: scale(1.03); }
-    30%  { transform: scale(0.98); }
-    45%  { transform: scale(1.04); }
-    60%  { transform: scale(0.97); }
-    85%  { transform: scale(1.03); }
-    100% { transform: scale(1); }
-}
-@keyframes stop-bgRotate {
-    0%   { transform: rotate(0deg); }
-    20%  { transform: rotate(90deg); }
-    40%  { transform: rotate(180deg) scale(0.95,1); }
-    60%, 100% { transform: rotate(360deg); }
-}
-@keyframes stop-bgColor {
-    20% { background-color: red; }
-    40% { background-color: #5eff7e; }
-    60% { background-color: #2cb5ff; }
-    80% { background-color: #fc63ff; }
-}
-@keyframes stop-blink {
-    0%, 85%, 100% { transform: scaleY(1); }
-    92% { transform: scaleY(0.1); }
+.stop-agent-frame.active {
+    pointer-events: auto;
 }
 
 /* --------------------------------------------------------------

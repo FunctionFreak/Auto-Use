@@ -17,6 +17,11 @@ google-genai==1.64.0
 python-dotenv==1.2.1
 pywebview==6.1
 
+# Floating pill/orb banner (universal — telegram/discord/whatsapp). Hosts the
+# pill HTML in a transparent QWebEngineView; bundles QtWebEngine (heavy — see
+# the Nuitka build follow-up before shipping a compiled binary).
+PySide6==6.11.1
+
 # Kernel-level Input (for UAC interaction)
 interception-python
 

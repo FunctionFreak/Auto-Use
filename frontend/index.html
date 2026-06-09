@@ -245,18 +245,9 @@
             <div class="input-area-wrapper">
                 <textarea class="chat-input" placeholder="Select a model to start..." rows="1" disabled></textarea>
                 
-                <!-- Stop Agent Orb Button (Hidden by default) -->
-                <!-- Stop Agent Orb Button (Hidden by default) -->
-                <div class="stop-agent-button" id="stopAgentBtn" title="Stop Agent">
-                    <div class="stop-orb">
-                        <div class="stop-circle-1"></div>
-                        <div class="stop-circle-2"><div class="stop-bg"></div></div>
-                        <div class="stop-pc">
-                            <div class="stop-monitor"><div class="stop-screen"><div class="stop-eye"></div><div class="stop-eye"></div></div></div>
-                            <div class="stop-base"></div>
-                        </div>
-                    </div>
-                </div>
+                <!-- Stop Agent Orb Button: embeds pc_button.html (single source of truth for the orb) -->
+                <iframe id="stopBtnFrame" class="stop-agent-frame" src="pc_button.html"
+                        title="Stop Agent" scrolling="no" frameborder="0"></iframe>
             </div>
         </div>
     </div>

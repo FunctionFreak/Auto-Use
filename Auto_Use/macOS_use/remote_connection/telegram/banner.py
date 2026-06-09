@@ -125,8 +125,8 @@ body { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
 }
 .stop-monitor { width: 11px; height: 9px; background: transparent; border-radius: 1px; padding: 0;
   border: 1px solid white; box-sizing: border-box; }
-.stop-screen { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; gap: 2px; }
-.stop-eye { width: 1.5px; height: 2.5px; border-radius: 1px; background: white; animation: stop-blink 4s infinite; }
+.stop-screen { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; gap: 1px; }
+.stop-eye { width: 2px; height: 3px; border-radius: 1px; background: white; position: relative; top: -1px; animation: stop-blink 4s infinite; }
 .stop-base { width: 14px; height: 1px; background: white; border-radius: 0.5px; }
 
 /* min-width: 0 is the flexbox shrink-below-content-size fix — without it a
@@ -393,8 +393,8 @@ body.has-text { width: 440px; }
 
 .stop-monitor { width: 11px; height: 9px; background: transparent; border-radius: 1px; padding: 0;
   border: 1px solid white; box-sizing: border-box; }
-.stop-screen { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; gap: 2px; }
-.stop-eye { width: 1.5px; height: 2.5px; border-radius: 1px; background: white; animation: stop-blink 4s infinite; }
+.stop-screen { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; gap: 1px; }
+.stop-eye { width: 2px; height: 3px; border-radius: 1px; background: white; position: relative; top: -1px; animation: stop-blink 4s infinite; }
 .stop-base { width: 14px; height: 1px; background: white; border-radius: 0.5px; }
 
 /* Single-line streaming text. white-space: nowrap means tokens line up

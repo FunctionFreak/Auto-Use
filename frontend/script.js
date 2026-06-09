@@ -863,8 +863,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Show Agent Response Strip
                     const agentStrip = document.getElementById('agentResponseStrip');
                     const agentText = document.getElementById('agentText');
-                    // Get the stop button
-                    const stopBtn = document.getElementById('stopAgentBtn');
+                    // Stop-agent orb is embedded from pc_button.html (iframe)
+                    const stopBtnFrame = document.getElementById('stopBtnFrame');
                     
                     if (agentStrip) {
                         agentStrip.classList.add('active');
@@ -873,8 +873,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         chatInput.classList.add('agent-active');
                         agentText.textContent = 'Starting agent...';
 
-                        // Show Stop Button
-                        if (stopBtn) stopBtn.classList.add('active');
+                        // Show Stop Button (tell the embedded orb to appear)
+                        if (stopBtnFrame) {
+                            stopBtnFrame.classList.add('active');
+                            stopBtnFrame.contentWindow.postMessage('pcbtn:show', '*');
+                        }
 
                         // Switch to split layout
                         document.getElementById('imageStreamContainer').classList.add('agent-visible');
@@ -915,7 +918,10 @@ document.addEventListener('DOMContentLoaded', () => {
                             agentText.textContent = `Error: ${data.error}`;
                             // Re-enable input on error
                             chatInput.disabled = false;
-                            if (stopBtn) stopBtn.classList.remove('active');
+                            if (stopBtnFrame) {
+                                stopBtnFrame.classList.remove('active');
+                                stopBtnFrame.contentWindow.postMessage('pcbtn:hide', '*');
+                            }
                         }
                     })
                     .catch(err => {
@@ -923,59 +929,60 @@ document.addEventListener('DOMContentLoaded', () => {
                         agentText.textContent = 'Failed to start agent';
                         // Re-enable input on error
                         chatInput.disabled = false;
-                        if (stopBtn) stopBtn.classList.remove('active');
+                        if (stopBtnFrame) {
+                            stopBtnFrame.classList.remove('active');
+                            stopBtnFrame.contentWindow.postMessage('pcbtn:hide', '*');
+                        }
                     });
                 }
             }
         });
         
-        // 6. Handle Stop Button Click
-        const stopBtn = document.getElementById('stopAgentBtn');
-        if (stopBtn) {
-            stopBtn.addEventListener('click', () => {
-                // Stop streaming immediately
-                if (streamingTimeout) {
-                    clearTimeout(streamingTimeout);
-                    streamingTimeout = null;
-                }
+        // 6. Handle Stop Button Click — the orb lives in the pc_button.html iframe and
+        //    posts 'pcbtn:clicked' back to us (and plays its own pop-vanish animation).
+        const stopBtnFrame = document.getElementById('stopBtnFrame');
+        window.addEventListener('message', (e) => {
+            if (e.data !== 'pcbtn:clicked') return;
 
-                const agentText = document.getElementById('agentText');
-                if (agentText) agentText.textContent = 'Stopping agent...';
+            // Stop streaming immediately
+            if (streamingTimeout) {
+                clearTimeout(streamingTimeout);
+                streamingTimeout = null;
+            }
 
-                // Pop-vanish the button
-                stopBtn.classList.add('pop-vanish');
-                setTimeout(() => {
-                    stopBtn.classList.remove('active', 'pop-vanish');
-                }, 600);
+            const agentText = document.getElementById('agentText');
+            if (agentText) agentText.textContent = 'Stopping agent...';
 
-                // Force-close any active tool animations immediately
-                if (window.webSearchEnd) window.webSearchEnd();
-                if (window.shellEnd) window.shellEnd();
+            // The orb iframe already plays the pop-vanish; just drop its pointer-events.
+            if (stopBtnFrame) stopBtnFrame.classList.remove('active');
 
-                fetch('/api/stop-agent', { method: 'POST' })
-                    .then(res => res.json())
-                    .then(data => {
-                        console.log('Agent stop requested:', data);
-                        const agentStrip = document.getElementById('agentResponseStrip');
-                        if (agentStrip) agentStrip.classList.remove('active');
+            // Force-close any active tool animations immediately
+            if (window.webSearchEnd) window.webSearchEnd();
+            if (window.shellEnd) window.shellEnd();
 
-                        // Revert to centered layout
-                        document.getElementById('imageStreamContainer').classList.remove('agent-visible');
-                        document.getElementById('chatWrapper').classList.remove('split-layout');
-                        document.getElementById('llmWrapper').classList.remove('split-layout');
+            fetch('/api/stop-agent', { method: 'POST' })
+                .then(res => res.json())
+                .then(data => {
+                    console.log('Agent stop requested:', data);
+                    const agentStrip = document.getElementById('agentResponseStrip');
+                    if (agentStrip) agentStrip.classList.remove('active');
 
-                        chatInput.disabled = false;
-                        chatInput.classList.remove('agent-active');
-                        chatInput.focus();
-                    })
-                    .catch(err => console.error('Error stopping agent:', err));
-            });
-        }
+                    // Revert to centered layout
+                    document.getElementById('imageStreamContainer').classList.remove('agent-visible');
+                    document.getElementById('chatWrapper').classList.remove('split-layout');
+                    document.getElementById('llmWrapper').classList.remove('split-layout');
+
+                    chatInput.disabled = false;
+                    chatInput.classList.remove('agent-active');
+                    chatInput.focus();
+                })
+                .catch(err => console.error('Error stopping agent:', err));
+        });
     }
     
     // Agent completion handler (called from Python when agent finishes naturally)
     window.agentComplete = () => {
-        const stopBtn = document.getElementById('stopAgentBtn');
+        const stopBtnFrame = document.getElementById('stopBtnFrame');
         const agentStrip = document.getElementById('agentResponseStrip');
         const chatInput = document.querySelector('.chat-input');
         
@@ -985,12 +992,10 @@ document.addEventListener('DOMContentLoaded', () => {
             streamingTimeout = null;
         }
         
-        // Hide Stop Button (skip if already gone from click)
-        if (stopBtn && stopBtn.classList.contains('active') && !stopBtn.classList.contains('pop-vanish')) {
-            stopBtn.classList.add('pop-vanish');
-            setTimeout(() => {
-                stopBtn.classList.remove('active', 'pop-vanish');
-            }, 600);
+        // Hide Stop Button: let the embedded orb play its pop-vanish, then drop pointer-events.
+        if (stopBtnFrame) {
+            stopBtnFrame.contentWindow.postMessage('pcbtn:vanish', '*');
+            stopBtnFrame.classList.remove('active');
         }
         
         // Force-close any active tool animations immediately

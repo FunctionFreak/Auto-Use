@@ -992,7 +992,7 @@ def main():
     if "--banner-mode" in sys.argv and IS_WINDOWS:
         sys.argv.remove("--banner-mode")
         try:
-            from Auto_Use.windows_use.remote_connection.telegram.banner import (
+            from Auto_Use.windows_use.remote_connection.banner import (
                 _run_subprocess_banner,
             )
             _run_subprocess_banner()

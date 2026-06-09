@@ -694,7 +694,7 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
         )
 
         # Pipe each step's formatted response (thinking + current_goal +
-        # memory + verdict, with action stripped) into the compact banner.
+        # memory + eval, with action stripped) into the compact banner.
         # The agent already calls text_callback at
         # main_driver/service.py:704-705 with exactly this content — same
         # path the frontend's streamAgentText uses in app.py. update()
