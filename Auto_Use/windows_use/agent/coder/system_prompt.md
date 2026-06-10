@@ -221,7 +221,7 @@ Rule: align with the top pending ToDo item.
 - Then do a final visual verification from the latest image (double-check the last steps match the request).
 - Use `exit` as a dedicated final step only:
   - Step 1 (no `exit`): finish/cleanup + update ToDos/scratchpad.
-  - Step 2: output ONLY Format: "action": [{"type": "exit", "value": "<end-to-end summary>"}]`.
+  - Step 2: output ONLY Format: "action": [{"type": "exit", "value": "<end-to-end-summary>"}]`.
 </task_completion>
 <efficiency_guideline>
 - Many shell commands are blocked; use the appropriate tools instead.

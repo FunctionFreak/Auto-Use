@@ -106,6 +106,31 @@ WS_EX_NOACTIVATE  = 0x08000000
 WS_EX_TOOLWINDOW  = 0x00000080
 
 
+# ── active-banner registry (parent-side) ──────────────────────────────────
+# Every live StatusBanner (one whose subprocess is running) registers itself
+# here so the app can dismiss them all the instant the user closes the main
+# window — see close_all_banners(), wired to pywebview's `closing` event +
+# atexit in app.py. Without this, a banner whose owning thread is a daemon
+# (e.g. the Telegram setup wizard) only learns to quit via stdin-EOF, which
+# fires only AFTER the parent's slow webview/Qt teardown — leaving the pill
+# painted on screen for a few seconds.
+_ACTIVE_BANNERS: "set[StatusBanner]" = set()
+_ACTIVE_BANNERS_LOCK = threading.Lock()
+
+
+def close_all_banners() -> None:
+    """Close every live banner now. Safe to call from any thread and more
+    than once (StatusBanner.close() is idempotent). Snapshot under the lock so
+    a banner deregistering mid-iteration can't mutate the set we're walking."""
+    with _ACTIVE_BANNERS_LOCK:
+        banners = list(_ACTIVE_BANNERS)
+    for banner in banners:
+        try:
+            banner.close()
+        except Exception:
+            pass
+
+
 # ── stdio helpers (parent + subprocess) ───────────────────────────────────
 
 def _stderr(msg: str) -> None:
@@ -958,6 +983,14 @@ def _run_subprocess_banner() -> None:
         @Slot()
         def _on_close(self):
             _log("banner: close requested")
+            # Unmap the window THIS frame so it vanishes instantly, before the
+            # (slightly slower) close()/app.quit()/Chromium teardown. Both the
+            # CLOSE command and the stdin-EOF path converge here on the GUI
+            # thread, so this covers every close trigger.
+            try:
+                self.hide()
+            except Exception:
+                pass
             try:
                 self.close()
             finally:
@@ -1062,6 +1095,12 @@ class StatusBanner:
             self._proc = None
             return
 
+        # Register so close_all_banners() (app-window-close hook / atexit) can
+        # dismiss this pill the instant the user closes the app, instead of it
+        # lingering until stdin-EOF fires after the parent's slow teardown.
+        with _ACTIVE_BANNERS_LOCK:
+            _ACTIVE_BANNERS.add(self)
+
         self._stdout_thread = threading.Thread(
             target=self._stdout_reader,
             daemon=True,
@@ -1131,6 +1170,8 @@ class StatusBanner:
         if self._closed.is_set():
             return
         self._closed.set()
+        with _ACTIVE_BANNERS_LOCK:
+            _ACTIVE_BANNERS.discard(self)
         # Unblock anything still parked on a Queue/Event before we tear
         # the subprocess down.
         self._next_event.set()
@@ -1146,20 +1187,32 @@ class StatusBanner:
         if self._proc is None:
             return
 
-        # Ask the subprocess to close gracefully; fall back to terminate.
+        # Ask the subprocess to close gracefully (it hides the window this
+        # frame — see _PillWindow._on_close), then reap the process OFF this
+        # thread. close() is called from pywebview's `closing` event, which
+        # runs handlers synchronously and blocks the window teardown, so it
+        # must return immediately; the wait/terminate/kill escalation runs on
+        # a daemon reaper instead of stalling shutdown for up to 3 s.
         self._send({"cmd": "CLOSE"})
-        try:
-            self._proc.wait(timeout=3)
-        except Exception:
+        proc = self._proc
+        self._proc = None  # detach so a racing _send / double-close can't touch it
+
+        def _reap(p):
             try:
-                self._proc.terminate()
-                self._proc.wait(timeout=2)
+                p.wait(timeout=3)
             except Exception:
                 try:
-                    self._proc.kill()
+                    p.terminate()
+                    p.wait(timeout=2)
                 except Exception:
-                    pass
-        self._proc = None
+                    try:
+                        p.kill()
+                    except Exception:
+                        pass
+
+        threading.Thread(
+            target=_reap, args=(proc,), daemon=True, name="banner-reaper"
+        ).start()
 
     # ── internals ────────────────────────────────────────────────────────
 
@@ -1206,8 +1259,11 @@ class StatusBanner:
                 break
 
         # Subprocess exited (whether via CLOSED or pipe break). Unblock
-        # any pending waiters so callers don't deadlock.
+        # any pending waiters so callers don't deadlock, and drop ourselves
+        # from the active registry (the proc is gone — nothing left to close).
         self._closed.set()
+        with _ACTIVE_BANNERS_LOCK:
+            _ACTIVE_BANNERS.discard(self)
         self._ready.set()
         self._next_event.set()
         try:

@@ -659,10 +659,56 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
+        // 3-2-1 countdown shown in the "AutoUse helper" popup while the helper
+        // banner cold-starts (~3s). Pure UI feedback — the banner is spawned by
+        // the /api/telegram/connect POST below and appears ~when the count ends.
+        const telegramPromptPopup = telegramPromptOverlay
+            ? telegramPromptOverlay.querySelector('.telegram-prompt-popup')
+            : null;
+        const telegramPromptCountdown = document.getElementById('telegramPromptCountdown');
+        let telegramCountdownTimer = null;
+
+        function startTelegramCountdown() {
+            if (!telegramPromptPopup || !telegramPromptCountdown) return;
+            if (telegramCountdownTimer) {
+                clearInterval(telegramCountdownTimer);
+                telegramCountdownTimer = null;
+            }
+            let n = 3;
+            const render = () => {
+                telegramPromptCountdown.textContent = n;
+                telegramPromptCountdown.classList.remove('tick');
+                void telegramPromptCountdown.offsetWidth; // reflow to restart the pop animation
+                telegramPromptCountdown.classList.add('tick');
+            };
+            telegramPromptPopup.classList.add('counting');
+            render();
+            telegramCountdownTimer = setInterval(() => {
+                n -= 1;
+                if (n >= 1) {
+                    render();
+                } else {
+                    clearInterval(telegramCountdownTimer);
+                    telegramCountdownTimer = null;
+                    // Reveal the static instructions + Got it button.
+                    telegramPromptPopup.classList.remove('counting');
+                }
+            }, 1000);
+        }
+
+        function stopTelegramCountdown() {
+            if (telegramCountdownTimer) {
+                clearInterval(telegramCountdownTimer);
+                telegramCountdownTimer = null;
+            }
+            if (telegramPromptPopup) telegramPromptPopup.classList.remove('counting');
+        }
+
         if (remoteConnectBtn) {
             remoteConnectBtn.addEventListener('click', () => {
                 remoteConnectBtn.disabled = true;
                 if (telegramPromptOverlay) telegramPromptOverlay.classList.add('active');
+                startTelegramCountdown();
                 fetch('/api/telegram/connect', { method: 'POST' })
                     .catch(() => {})
                     .finally(() => {
@@ -675,10 +721,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (telegramPromptOk && telegramPromptOverlay) {
             telegramPromptOk.addEventListener('click', () => {
                 telegramPromptOverlay.classList.remove('active');
+                stopTelegramCountdown();
             });
             telegramPromptOverlay.addEventListener('click', (e) => {
                 if (e.target === telegramPromptOverlay) {
                     telegramPromptOverlay.classList.remove('active');
+                    stopTelegramCountdown();
                 }
             });
         }
