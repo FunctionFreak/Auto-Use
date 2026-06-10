@@ -293,14 +293,13 @@ BANNER_HTML = r"""<!DOCTYPE html>
     width: 100%; height: 100%; background: #ffffff; border-radius: 28px;
     overflow: hidden; box-sizing: border-box;
   }
-  /* Natural-height content row (orb + text/controls). align-items:center
-     vertically centres the content against the orb ADAPTIVELY, so a row of any
-     height — a 13px text line, the 28px token field, the choice buttons — lands
-     on the orb's axis (equal space above and below). The 6px/8px padding biases
-     that axis 1px above geometric centre, which reads as optically centred
-     (pure-centred content looks slightly low). The orb itself is unchanged. */
+  /* Natural-height content row (orb + text/controls). align-items:flex-start
+     TOP-anchors the content so the first line keeps its position when the
+     message wraps or the Next button drops to a second line — extra lines grow
+     DOWNWARD instead of re-centring the whole block upward. .body's padding-top
+     drops that first line onto the orb's axis for the common single-line case. */
   .measure {
-    display: flex; align-items: center; gap: 9px;
+    display: flex; align-items: flex-start; gap: 9px;
     padding: 6px 18px 8px 7px; box-sizing: border-box;
   }
   /* Orb slot reserves the 42px the layout expects; the actual orb is the
@@ -313,25 +312,25 @@ BANNER_HTML = r"""<!DOCTYPE html>
     width: 50px; height: 50px; transform: translate(-50%, -50%);
     border: 0; background: transparent; pointer-events: none; }
 
-  /* Text + controls flow inline and WRAP. The fixed line-height keeps vertical
-     centring stable whether or not the (slightly taller) Next button is on the
-     line, and gives wrapped lines even spacing. Vertical position is handled by
-     .measure's align-items:center — no manual offset, so every row height
-     centres correctly. */
-  .body { flex: 1; min-width: 0; line-height: 20px; }
+  /* Text + controls flow inline and WRAP. padding-top drops the first line onto
+     the orb's axis (matching the old centred single-line look); because the row
+     is now top-anchored (see .measure), wrapped/extra lines grow downward and
+     the first line never moves — so the prompt sits on line 1 and the choice
+     buttons / token field flow onto line 2 below it. */
+  .body { flex: 1; min-width: 0; line-height: 20px; padding-top: 11px; }
   .banner-text { color: #333333; font-size: 13px; font-weight: 600;
     line-height: 20px; overflow-wrap: break-word; }
-  /* Compact button so it fits inline after a typical wizard line rather than
-     wrapping below it (the streamed text leaves only ~55px trailing in the
-     440px pill; this footprint is ~50px). */
+  /* Purple pill button, sized to match the macOS banner (#5e6ad2, ~28px tall)
+     so both surfaces look identical. Inline after the wizard line; if a long
+     line leaves no trailing room it simply wraps below and the pill grows. */
   .next-btn {
     display: inline-block; vertical-align: middle; margin-left: 6px;
-    background: #6366f1; color: #ffffff; border: none; font-family: inherit;
-    font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 999px;
+    background: #5e6ad2; color: #ffffff; border: none; font-family: inherit;
+    font-size: 12px; font-weight: 600; padding: 4px 14px; border-radius: 999px;
     cursor: pointer; transition: background 0.15s ease;
   }
-  .next-btn:hover  { background: #4f46e5; }
-  .next-btn:active { background: #4338ca; }
+  .next-btn:hover  { background: #6e7ce3; }
+  .next-btn:active { background: #4e5ac2; }
   .choice-row { display: none; }
   .choice-row .next-btn { margin-left: 0; margin-right: 6px; }
   .input-row { display: none; align-items: center; gap: 6px; }
@@ -340,7 +339,7 @@ BANNER_HTML = r"""<!DOCTYPE html>
     padding: 0 12px; font-size: 12px; font-family: inherit; color: #374151;
     background: #ffffff; outline: none;
   }
-  #token-input:focus { border-color: #6366f1; }
+  #token-input:focus { border-color: #5e6ad2; }
 </style>
 </head>
 <body>
@@ -420,16 +419,18 @@ BANNER_HTML = r"""<!DOCTYPE html>
       reportHitRects();
     }
     function setChoice(leftLabel, rightLabel) {
+      // Keep the prompt (e.g. "How do you want to set up the bot?") visible
+      // ABOVE the buttons, like the macOS banner — clearAll already shows msg.
       clearAll();
-      document.getElementById('msg').style.display = 'none';
       document.getElementById('choice-left').textContent = leftLabel;
       document.getElementById('choice-right').textContent = rightLabel;
       document.getElementById('choice-row').style.display = 'block';
       reportHitRects();
     }
     function setInput(saveLabel) {
+      // Keep the prompt (e.g. "Paste your BotFather token…") visible above the
+      // field, like the macOS banner — clearAll already shows msg.
       clearAll();
-      document.getElementById('msg').style.display = 'none';
       document.getElementById('save-btn').textContent = saveLabel || 'Save';
       document.getElementById('input-row').style.display = 'flex';
       var inp = document.getElementById('token-input');
