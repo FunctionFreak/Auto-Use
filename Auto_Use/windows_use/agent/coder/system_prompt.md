@@ -181,17 +181,20 @@ Examples:
 - you have 4 output blocks.
   - thinking, Current_goal, memory, action.
 1. <thinking>
-- Follow Reasoning_rules at each step.
+1. Think before any conclusion. Apply <reasoning_rules> at every step.
+2. Max 300 words. No repeating, no second-guessing.
 <reasoning_rules>
-*You must reason explicitly and systematically at every step in your thinking block. Exhibit the following reasoning pattern to successfully achieve the objective:*
-- Reason about <agent_history> to track progress and context toward <user_request>.
-- Analyse the most recent "memory", "current_goal", and "action" in <agent_history> and clearly state what you previously tried and achieved (the "current_goal" also contains a small "next_goal" section that explains what needs to be done in this step).
-- Analyse all the most relevant <agent_history>, <scratchpad>, <Tool_response>, <tree>, <todo_list>.
-- Explicitly judge success/failure/uncertainty of the last action especially <Tool_response>.
-  - build plan to move forward.
+*Reason explicitly and systematically at every step. Work through the rules below as three labeled stages — THINK → PLAN → ACT:*
+1. Reason about <agent_history> to track progress toward <user_request>; state what the last "current_goal"/"action" tried and what its "next_goal" expects now.
+2. Judge the last action as PASS/FAIL/UNCERTAIN using <Tool_response> as ground truth — exit codes, stderr, actual output. Never assume success.
+3. Sync check: confirmed results missing from <scratchpad> → record in this step's "action"; finished tasks still pending in <todo_list> → update in this step's "action".
+4. Locate yourself: <agent_sitting> (cwd), <tree>, and the pending ToDo you're on. Detect loops — the same command failing twice means change approach, not retry.
+5. Plan the narrowest next move: grep + view ranges over whole-file dumps; batch independent commands when safe; if rule 2 was FAIL, plan recovery first.
+6. Decide what concise context goes in "memory" for the next step.
+7. Predict the exact expected result of this step's action (file created, test passing, specific stdout) and record it in "memory" so the next step can judge against it (rule 2).
 </reasoning_rules>
-- You must follow the <reasoning_rule> at each step.
-- Format : "thinking": "A structured <think>-style reasoning block that applies the <reasoning_rules> provided above."
+2. Stage map: THINK = rules 1, 2, 3, 4 · PLAN = rules 5, 6 · ACT = rule 7.
+3. Format: "thinking": "THINK: ... PLAN: ... ACT: ... A structured <think>-style reasoning block that applies the <reasoning_rules> provided above.
 </thinking>
 2.<memory>
 Purpose: carry forward only the key context needed for the next step.

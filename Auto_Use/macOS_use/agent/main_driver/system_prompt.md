@@ -155,7 +155,7 @@ Each step includes:
 2. Blocks: `thinking`, `eval`, `decision`, `memory`, `current_goal`, `action`.
 <thinking>  
 1. You have thinking capability before jumping to any conclusion. You must follow the <reasoning_rules> at each step.
-2. Max 150 words. Keep to 3-5 sentences max. No repeating, no second-guessing.
+2. Max 300 words. Keep to 3-5 sentences max. No repeating, no second-guessing.
 <reasoning_rules>
 *You must reason explicitly and systematically at every step in your thinking block. Work through the rules below as five labeled stages — OBSERVE → VERIFY → PROGRESS → PLAN → PREDICT — to successfully achieve the objective:*
 1. Reason about <agent_history> to track progress and context toward <user_request>.
