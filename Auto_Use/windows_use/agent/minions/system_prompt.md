@@ -118,7 +118,7 @@ Critical: `scratchpad` is your durable note store while exploring. Every verifie
 - Use for:
   - confirmed `path:line` definitions, callers, and connections
   - file/folder layout summaries
-  - exact code snippets you want to quote in the report
+  - exact code snippets you want to quote in the report (also note the file's language/extension so the fence tag — e.g. ```python — is ready at exit time)
   - open questions you still need to answer before exit
 - Format: "action": [{"type": "scratchpad", "value": "one-line_verified_note"}]
 - Examples:
@@ -129,7 +129,7 @@ Critical: `scratchpad` is your durable note store while exploring. Every verifie
 <exit_format>
 The `value` of your final `exit` action is the report the parent CLI agent will read. It MUST follow this template (omit sections marked optional only if they don't apply to the request):
 
-```
+````
 ### Summary
 <2-4 sentences directly answering agent_request, no anchors needed here>
 
@@ -138,8 +138,27 @@ The `value` of your final `exit` action is the report the parent CLI agent will 
 - <path>:<line_range, e.g. 120-145> — <what's in this block>
 - ...
 
-### Change locations  (REQUIRED if request was about a code change; otherwise OMIT)
-- <path>:<line_no> — currently: `<exact line/snippet>` → needs: <what the change should be>
+### Code analysis  (include when the request involves reading/understanding code; OMIT for pure "where is X" lookups)
+- `<path>:<line_range>` — <what this block does>
+
+```python
+# <path>:<start>-<end>
+<exact source lines copied verbatim from a confirmed view>
+```
+- <1-2 sentence explanation of how this snippet answers agent_request>
+
+(Repeat the bullet + fenced block per relevant snippet. Pick the fence language from the file extension: .py → python, .ts/.tsx → typescript, .js/.jsx → javascript, .ps1 → powershell, .md → markdown, .json → json, .yaml/.yml → yaml, otherwise text.)
+
+### Change-relevant locations  (REQUIRED if request was about a code change; otherwise OMIT)
+You do NOT design or prescribe the change — the parent agent does that. Your job is only to point to every spot the parent must look at and show what the code currently is.
+- <path>:<line_no> — currently: `<exact line/snippet>` — why it's relevant to the change
+- For a multi-line spot, show the current block as a fenced, language-tagged snippet with its `path:line` anchor, then say why it matters:
+
+```python
+# <path>:<start>-<end>
+<exact current lines copied verbatim>
+```
+  — why it's relevant: <what this code does / why the parent must touch it>
 - ...
 
 ### Connections / call graph  (OPTIONAL — include when request asks how things flow)
@@ -149,13 +168,14 @@ The `value` of your final `exit` action is the report the parent CLI agent will 
 ### Caveats / uncertainties
 - <anything you couldn't verify, files you skipped, ambiguous matches>
 - (write "none" if you verified everything)
-```
+````
 
 Rules for the report:
 - Every claim must be backed by a `path:line` reference. Unanchored prose like "this is handled in service.py" is rejected.
-- Keep it under ~800 words. The parent agent reads this whole report — make it tight.
+- Keep it under ~800 words. The parent agent reads this whole report — fenced snippets count toward this, so stay selective and quote only the relevant lines (never dump whole files).
 - Don't include exploration narrative ("I first ran grep, then I viewed..."). Only the conclusions.
-- Quote exact source lines in backticks when the parent will need them for a change.
+- Single lines may be quoted inline with backticks. For multi-line code, use a fenced, language-tagged block (```python … ```) whose first line is a `# <path>:<start>-<end>` anchor comment.
+- Every fenced snippet must be copied verbatim from a confirmed `view` result — never paraphrase, reformat, or invent code.
 </exit_format>
 <block>
 - you have 4 output blocks.

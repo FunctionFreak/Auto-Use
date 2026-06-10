@@ -47,6 +47,7 @@ import threading
 from pathlib import Path
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -54,6 +55,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 logger = logging.getLogger(__name__)
 
@@ -632,7 +634,7 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
     'ready'."""
     # Compact "Telegram task in progress" indicator + minimise AutoUse window.
     # Both are best-effort — never let UI fluff block the actual task.
-    from Auto_Use.windows_use.remote_connection.telegram.banner import StatusBanner
+    from Auto_Use.windows_use.remote_connection.banner import StatusBanner
     task_banner = StatusBanner(compact=True)
     try:
         task_banner.show()
@@ -695,12 +697,26 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
             provider_keys.get(provider_key_name) if provider_key_name else None
         )
 
+        # Pipe each step's formatted response (thinking + current_goal +
+        # memory + eval, with action stripped) into the compact banner.
+        # The agent already calls text_callback at
+        # main_driver/service.py with exactly this content — same path the
+        # frontend's streamAgentText uses in app.py. update() forwards via
+        # the MSG stdin command to the banner subprocess; the call returns
+        # quickly so the agent loop never blocks on it.
+        def _banner_update(text: str) -> None:
+            try:
+                task_banner.update(text)
+            except Exception:
+                logger.warning("banner.update failed", exc_info=True)
+
         agent = AgentService(
             provider=provider,
             model=model,
             save_conversation=False,
             thinking=True,
             api_key=provider_api_key,
+            text_callback=_banner_update,
         )
         agent.process_request(task)
         # Stop the monitor BEFORE the done message so the final scratchpad
@@ -734,6 +750,65 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
 
 # ── entry points ─────────────────────────────────────────────────────────────
 
+async def _on_error(update, context):
+    err = context.error
+    # Benign: user tapped the same inline button twice, so the edit produces
+    # identical content. Telegram rejects it; swallow quietly.
+    if isinstance(err, BadRequest) and "Message is not modified" in str(err):
+        return
+    logger.error("Unhandled exception in telegram handler", exc_info=err)
+
+
+# ── TLS verification for the Telegram connection ──────────────────────────
+# Some machines run HTTPS interception (antivirus / corporate proxy) whose
+# root cert isn't in certifi, or has malformed Basic Constraints that fail
+# OpenSSL's strict validation. There, verification genuinely cannot succeed
+# and the bot dies with "CERTIFICATE_VERIFY_FAILED: unable to get local issuer
+# certificate". We probe once at startup, prefer secure verification, and fall
+# back to verify=False (with a loud warning) ONLY when nothing else works — so
+# machines without interception stay fully secure.
+_SSL_VERIFY_UNSET = object()
+_SSL_VERIFY = _SSL_VERIFY_UNSET
+
+
+def _telegram_ssl_verify():
+    """Return the httpx `verify` setting for talking to api.telegram.org.
+
+    Probes (cached): certifi bundle → OS trust store → verify=False."""
+    global _SSL_VERIFY
+    if _SSL_VERIFY is not _SSL_VERIFY_UNSET:
+        return _SSL_VERIFY
+    import httpx
+    probe = "https://api.telegram.org"
+    candidates = []
+    try:
+        import certifi
+        candidates.append(certifi.where())
+    except Exception:
+        pass
+    try:
+        import ssl
+        candidates.append(ssl.create_default_context())
+    except Exception:
+        pass
+    for verify in candidates:
+        try:
+            httpx.get(probe, verify=verify, timeout=6)
+            _SSL_VERIFY = verify
+            return verify
+        except Exception:
+            continue
+    _stderr(
+        "WARNING: can't verify TLS to Telegram — your machine appears to run "
+        "HTTPS interception (antivirus / corporate proxy) with a certificate "
+        "Python rejects. Connecting WITHOUT certificate verification so the "
+        "bot works. To restore secure verification, turn off HTTPS/SSL "
+        "scanning for api.telegram.org in your antivirus or proxy."
+    )
+    _SSL_VERIFY = False
+    return False
+
+
 def _build_telegram_app(token: str):
     """Build a python-telegram-bot Application with all our handlers wired.
 
@@ -741,12 +816,22 @@ def _build_telegram_app(token: str):
     finishes initialising but before polling starts — perfect spot to send
     the "AutoUse online" announcement + provider picker to the saved owner.
     """
+    # Resolve TLS verification once (handles antivirus / proxy TLS
+    # interception). The bot and the long-poll updater each need their OWN
+    # request object; the updater's read_timeout must exceed the poll timeout
+    # (default 10 s) so long polling doesn't time out mid-wait.
+    verify = _telegram_ssl_verify()
     app = (
         Application.builder()
         .token(token)
+        .request(HTTPXRequest(httpx_kwargs={"verify": verify}))
+        .get_updates_request(
+            HTTPXRequest(read_timeout=20, httpx_kwargs={"verify": verify})
+        )
         .post_init(_post_init)
         .build()
     )
+    app.add_error_handler(_on_error)
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("reset", reset_cmd))
     app.add_handler(CallbackQueryHandler(callback_handler))

@@ -541,6 +541,23 @@ def serve_static(filename):
         return send_from_directory(app.static_folder, filename)
     return "Not found", 404
 
+@app.route('/telegram/telergam_animation.html')
+def serve_telegram_orb():
+    """Serve the Telegram banner orb (the PC⇄Telegram flip) so the floating
+    banner's webview can iframe it from http://127.0.0.1:5000/ — single source
+    of truth, so edits to telergam_animation.html show up in the banner.
+    Resolves the platform-correct copy (windows_use vs macOS_use) and works in
+    both dev (filesystem) and compiled (embedded resources) builds."""
+    rel = f"Auto_Use/{PLATFORM_PKG}/remote_connection/telegram/telergam_animation.html"
+    if IS_COMPILED:
+        response = serve_embedded_file(rel)
+        if response:
+            return response
+        return "Not found", 404
+    tg_dir = os.path.join(os.path.dirname(__file__), 'Auto_Use', PLATFORM_PKG,
+                          'remote_connection', 'telegram')
+    return send_from_directory(tg_dir, 'telergam_animation.html')
+
 @app.route('/logo.png')
 def serve_logo():
     """Serve the Auto Use logo for the splash screen"""
@@ -992,7 +1009,7 @@ def main():
     if "--banner-mode" in sys.argv and IS_WINDOWS:
         sys.argv.remove("--banner-mode")
         try:
-            from Auto_Use.windows_use.remote_connection.telegram.banner import (
+            from Auto_Use.windows_use.remote_connection.banner import (
                 _run_subprocess_banner,
             )
             _run_subprocess_banner()
@@ -1075,16 +1092,40 @@ def main():
     global webview_window
 
     win_w, win_h = 900, 700
-    center_x, center_y = _compute_window_center(win_w, win_h)
 
+    # Don't pass x/y: pywebview's Edge backend multiplies them by the DPI scale
+    # factor (winforms.py), but a manual center computed in physical pixels is
+    # already scaled — so on any display scaled >100% the window lands
+    # off-centre (double-scaled). Omitting the position makes pywebview use
+    # FormStartPosition.CenterScreen, which centres correctly at any DPI.
     webview_window = webview.create_window(
         'Auto use',
         'http://127.0.0.1:5000',
         width=win_w,
         height=win_h,
-        x=center_x,
-        y=center_y
     )
+
+    # Dismiss any floating helper banner the INSTANT the user closes the app.
+    # pywebview fires `closing` synchronously before the (slow) window/Qt
+    # teardown, so closing banners here makes the pill vanish immediately
+    # instead of lingering until stdin-EOF fires after teardown. The banner's
+    # own close() is now non-blocking, so this handler returns at once. Return
+    # None (NOT False — False would cancel the close). Windows-only: the
+    # banner module lives under windows_use.
+    if IS_WINDOWS:
+        try:
+            import atexit
+            from Auto_Use.windows_use.remote_connection.banner import (
+                close_all_banners,
+            )
+
+            def _on_app_closing():
+                close_all_banners()
+
+            webview_window.events.closing += _on_app_closing
+            atexit.register(close_all_banners)  # backstop for teardown paths that skip `closing`
+        except Exception:
+            debug_exception("banner_close_hook")
 
     # macOS needs pynput keyboard pre-initialized on the main thread
     # because Carbon APIs require the main dispatch queue.

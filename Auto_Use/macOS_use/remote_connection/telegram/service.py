@@ -47,6 +47,7 @@ import threading
 from pathlib import Path
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -631,7 +632,7 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
     window so the agent has the screen to itself. Restores phase to 'ready'."""
     # Compact "Telegram task in progress" indicator + minimise AutoUse window.
     # Both are best-effort — never let UI fluff block the actual task.
-    from Auto_Use.macOS_use.remote_connection.telegram.banner import StatusBanner
+    from Auto_Use.macOS_use.remote_connection.banner import StatusBanner
     task_banner = StatusBanner(compact=True)
     try:
         task_banner.show()
@@ -692,12 +693,26 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
             provider_keys.get(provider_key_name) if provider_key_name else None
         )
 
+        # Pipe each step's formatted response (thinking + current_goal +
+        # memory + eval, with action stripped) into the compact banner.
+        # The agent already calls text_callback at
+        # main_driver/service.py:704-705 with exactly this content — same
+        # path the frontend's streamAgentText uses in app.py. update()
+        # serialises onto the banner's UI thread, so the agent loop never
+        # blocks on it.
+        def _banner_update(text: str) -> None:
+            try:
+                task_banner.update(text)
+            except Exception:
+                logger.warning("banner.update failed", exc_info=True)
+
         agent = AgentService(
             provider=provider,
             model=model,
             save_conversation=False,
             thinking=True,
             api_key=provider_api_key,
+            text_callback=_banner_update,
         )
         agent.process_request(task)
         # Stop the monitor BEFORE the done message so the final scratchpad
@@ -731,6 +746,15 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
 
 # ── entry points ─────────────────────────────────────────────────────────────
 
+async def _on_error(update, context):
+    err = context.error
+    # Benign: user tapped the same inline button twice, so the edit produces
+    # identical content. Telegram rejects it; swallow quietly.
+    if isinstance(err, BadRequest) and "Message is not modified" in str(err):
+        return
+    logger.error("Unhandled exception in telegram handler", exc_info=err)
+
+
 def _build_telegram_app(token: str):
     """Build a python-telegram-bot Application with all our handlers wired.
 
@@ -744,6 +768,7 @@ def _build_telegram_app(token: str):
         .post_init(_post_init)
         .build()
     )
+    app.add_error_handler(_on_error)
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("reset", reset_cmd))
     app.add_handler(CallbackQueryHandler(callback_handler))
