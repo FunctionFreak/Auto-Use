@@ -236,7 +236,7 @@ AGENT_OUTPUT_SCHEMA = {
         "type": "object",
         "properties": {
             "thinking": {"type": "string"},
-            "verdict_last_action": {"type": "string"},
+            "eval": {"type": "string"},
             "decision": {"type": "string"},
             "current_goal": {"type": "string"},
             "memory": {"type": "string"},
@@ -297,7 +297,7 @@ AGENT_OUTPUT_SCHEMA = {
                 }
             }
         },
-        "required": ["thinking", "verdict_last_action", "decision", "current_goal", "memory", "action"],
+        "required": ["thinking", "eval", "decision", "current_goal", "memory", "action"],
         "additionalProperties": False
     }
 }

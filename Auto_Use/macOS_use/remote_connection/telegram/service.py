@@ -632,7 +632,7 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
     window so the agent has the screen to itself. Restores phase to 'ready'."""
     # Compact "Telegram task in progress" indicator + minimise AutoUse window.
     # Both are best-effort — never let UI fluff block the actual task.
-    from Auto_Use.macOS_use.remote_connection.telegram.banner import StatusBanner
+    from Auto_Use.macOS_use.remote_connection.banner import StatusBanner
     task_banner = StatusBanner(compact=True)
     try:
         task_banner.show()
@@ -694,7 +694,7 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
         )
 
         # Pipe each step's formatted response (thinking + current_goal +
-        # memory + verdict, with action stripped) into the compact banner.
+        # memory + eval, with action stripped) into the compact banner.
         # The agent already calls text_callback at
         # main_driver/service.py:704-705 with exactly this content — same
         # path the frontend's streamAgentText uses in app.py. update()

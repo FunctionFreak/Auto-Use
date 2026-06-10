@@ -17,7 +17,13 @@
 # A small attribution goes a long way toward a healthy open-source
 # community — thank you for contributing.
 
-"""Interactive walkthrough banner for setup.py.
+"""Universal floating pill/orb banner — surface-agnostic.
+
+Lives at remote_connection/ (outside any single surface folder) so the pill +
+orb visual engine is written once and reused by every surface — telegram/ today,
+discord/ and whatsapp/ later. Each surface's own folder holds the surface-specific
+behaviour (setup wizard steps, agent stream) and drives this banner over the same
+`StatusBanner` API; new surfaces import it unchanged. Telegram is the first caller.
 
 A small always-on-top pill at the top-right of the screen that contains:
   - the animated stop-orb on the left,
@@ -88,6 +94,11 @@ body { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
 .orb-wrap { position: absolute; top: 6px; left: 10px;
   width: 36px; height: 36px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center; }
+/* The orb itself is pc_button.html embedded in an iframe (single source of
+   truth); centred + click-through, a touch bigger so the glow isn't clipped. */
+.orb-frame { position: absolute; top: 50%; left: 50%;
+  width: 50px; height: 50px; transform: translate(-50%, -50%);
+  border: 0; background: transparent; pointer-events: none; }
 .stop-circle-1 {
   width: 36px; height: 36px; border-radius: 50%; position: absolute; background: transparent;
   display: flex; align-items: center; justify-content: center;
@@ -125,8 +136,8 @@ body { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
 }
 .stop-monitor { width: 11px; height: 9px; background: transparent; border-radius: 1px; padding: 0;
   border: 1px solid white; box-sizing: border-box; }
-.stop-screen { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; gap: 2px; }
-.stop-eye { width: 1.5px; height: 2.5px; border-radius: 1px; background: white; animation: stop-blink 4s infinite; }
+.stop-screen { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; gap: 1px; }
+.stop-eye { width: 2px; height: 3px; border-radius: 1px; background: white; position: relative; top: -1px; animation: stop-blink 4s infinite; }
 .stop-base { width: 14px; height: 1px; background: white; border-radius: 0.5px; }
 
 /* min-width: 0 is the flexbox shrink-below-content-size fix — without it a
@@ -164,12 +175,8 @@ body { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
 </style></head>
 <body>
 <div class="orb-wrap">
-  <div class="stop-circle-1"></div>
-  <div class="stop-circle-2"><div class="stop-bg"></div></div>
-  <div class="stop-pc">
-    <div class="stop-monitor"><div class="stop-screen"><div class="stop-eye"></div><div class="stop-eye"></div></div></div>
-    <div class="stop-base"></div>
-  </div>
+  <iframe id="orbFrame" class="orb-frame" src="http://127.0.0.1:5000/pc_button.html"
+          scrolling="no" frameborder="0"></iframe>
 </div>
 <span class="msg" id="msg">Starting…</span>
 <button class="next-btn" id="next"
@@ -190,6 +197,14 @@ body { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
   <div class="input-error" id="input-error"></div>
 </div>
 <script>
+  // The orb is pc_button.html in an iframe; it starts hidden and shows when
+  // told, so nudge it visible once the iframe has loaded.
+  (function () {
+    var f = document.getElementById('orbFrame');
+    if (f) f.addEventListener('load', function () {
+      try { f.contentWindow.postMessage('pcbtn:show', '*'); } catch (e) {}
+    });
+  })();
   // Word-by-word reveal: Python calls setMsg("…") with the full text; we
   // animate it in word-at-a-time so the banner reads smoothly. A new call
   // cancels any in-flight animation and starts over with the latest text.
@@ -339,6 +354,11 @@ body.has-text { width: 440px; }
 .orb-wrap { position: relative; width: 36px; height: 36px;
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: center; }
+/* The orb is telergam_animation.html embedded in an iframe (single source of
+   truth); centred + click-through, a touch bigger so the glow isn't clipped. */
+.orb-frame { position: absolute; top: 50%; left: 50%;
+  width: 50px; height: 50px; transform: translate(-50%, -50%);
+  border: 0; background: transparent; pointer-events: none; }
 
 .stop-circle-1 {
   width: 36px; height: 36px; border-radius: 50%; position: absolute; background: transparent;
@@ -393,8 +413,8 @@ body.has-text { width: 440px; }
 
 .stop-monitor { width: 11px; height: 9px; background: transparent; border-radius: 1px; padding: 0;
   border: 1px solid white; box-sizing: border-box; }
-.stop-screen { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; gap: 2px; }
-.stop-eye { width: 1.5px; height: 2.5px; border-radius: 1px; background: white; animation: stop-blink 4s infinite; }
+.stop-screen { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; gap: 1px; }
+.stop-eye { width: 2px; height: 3px; border-radius: 1px; background: white; position: relative; top: -1px; animation: stop-blink 4s infinite; }
 .stop-base { width: 14px; height: 1px; background: white; border-radius: 0.5px; }
 
 /* Single-line streaming text. white-space: nowrap means tokens line up
@@ -418,17 +438,8 @@ body.has-text { width: 440px; }
 </style></head>
 <body>
 <div class="orb-wrap">
-  <div class="stop-circle-1"></div>
-  <div class="stop-circle-2"><div class="stop-bg"></div></div>
-  <div class="icon-stack">
-    <div class="icon-layer icon-pc">
-      <div class="stop-monitor"><div class="stop-screen"><div class="stop-eye"></div><div class="stop-eye"></div></div></div>
-      <div class="stop-base"></div>
-    </div>
-    <div class="icon-layer icon-tg">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M21.5 4.5L2.5 12l5.5 2 2 6 3-3.5 5.5 4 3-16zM10 14l8.5-7L11 14.5l-1 4.5L10 14z"/></svg>
-    </div>
-  </div>
+  <iframe class="orb-frame" src="http://127.0.0.1:5000/telegram/telergam_animation.html"
+          scrolling="no" frameborder="0"></iframe>
 </div>
 <span class="msg" id="msg"></span>
 <script>

@@ -236,7 +236,7 @@ AGENT_OUTPUT_SCHEMA = {
         "type": "object",
         "properties": {
             "thinking": {"type": "string"},
-            "verdict_last_action": {"type": "string"},
+            "eval": {"type": "string"},
             "decision": {"type": "string"},
             "current_goal": {"type": "string"},
             "memory": {"type": "string"},
@@ -296,15 +296,102 @@ AGENT_OUTPUT_SCHEMA = {
                 }
             }
         },
-        "required": ["thinking", "verdict_last_action", "decision", "current_goal", "memory", "action"],
+        "required": ["thinking", "eval", "decision", "current_goal", "memory", "action"],
         "additionalProperties": False
     }
 }
 
+_TLS_PROBED = False
+
+
+def _ensure_tls_works() -> None:
+    """If this machine runs HTTPS interception (antivirus / corporate proxy)
+    with a certificate Python can't validate — which breaks EVERY https call,
+    including the LLM providers — disable certificate verification process-wide
+    (requests + httpx) so the agent can actually reach its model. Without this
+    the providers get an SSL error, return nothing useful, and the agent
+    "finishes" without doing anything.
+
+    Secure by default: it probes once and only disables verification when the
+    probe fails with a genuine CERTIFICATE error (interception), never on a
+    plain network error. Idempotent.
+    """
+    global _TLS_PROBED
+    if _TLS_PROBED:
+        return
+    _TLS_PROBED = True
+    import ssl
+    import sys
+    try:
+        import httpx
+        import certifi
+    except Exception:
+        return
+    probe = "https://api.openai.com/v1"
+    cert_error = False
+    for verify in (certifi.where(), ssl.create_default_context()):
+        try:
+            httpx.get(probe, verify=verify, timeout=6)
+            return  # verification works → leave everything secure
+        except Exception as e:
+            s = str(e).lower()
+            if "certificate" in s or "verify failed" in s or "ssl:" in s:
+                cert_error = True
+                continue
+            return  # network / other error → don't weaken a secure machine
+    if not cert_error:
+        return
+
+    # Confirmed TLS interception → disable verification for requests + httpx so
+    # every provider (requests-based and the openai / google httpx SDKs) works.
+    try:
+        import urllib3
+        urllib3.disable_warnings()
+    except Exception:
+        pass
+    try:
+        import requests
+        _orig_merge = requests.Session.merge_environment_settings
+
+        def _merge(self, url, proxies, stream, verify, cert):
+            settings = _orig_merge(self, url, proxies, stream, verify, cert)
+            settings["verify"] = False
+            return settings
+
+        requests.Session.merge_environment_settings = _merge
+    except Exception:
+        pass
+    try:
+        _orig_client = httpx.Client.__init__
+
+        def _client_init(self, *a, **kw):
+            kw["verify"] = False
+            _orig_client(self, *a, **kw)
+
+        httpx.Client.__init__ = _client_init
+        _orig_aclient = httpx.AsyncClient.__init__
+
+        def _aclient_init(self, *a, **kw):
+            kw["verify"] = False
+            _orig_aclient(self, *a, **kw)
+
+        httpx.AsyncClient.__init__ = _aclient_init
+    except Exception:
+        pass
+    print("[tls] WARNING: TLS interception detected (antivirus/proxy) — HTTPS "
+          "certificate verification DISABLED process-wide so the agent can "
+          "reach the LLM provider. To restore secure verification, turn off "
+          "HTTPS/SSL scanning for these API domains in your antivirus/proxy.",
+          file=sys.stderr, flush=True)
+
+
 class LLMManager:
     """Manager to route requests to the correct LLM provider"""
-    
+
     def __init__(self, provider: str, model: str, thinking: bool = True, api_key: str = None, cli_agent: bool = False, mode: str = "main"):
+        # Make HTTPS work even behind antivirus/corporate TLS interception
+        # (otherwise every provider call fails SSL and the agent does nothing).
+        _ensure_tls_works()
         self.provider = provider.lower()
         self.model_short_name = model
         self.thinking = thinking

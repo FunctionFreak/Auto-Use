@@ -33,7 +33,7 @@ from Auto_Use.macOS_use.controller.tool.open_app import open_app
 from Auto_Use.macOS_use.tree.element import UIElementScanner, ELEMENT_CONFIG
 from Auto_Use.macOS_use.controller.service import ControllerService
 from Auto_Use.macOS_use.controller.key_combo.service import KeyComboService
-from Auto_Use.macOS_use.remote_connection.telegram.banner import StatusBanner
+from Auto_Use.macOS_use.remote_connection.banner import StatusBanner
 from Auto_Use.macOS_use.remote_connection.telegram.service import (
     _API_KEY_FILE, _set_key_in_file,
 )

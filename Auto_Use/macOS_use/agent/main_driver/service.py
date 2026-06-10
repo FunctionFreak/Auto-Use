@@ -294,9 +294,9 @@ class AgentService:
             if "thinking" in response_data:
                 del response_data["thinking"]
             
-            # Remove verdict_last_action field if it exists
-            if "verdict_last_action" in response_data:
-                del response_data["verdict_last_action"]
+            # Remove eval field if it exists
+            if "eval" in response_data:
+                del response_data["eval"]
             
             return json.dumps(response_data, indent=2, ensure_ascii=False)
         except Exception:
@@ -606,7 +606,7 @@ No image and element tree provided. Focus on digesting the web response below.
                 for msg in assistant_messages[1:-1]:
                     messages_for_api.append(self._remove_action_from_response(msg))
                 
-                # Last entry: keep action intact (needed for verdict_last_action analysis)
+                # Last entry: keep action intact (needed for eval analysis)
                 if len(assistant_messages) > 1:
                     messages_for_api.append(assistant_messages[-1])
             else:
