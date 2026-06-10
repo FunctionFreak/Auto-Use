@@ -95,7 +95,7 @@ def release_all_inputs():
         logger.error(f"Emergency release failed: {e}")
 
 
-def canvas_input(text: str, interval: float = 0.04, post_wait: float = 0.22, stop_event=None) -> dict:
+def typewrite(text: str, interval: float = 0.04, post_wait: float = 0.22, stop_event=None) -> dict:
     """
     Type text into the currently focused location using Interception kernel driver.
     
@@ -110,7 +110,7 @@ def canvas_input(text: str, interval: float = 0.04, post_wait: float = 0.22, sto
             logger.error("Interception driver not installed!")
             return {
                 "status": "error",
-                "action": "canvas_input",
+                "action": "typewrite",
                 "message": "Interception driver not installed"
             }
         
@@ -120,7 +120,7 @@ def canvas_input(text: str, interval: float = 0.04, post_wait: float = 0.22, sto
             for char in text:
                 # Check stop between each character
                 if stop_event and stop_event.is_set():
-                    logger.info("canvas_input interrupted by stop_event mid-typing")
+                    logger.info("typewrite interrupted by stop_event mid-typing")
                     break
                 
                 mapping = _char_to_scancode(char)
@@ -172,7 +172,7 @@ def canvas_input(text: str, interval: float = 0.04, post_wait: float = 0.22, sto
             logger.info("Canvas input (Interception): stopped by user mid-typing")
             return {
                 "status": "stopped",
-                "action": "canvas_input",
+                "action": "typewrite",
                 "message": "Stopped by user"
             }
         
@@ -180,7 +180,7 @@ def canvas_input(text: str, interval: float = 0.04, post_wait: float = 0.22, sto
         
         return {
             "status": "success",
-            "action": "canvas_input",
+            "action": "typewrite",
             "text": text,
             "message": "verify yourself using visual"
         }
@@ -189,6 +189,6 @@ def canvas_input(text: str, interval: float = 0.04, post_wait: float = 0.22, sto
         logger.error(f"Error in canvas input (Interception): {str(e)}")
         return {
             "status": "error",
-            "action": "canvas_input",
+            "action": "typewrite",
             "message": str(e)
         }

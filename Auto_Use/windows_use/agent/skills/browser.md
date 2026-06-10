@@ -7,7 +7,7 @@
 <download_rules>
 1. If a download was triggered in the previous step, open the downloads folder/tab and track the status from there.
 2. Never click the download pop-up that appears on screen, even if it is highlighted. Always open the download content from the browser's downloads tab — that is your priority for accessing or verifying downloaded files.
-    1. Use shortcut_combo keys to switch to the downloads tab.
+    1. Use hotkey keys to switch to the downloads tab.
 3. Use the downloads tab to verify and track whether the download has completed (check for "done" or complete status).
 4. Always prefer downloading content from genuine, reputable websites.
 </download_rules>
@@ -29,7 +29,7 @@
     1. Even if elements are not annotated, use raw vision to read images and extract content directly. Keep track of all extracted information.
 5. On each page, scroll to the very end before moving forward to the next source.
     1. Confirm via <os_vision> that you have reached the bottom of the page before proceeding.
-6. If an element is not clickable but needs interaction, try using shortcut_combo to highlight/select it, then press enter.
+6. If an element is not clickable but needs interaction, try using hotkey to highlight/select it, then press enter.
 7. Each tab and source visited must be recorded clearly in the 'scratchpad' at each iteration.
 8. After all scraping is complete, open Notepad, dump all collected information with proper timestamps (start time, finish time), and save the file on the Desktop with an appropriate name.
 </web_scraping_rules>

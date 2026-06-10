@@ -701,21 +701,21 @@ class ControllerService:
             logger.error(f"Error drag-dropping from {from_index} to {to_index}: {str(e)}")
             return {"status": "error", "action": "drag_drop", "message": str(e)}
 
-    def canvas_input(self, text):
+    def typewrite(self, text):
         """Type text directly into currently focused location (no element targeting)."""
         try:
             for char in text:
                 if self.stop_event and self.stop_event.is_set():
-                    logger.info("canvas_input interrupted by stop_event")
-                    return {"status": "stopped", "action": "canvas_input",
+                    logger.info("typewrite interrupted by stop_event")
+                    return {"status": "stopped", "action": "typewrite",
                             "message": "Stopped by user"}
                 pyautogui.write(char, interval=0.04)
             time.sleep(0.22)
 
             logger.info(f"Canvas input: typed '{text}' ({len(text)} chars)")
-            return {"status": "success", "action": "canvas_input", "text": text,
+            return {"status": "success", "action": "typewrite", "text": text,
                     "message": "verify yourself using visual"}
 
         except Exception as e:
-            logger.error(f"canvas_input failed: {e}")
-            return {"status": "error", "action": "canvas_input", "message": str(e)}
+            logger.error(f"typewrite failed: {e}")
+            return {"status": "error", "action": "typewrite", "message": str(e)}

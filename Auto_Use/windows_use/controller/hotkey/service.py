@@ -33,7 +33,7 @@ SCAN_Y = 0x15
 SCAN_N = 0x31
 SCAN_CTRL = 0x1D
 
-class KeyComboService:
+class HotkeyService:
     """Service for sending keyboard shortcuts using the keyboard library.
     UAC shortcuts (alt+y, alt+n) are routed through Interception kernel driver
     to bypass the secure desktop where normal input is blocked."""
@@ -45,7 +45,7 @@ class KeyComboService:
         """Accept UAC prompt by sending Alt+Y via Interception kernel driver"""
         try:
             if self.stop_event and self.stop_event.is_set():
-                return {"status": "stopped", "action": "shortcut_combo", "shortcut": "alt+y", "message": "Stopped by user"}
+                return {"status": "stopped", "action": "hotkey", "shortcut": "alt+y", "message": "Stopped by user"}
             
             logger.info("UAC - sending Alt+Y via Interception driver")
             
@@ -53,7 +53,7 @@ class KeyComboService:
             if not ctx.valid:
                 return {
                     "status": "error",
-                    "action": "shortcut_combo",
+                    "action": "hotkey",
                     "shortcut": "alt+y",
                     "message": "Interception driver not installed"
                 }
@@ -77,17 +77,17 @@ class KeyComboService:
                 del ctx
             
             logger.info("UAC accepted via Interception driver")
-            return {"status": "success", "action": "shortcut_combo", "shortcut": "alt+y", "message": "UAC prompt accepted via Interception driver"}
+            return {"status": "success", "action": "hotkey", "shortcut": "alt+y", "message": "UAC prompt accepted via Interception driver"}
             
         except Exception as e:
             logger.error(f"Error in UAC accept: {str(e)}")
-            return {"status": "error", "action": "shortcut_combo", "shortcut": "alt+y", "message": str(e)}
+            return {"status": "error", "action": "hotkey", "shortcut": "alt+y", "message": str(e)}
     
     def _uac_decline(self) -> dict:
         """Decline UAC prompt by sending Alt+N via Interception kernel driver"""
         try:
             if self.stop_event and self.stop_event.is_set():
-                return {"status": "stopped", "action": "shortcut_combo", "shortcut": "alt+n", "message": "Stopped by user"}
+                return {"status": "stopped", "action": "hotkey", "shortcut": "alt+n", "message": "Stopped by user"}
             
             logger.info("UAC - sending Alt+N via Interception driver")
             
@@ -95,7 +95,7 @@ class KeyComboService:
             if not ctx.valid:
                 return {
                     "status": "error",
-                    "action": "shortcut_combo",
+                    "action": "hotkey",
                     "shortcut": "alt+n",
                     "message": "Interception driver not installed"
                 }
@@ -119,11 +119,11 @@ class KeyComboService:
                 del ctx
             
             logger.info("UAC declined via Interception driver")
-            return {"status": "success", "action": "shortcut_combo", "shortcut": "alt+n", "message": "UAC prompt declined via Interception driver"}
+            return {"status": "success", "action": "hotkey", "shortcut": "alt+n", "message": "UAC prompt declined via Interception driver"}
             
         except Exception as e:
             logger.error(f"Error in UAC decline: {str(e)}")
-            return {"status": "error", "action": "shortcut_combo", "shortcut": "alt+n", "message": str(e)}
+            return {"status": "error", "action": "hotkey", "shortcut": "alt+n", "message": str(e)}
     
     def send(self, shortcut: str) -> dict:
         """
@@ -152,7 +152,7 @@ class KeyComboService:
             if len(keys) > 3:
                 return {
                     "status": "error",
-                    "action": "shortcut_combo",
+                    "action": "hotkey",
                     "shortcut": shortcut,
                     "message": f"Maximum 3 keys allowed, got {len(keys)}"
                 }
@@ -163,7 +163,7 @@ class KeyComboService:
             
             return {
                 "status": "success",
-                "action": "shortcut_combo",
+                "action": "hotkey",
                 "shortcut": shortcut
             }
             
@@ -171,7 +171,7 @@ class KeyComboService:
             logger.error(f"Error sending shortcut {shortcut}: {str(e)}")
             return {
                 "status": "error",
-                "action": "shortcut_combo",
+                "action": "hotkey",
                 "shortcut": shortcut,
                 "message": str(e)
             }
