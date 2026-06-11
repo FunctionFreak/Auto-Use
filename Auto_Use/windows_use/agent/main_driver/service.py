@@ -364,7 +364,7 @@ class AgentService:
                 formatted_element_tree = ""
                 user_message = """<UAC_Trigger>
 A Windows UAC prompt is blocking the screen. Based on your previous actions, do you want to allow this?
-Respond with "action": [{"type": "shortcut_combo", "value": "alt+y"}] to accept or "action": [{"type": "shortcut_combo", "value": "alt+n"}] to decline. Skip visual_decision analysis.
+Respond with "action": [{"type": "hotkey", "value": "alt+y"}] to accept or "action": [{"type": "hotkey", "value": "alt+n"}] to decline. Skip visual_decision analysis.
 </UAC_Trigger>"""
             
             elif not uac_detected:

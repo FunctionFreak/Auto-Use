@@ -17,7 +17,7 @@
 # A small attribution goes a long way toward a healthy open-source
 # community — thank you for contributing.
 
-# This file makes key_combo a Python package
-from .service import KeyComboService
+# This file makes hotkey a Python package
+from .service import HotkeyService
 
-__all__ = ['KeyComboService']
+__all__ = ['HotkeyService']
