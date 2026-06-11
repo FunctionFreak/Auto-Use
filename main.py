@@ -29,11 +29,11 @@ else:
 
 # Configuration
 PROVIDER = "openrouter"
-MODEL = "qwen-3.6-flash" #refer to the model name correctly from model_list.txt.
+MODEL = "gemini-2.5-flash" #refer to the model name correctly from model_list.txt.
 # Your task here
 task = """
 
-what all files are there on my download folder
+make a nice report of netlfix 10 year result without using web tool on google sheet pure gui
 
 """
 
@@ -41,7 +41,8 @@ what all files are there on my download folder
 conversation = True  # Set to False to disable conversation.txt
 # Control thinking/reasoning
 thinking = True  # Set to True to enable reasoning for supported models
-
+# Control automation engineer
+automation_engineer = True  # Set to True to enable automation engineer mode by default it is False
 # Run the agent
 agent = AgentService(
     provider=PROVIDER,

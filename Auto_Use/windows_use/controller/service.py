@@ -39,7 +39,7 @@ INTERCEPTION_MOUSE_MOVE_RELATIVE = 0x000
 INTERCEPTION_MOUSE_MOVE_ABSOLUTE = 0x001
 INTERCEPTION_MOUSE_VIRTUAL_DESKTOP = 0x002
 
-# Apps where pyautogui is blocked (UIPI-protected) — routed to kernel canvas_input
+# Apps where pyautogui is blocked (UIPI-protected) — routed to kernel typewrite
 KERNEL_INPUT_APPS = ["Windows Security"]
 
 # Configure pyautogui for instant movement
@@ -1062,10 +1062,10 @@ class ControllerService:
                 "message": str(e)
             }
 
-    def canvas_input(self, text):
+    def typewrite(self, text):
         """
         Type text directly into currently focused location (no element targeting).
-        UIPI-protected apps (e.g. Windows Security) route to canvas_input.py (kernel driver).
+        UIPI-protected apps (e.g. Windows Security) route to kernel_input.py (kernel driver).
         Normal apps use pyautogui; falls back to kernel driver on failure.
         
         Args:
@@ -1074,18 +1074,18 @@ class ControllerService:
         Returns:
             dict: Result of canvas input operation
         """
-        from .tool.kernel_input import canvas_input as kernel_canvas_input
+        from .tool.kernel_input import typewrite as kernel_typewrite
 
         if any(app.lower() in self.application_name.lower() for app in KERNEL_INPUT_APPS):
-            logger.info(f"App '{self.application_name}' is UIPI-protected, routing to kernel canvas_input")
-            return kernel_canvas_input(text, stop_event=self.stop_event)
+            logger.info(f"App '{self.application_name}' is UIPI-protected, routing to kernel typewrite")
+            return kernel_typewrite(text, stop_event=self.stop_event)
 
         try:
             # Type character by character so we can check stop_event
             for char in text:
                 if self.stop_event and self.stop_event.is_set():
-                    logger.info("canvas_input (pyautogui) interrupted by stop_event")
-                    return {"status": "stopped", "action": "canvas_input", "message": "Stopped by user"}
+                    logger.info("typewrite (pyautogui) interrupted by stop_event")
+                    return {"status": "stopped", "action": "typewrite", "message": "Stopped by user"}
                 pyautogui.write(char, interval=0.04)
             time.sleep(0.22)
             
@@ -1093,11 +1093,11 @@ class ControllerService:
             
             return {
                 "status": "success",
-                "action": "canvas_input",
+                "action": "typewrite",
                 "text": text,
                 "message": "verify yourself using visual"
             }
             
         except Exception as e:
-            logger.warning(f"pyautogui canvas_input failed: {e}, falling back to kernel driver")
-            return kernel_canvas_input(text)
+            logger.warning(f"pyautogui typewrite failed: {e}, falling back to kernel driver")
+            return kernel_typewrite(text)

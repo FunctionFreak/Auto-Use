@@ -1131,7 +1131,7 @@ def main():
     # because Carbon APIs require the main dispatch queue.
     if IS_MAC:
         try:
-            from Auto_Use.macOS_use.controller.key_combo.service import _get_keyboard
+            from Auto_Use.macOS_use.controller.hotkey.service import _get_keyboard
             _get_keyboard()
         except Exception:
             pass

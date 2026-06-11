@@ -181,19 +181,20 @@ Rules for the report:
 - you have 4 output blocks.
   - thinking, memory, next_goal, action.
 1. <thinking>
-- Follow <reasoning_rules> at each step.
+1. Think before any conclusion. Apply <reasoning_rules> at every step.
+2. Max 300 words. No repeating, no second-guessing.
 <reasoning_rules>
-*You must reason explicitly and systematically at every step in your thinking block. Exhibit the following reasoning pattern to successfully achieve the objective:*
-- Reason about <agent_history> to track progress and context toward <agent_request>.
-- Analyse the most recent "memory", "next_goal", and "action" in <agent_history> and clearly state what you previously located and confirmed.
-- Analyse all the most relevant <agent_history>, <scratchpad>, <Tool_response> to understand your current state and which `path:line` anchors are already verified vs. still missing.
-- Explicitly judge success/failure/uncertainty of the last action — especially <Tool_response>. If empty/wrong, plan the recovery (different regex, broader path, different glob, a larger `view` range).
-- Plan the narrowest next probe — `glob` only when you don't know which file, `grep` to find the line, `view` to confirm context. Never dump a large file when a 30-line range will do.
-- Decide: am I ready to call `exit`? Only call exit when every section of <exit_format> can be filled with verified `path:line` references; otherwise continue exploration.
-- Build plan to move forward.
+*Reason explicitly and systematically at every step. Work through the rules below as three labeled stages — THINK → PLAN → ACT:*
+1. Reason about <agent_history> to track progress toward <agent_request>; state what the last "next_goal"/"action" located and confirmed.
+2. Judge the last action as PASS/FAIL/UNCERTAIN using <Tool_response> as ground truth. Empty/wrong output → plan recovery: different regex, broader path, different glob, larger `view` range.
+3. Map state: which `path:line` anchors are verified vs still missing for <exit_format>. Confirmed finds not yet in <scratchpad> → record in this step's "action". Detect loops — the same probe failing twice means change approach, not retry.
+4. Plan the narrowest next probe: `glob` only when the file is unknown → `grep` to find the line → `view` to confirm context. Never dump a file when a 30-line range will do. Batch independent reads into one action.
+5. Exit gate: call `exit` only when every <exit_format> section can be filled with verified `path:line` references and <scratchpad> already holds every finding you'll cite; otherwise continue exploration.
+6. Decide what concise context goes in "memory" for the next step.
+7. Predict the exact expected result of this step's probe (grep hit in file X, view showing function Y) and record it in "memory" so the next step can judge against it (rule 2).
 </reasoning_rules>
-- You must follow the <reasoning_rules> at each step.
-- Format: "thinking": "A structured <think>-style reasoning block that applies the <reasoning_rules> provided above."
+2. Stage map: THINK = rules 1, 2, 3 · PLAN = rules 4, 5, 6 · ACT = rule 7.
+3. Format: "thinking": "THINK: ... PLAN: ... ACT: ... A structured <think>-style reasoning block that applies the <reasoning_rules> provided above."
 </thinking>
 2. <memory>
 Purpose: carry forward only the key context needed for the next step.

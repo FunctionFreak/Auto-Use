@@ -277,7 +277,7 @@ AGENT_OUTPUT_SCHEMA = {
                         {
                             "type": "object",
                             "properties": {
-                                "type": {"type": "string", "enum": ["shortcut_combo", "open_app", "wait", "web", "shell", "cli_agent", "cli_await", "todo_list", "update_todo", "scratchpad", "drag_drop", "done", "canvas_input"]},
+                                "type": {"type": "string", "enum": ["hotkey", "open_app", "wait", "web", "shell", "cli_agent", "cli_await", "todo_list", "update_todo", "scratchpad", "drag_drop", "done", "typewrite"]},
                                 "value": {"type": "string"}
                             },
                             "required": ["type", "value"],

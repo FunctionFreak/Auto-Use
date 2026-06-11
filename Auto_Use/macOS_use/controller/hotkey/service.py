@@ -17,7 +17,7 @@
 # A small attribution goes a long way toward a healthy open-source
 # community — thank you for contributing.
 
-# Auto_Use/macOS_use/controller/key_combo/service.py
+# Auto_Use/macOS_use/controller/hotkey/service.py
 # macOS version — keyboard shortcuts via pynput (Quartz CGEvent under the hood)
 # pynput resolves keycodes from the system keyboard layout — no hardcoded table.
 
@@ -68,7 +68,7 @@ def _resolve_key(name: str):
     return None
 
 
-class KeyComboService:
+class HotkeyService:
     """Service for sending keyboard shortcuts via pynput."""
 
     def __init__(self, stop_event=None):
@@ -87,7 +87,7 @@ class KeyComboService:
         """
         try:
             if self.stop_event and self.stop_event.is_set():
-                return {"status": "stopped", "action": "shortcut_combo",
+                return {"status": "stopped", "action": "hotkey",
                         "shortcut": shortcut, "message": "Stopped by user"}
 
             normalized = shortcut.lower().replace(" ", "")
@@ -95,7 +95,7 @@ class KeyComboService:
 
             if len(parts) > 3:
                 return {
-                    "status": "error", "action": "shortcut_combo",
+                    "status": "error", "action": "hotkey",
                     "shortcut": shortcut,
                     "message": f"Maximum 3 keys allowed, got {len(parts)}"
                 }
@@ -112,7 +112,7 @@ class KeyComboService:
                     final = _resolve_key(p)
                     if final is None:
                         return {
-                            "status": "error", "action": "shortcut_combo",
+                            "status": "error", "action": "hotkey",
                             "shortcut": shortcut,
                             "message": f"Unknown key: '{p}'"
                         }
@@ -120,7 +120,7 @@ class KeyComboService:
             # Solo key (e.g. just "escape", "f5")
             if final is None and not modifiers:
                 return {
-                    "status": "error", "action": "shortcut_combo",
+                    "status": "error", "action": "hotkey",
                     "shortcut": shortcut, "message": "No key found in combo"
                 }
 
@@ -145,13 +145,13 @@ class KeyComboService:
             logger.info(f"Sent shortcut: {shortcut}")
 
             return {
-                "status": "success", "action": "shortcut_combo",
+                "status": "success", "action": "hotkey",
                 "shortcut": shortcut
             }
 
         except Exception as e:
             logger.error(f"Error sending shortcut {shortcut}: {str(e)}")
             return {
-                "status": "error", "action": "shortcut_combo",
+                "status": "error", "action": "hotkey",
                 "shortcut": shortcut, "message": str(e)
             }

@@ -33,7 +33,7 @@ import time
 from Auto_Use.windows_use.controller.tool.open_app import open_on_windows
 from Auto_Use.windows_use.tree.element import UIElementScanner, ELEMENT_CONFIG
 from Auto_Use.windows_use.controller.service import ControllerService
-from Auto_Use.windows_use.controller.key_combo.service import KeyComboService
+from Auto_Use.windows_use.controller.hotkey.service import HotkeyService
 from Auto_Use.windows_use.remote_connection.banner import StatusBanner
 from Auto_Use.windows_use.remote_connection.telegram.service import (
     _API_KEY_FILE, _set_key_in_file,
@@ -111,15 +111,15 @@ def _open_telegram_in_edge(banner) -> bool:
 
     controller = ControllerService()
     controller.set_elements(mapping, scanner.application_name)
-    key_combo = KeyComboService()
+    hotkey = HotkeyService()
 
     controller.click(address_bar_index)
     time.sleep(STEP_DELAY_SEC)
 
-    controller.canvas_input(TELEGRAM_WEB_URL)
+    controller.typewrite(TELEGRAM_WEB_URL)
     time.sleep(STEP_DELAY_SEC)
 
-    key_combo.send("return")
+    hotkey.send("return")
     return True
 
 

@@ -31,7 +31,7 @@ from .service import ControllerService
 from .task_tracker.service import TaskTrackerService
 from .scratchpad.service import ScratchpadService
 from .tool import open_on_windows, ShellService
-from .key_combo.service import KeyComboService
+from .hotkey.service import HotkeyService
 from .tool.web.service import WebService
 from .tool.screenshot import ScreenshotService
 from .cli.service import CLIService
@@ -76,7 +76,7 @@ class ControllerView:
         self.controller_service = ControllerService(stop_event=stop_event)
         self.task_tracker = TaskTrackerService(cli_mode=cli_mode, session_id=session_id)
         self.scratchpad_service = ScratchpadService(cli_mode=cli_mode, session_id=session_id, minion_mode=minion_mode)
-        self.key_combo_service = KeyComboService(stop_event=stop_event)
+        self.hotkey_service = HotkeyService(stop_event=stop_event)
         self.cli_service = CLIService(session_id=session_id) if cli_mode else None
         self.screenshot_service = ScreenshotService(self.controller_service)
         self.shell_service = ShellService()
@@ -386,9 +386,9 @@ class ControllerView:
                             "message": f"Scroll on element {element_id} failed"
                         }
                 
-                elif action_type == "canvas_input":
+                elif action_type == "typewrite":
                     text_value = action_item.get("text")
-                    result = self.controller_service.canvas_input(text_value)
+                    result = self.controller_service.typewrite(text_value)
                     results.append(result)
                     if result.get("status") == "error":
                         return result
@@ -401,9 +401,9 @@ class ControllerView:
                     if result.get("status") == "error":
                         return result
 
-                elif action_type == "shortcut_combo":
+                elif action_type == "hotkey":
                     combo_value = action_item.get("value")
-                    result = self.key_combo_service.send(combo_value)
+                    result = self.hotkey_service.send(combo_value)
                     results.append(result)
                     if result.get("status") == "error":
                         return result
@@ -432,12 +432,23 @@ class ControllerView:
                 elif action_type == "open_app":
                     app_name = action_item.get("value")
                     logger.info(f"Opening application: {app_name}")
-                    
-                    success = open_on_windows(app_name)
-                    
-                    if success:
+
+                    mode = open_on_windows(app_name)
+
+                    if mode == "focused":
+                        logger.info(f"{app_name} already running, focused existing window")
+                        result = {
+                            "status": "success",
+                            "action": "tool",
+                            "tool": "open_app",
+                            "app": app_name,
+                            "mode": "focused",
+                            "message": f"'{app_name}' was already running — existing window brought to foreground. UI is already loaded; a long wait is not needed."
+                        }
+                        results.append(result)
+                    elif mode == "launched":
                         logger.info(f"Successfully opened {app_name}")
-                        result = {"status": "success", "action": "tool", "tool": "open_app", "app": app_name}
+                        result = {"status": "success", "action": "tool", "tool": "open_app", "app": app_name, "mode": "launched"}
                         results.append(result)
                     else:
                         logger.error(f"Failed to open {app_name}")
@@ -1057,8 +1068,8 @@ class ControllerView:
                     direction = action_value.get("direction")
                     return self.controller_service.scroll(element_idx, direction)
             
-            elif action_key == "canvas_input":
-                return self.controller_service.canvas_input(action_value)
+            elif action_key == "typewrite":
+                return self.controller_service.typewrite(action_value)
                     
             elif action_key == "double_click":
                 return self.controller_service.double_click(action_value)
@@ -1066,8 +1077,8 @@ class ControllerView:
             elif action_key == "right_click":
                 return self.controller_service.right_click(action_value)
 
-            elif action_key == "shortcut_combo":
-                return self.key_combo_service.send(action_value)
+            elif action_key == "hotkey":
+                return self.hotkey_service.send(action_value)
             
             elif action_key == "wait":
                 wait_time = float(action_value)
