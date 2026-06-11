@@ -22,9 +22,9 @@
 
   <a href="https://star-history.com/#auto-use/Auto-Use&Date">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=auto-use/Auto-Use&type=Date&theme=dark" />
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=auto-use/Auto-Use&type=Date" />
-      <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=auto-use/Auto-Use&type=Date" width="720" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=auto-use/Auto-Use&type=Date&theme=dark&v=2" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=auto-use/Auto-Use&type=Date&v=2" />
+      <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=auto-use/Auto-Use&type=Date&v=2" width="720" />
     </picture>
   </a>
 
