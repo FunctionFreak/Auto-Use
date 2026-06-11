@@ -41,7 +41,8 @@ make a nice report of netlfix 10 year result without using web tool on google sh
 conversation = True  # Set to False to disable conversation.txt
 # Control thinking/reasoning
 thinking = True  # Set to True to enable reasoning for supported models
-
+# Control automation engineer
+automation_engineer = True  # Set to True to enable automation engineer mode by default it is False
 # Run the agent
 agent = AgentService(
     provider=PROVIDER,
