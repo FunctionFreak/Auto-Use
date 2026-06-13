@@ -714,16 +714,31 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
             api_key=provider_api_key,
             text_callback=_banner_update,
         )
-        agent.process_request(task)
+        # process_request returns {"status", "message"}: "success" only when a
+        # `done` action ran, "error" on a critical failure (e.g. the API key is
+        # wrong and every attempt 401s), "incomplete" otherwise. Without this we
+        # always sent "✅ Done." even when the agent never actually ran.
+        result = agent.process_request(task)
         # Stop the monitor BEFORE the done message so the final scratchpad
         # sweep happens first — keeps the chat in correct chronological order.
         stop_event.set()
         monitor.join(timeout=SCRATCHPAD_POLL_SEC + 2)
-        # wait=True: block until "✅ Done." is on Telegram's servers before
-        # the finally-block fires _maybe_run_next_queued, which would
+
+        status = result.get("status") if isinstance(result, dict) else "success"
+        message = (result.get("message") if isinstance(result, dict) else "") or ""
+        if len(message) > 400:  # keep the phone message readable
+            message = message[:400] + "…"
+
+        # wait=True: block until the terminal message is on Telegram's servers
+        # before the finally-block fires _maybe_run_next_queued, which would
         # otherwise schedule "📝 Running queued task: …" as a second,
-        # concurrent HTTP POST that can race past Done in delivery.
-        _send_chat(bot, chat_id, "✅ Done.", loop, wait=True)
+        # concurrent HTTP POST that can race past it in delivery.
+        if status == "success":
+            _send_chat(bot, chat_id, "✅ Done.", loop, wait=True)
+        elif status == "error":
+            _send_chat(bot, chat_id, f"❌ Error: {message}", loop, wait=True)
+        else:  # incomplete
+            _send_chat(bot, chat_id, f"⚠️ Stopped without completing: {message}", loop, wait=True)
     except Exception as e:
         logger.exception("agent error")
         stop_event.set()

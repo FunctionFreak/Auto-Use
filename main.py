@@ -29,7 +29,7 @@ else:
 
 # Configuration
 PROVIDER = "openrouter"
-MODEL = "gemini-2.5-flash" #refer to the model name correctly from model_list.txt.
+MODEL = "nex-n2-pro" #refer to the model name correctly from model_list.txt.
 # Your task here
 task = """
 

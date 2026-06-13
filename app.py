@@ -890,6 +890,10 @@ def start_agent():
                     except Exception:
                         debug_exception("monitor_milestones final read")
 
+            # Outcome reported back to the web UI. Defaults to success; the
+            # process_request return value or an exception overrides it so the
+            # UI shows the real result instead of always signaling completion.
+            run_outcome = {"status": "success", "message": ""}
             try:
                 AgentService = importlib.import_module(
                     f"Auto_Use.{PLATFORM_PKG}.agent.main_driver.service"
@@ -912,15 +916,29 @@ def start_agent():
                 monitor_thread.daemon = True
                 monitor_thread.start()
 
-                agent.process_request(task)
+                run_outcome = agent.process_request(task)
+                if not isinstance(run_outcome, dict):
+                    # Older return shape (a bare string) → treat as success.
+                    run_outcome = {"status": "success", "message": ""}
 
-            except Exception:
+            except Exception as agent_exc:
                 debug_exception("run_agent")
+                run_outcome = {"status": "error", "message": str(agent_exc)}
             finally:
                 stop_event.set()
                 if webview_window and current_session_id == active_agent_session_id:
                     try:
-                        webview_window.evaluate_js("window.agentComplete()")
+                        status = run_outcome.get("status", "success")
+                        message = run_outcome.get("message", "") or ""
+                        if status == "success":
+                            webview_window.evaluate_js("window.agentComplete()")
+                        else:
+                            # Surface the real reason instead of a silent "complete".
+                            prefix = "❌ Error: " if status == "error" else "⚠️ Stopped without completing: "
+                            reason = prefix + message if message else prefix.strip()
+                            webview_window.evaluate_js(
+                                f"window.agentError('{_js_escape(reason)}')"
+                            )
                     except Exception:
                         debug_exception("signaling agent completion")
 

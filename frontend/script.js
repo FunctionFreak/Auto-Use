@@ -1066,6 +1066,25 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    // Agent failure handler (called from Python when the run ends in error or
+    // stops without completing). Surfaces the reason in the persistent
+    // milestone stream — which is only cleared on the NEXT run — so the user
+    // sees WHY it ended instead of a silent return to idle, then performs the
+    // same teardown as agentComplete.
+    window.agentError = (msg) => {
+        const milestoneStream = document.getElementById('milestoneStream');
+        if (milestoneStream && msg) {
+            const line = document.createElement('div');
+            line.className = 'milestone-line milestone-line--error';
+            line.textContent = msg;
+            milestoneStream.appendChild(line);
+            if (milestoneStream.parentElement) {
+                milestoneStream.parentElement.scrollTop = milestoneStream.parentElement.scrollHeight;
+            }
+        }
+        window.agentComplete();
+    };
+
     // ============================================
     // GLOBE ANIMATION FOR WEB SEARCH
     // ============================================

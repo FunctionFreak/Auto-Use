@@ -806,7 +806,15 @@ class StatusBanner:
 
     def _create(self):
         try:
-            scr = NSScreen.mainScreen().frame()
+            # Anchor to the PRIMARY display (the menu-bar screen), NOT
+            # mainScreen(). mainScreen() follows keyboard focus, and this runs
+            # via callAfter on the main thread — so by the time it fires the
+            # agent may have brought another app (e.g. Chrome) to the front on
+            # a *secondary* display, making mainScreen() that other screen.
+            # screens()[0] is the stable primary screen and never jumps.
+            screens = NSScreen.screens()
+            scr_obj = screens[0] if screens else NSScreen.mainScreen()
+            scr = scr_obj.frame()
             if self._compact:
                 w_px, h_px = self.COMPACT_MIN_W, self.COMPACT_MIN_H
                 # Stadium pill — same corner radius as the standard banner
@@ -819,8 +827,12 @@ class StatusBanner:
                 corner = self.MIN_H / 2.0
                 html = BANNER_HTML
                 ignores_mouse = False
-            x = scr.size.width - w_px - self.RIGHT_MARGIN
-            y = scr.size.height - h_px - self.TOP_MARGIN
+            # Include the screen origin so the right edge is correct in the
+            # global multi-display coordinate space (origin is (0,0) for the
+            # primary display, non-zero for others). Without it the pill lands
+            # on the wrong (left) side whenever the anchor screen isn't at 0,0.
+            x = scr.origin.x + scr.size.width - w_px - self.RIGHT_MARGIN
+            y = scr.origin.y + scr.size.height - h_px - self.TOP_MARGIN
             rect = NSMakeRect(x, y, w_px, h_px)
 
             w = _NonActivatingPanel.alloc().initWithContentRect_styleMask_backing_defer_(

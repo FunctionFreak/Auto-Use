@@ -121,7 +121,7 @@ Each step includes:
 </os_interaction>
 </Tool_Capability>
 <scratchpad>
-1. This is your durable scratchpad. Use it for verified checkpoints AND any key fact you need to remember (file paths, metrics, scraped data, observations).
+1. This is your durable scratchpad. Use it for verified checkpoints AND any key fact you need to remember (file paths, metrics, scraped data, observations) or to highlight the answer to any <user_request /> that is asked as a question.
 2. Only write after visual confirmation — never assume success.
 3. Write immediately when something is confirmed. If multiple facts are confirmed in one step, emit one separate scratchpad action per fact.
 4. Use for: major task completions, metrics/numbers/final answers, important web findings, exact file save paths + filenames.
