@@ -632,12 +632,16 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
     window so the agent has the screen to itself. Restores phase to 'ready'."""
     # Compact "Telegram task in progress" indicator + minimise AutoUse window.
     # Both are best-effort — never let UI fluff block the actual task.
-    from Auto_Use.macOS_use.remote_connection.banner import StatusBanner
+    from Auto_Use.macOS_use.remote_connection.banner import StatusBanner, CoderBannerManager
     task_banner = StatusBanner(compact=True)
     try:
         task_banner.show()
     except Exception:
         logger.warning("could not show task banner", exc_info=True)
+    # Expands the orb pill into an embedded terminal panel (streamed lines +
+    # todo checklist + minion spinner rows) while the main agent is halted in
+    # cli_await, then collapses back. Drives the same task_banner. Best-effort.
+    coder_mgr = CoderBannerManager(task_banner)
     # Minimise the AutoUse pywebview window so the agent has the screen to
     # itself. We talk to pywebview directly via its global `windows` list
     # rather than importing from app.py — `python app.py` makes app.py the
@@ -713,6 +717,7 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
             thinking=True,
             api_key=provider_api_key,
             text_callback=_banner_update,
+            cli_callback=coder_mgr.handle_event,
         )
         # process_request returns {"status", "message"}: "success" only when a
         # `done` action ran, "error" on a critical failure (e.g. the API key is
@@ -749,6 +754,10 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
             stop_event.set()
         try:
             task_banner.close()
+        except Exception:
+            pass
+        try:
+            coder_mgr.close_all()
         except Exception:
             pass
         with _state_lock:

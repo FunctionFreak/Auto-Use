@@ -347,9 +347,18 @@ html { margin: 0; padding: 0; background: transparent;
    the WKWebView frame follows it via its autoresizing mask. */
 body { margin: 0; padding: 4px; box-sizing: border-box;
   background: transparent;
-  display: flex; align-items: center; gap: 8px;
+  display: flex; flex-direction: column; align-items: stretch; gap: 0;
   width: 44px; height: 44px; overflow: hidden; }
 body.has-text { width: 440px; }
+/* Coder terminal open: the pill expands into a wide, tall card. Declared
+   AFTER .has-text so its width/height win regardless of the orb ticker's
+   has-text toggle. Height is content-driven; Python clamps the window to
+   COMPACT_CODER_MAX_H. */
+body.coder { width: 540px; height: auto; padding-bottom: 12px; }
+
+/* Top row = orb + the single-line step ticker (the original compact pill). */
+.toprow { display: flex; align-items: center; gap: 8px; height: 36px;
+  width: 100%; flex-shrink: 0; }
 
 .orb-wrap { position: relative; width: 36px; height: 36px;
   flex-shrink: 0;
@@ -428,6 +437,55 @@ body.has-text { width: 440px; }
   max-width: 388px; padding: 0; }
 .msg:empty { display: none; }
 
+/* ── embedded coder terminal panel (shown only while a CLI/coder runs) ── */
+#coderPanel { display: none; width: 100%; margin-top: 8px; box-sizing: border-box;
+  border-radius: 10px; overflow: hidden; border: 1px solid rgba(0,0,0,0.08);
+  background: #e9ebee; }
+body.coder #coderPanel { display: block; }
+.cp-bar { padding: 8px 10px; text-align: center; background: #dfe3e8;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+  font: 700 11px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  color: rgba(0,0,0,0.5); letter-spacing: 0.2px; }
+.cp-body { padding: 14px 14px 18px; color: rgba(0,0,0,0.82);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+  font-size: 12px; line-height: 1.5; }
+/* Fixed 3-line viewport so the window doesn't bob as the page clears/refills. */
+.cp-output { min-height: 66px; overflow: hidden; }
+.cp-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 2px 0; }
+.cp-p { color: rgba(0,0,0,0.4); }
+.cp-todos { margin: 9px 0 4px 0; display: flex; flex-direction: column; gap: 6px; }
+.cp-todos.hidden { display: none; }
+.cp-item { display: flex; align-items: center; gap: 8px; }
+.cp-item .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cp-chk { width: 14px; height: 14px; min-width: 14px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.3); }
+.cp-chk.done { background: linear-gradient(135deg,#8b5cf6,#3b82f6,#8b5cf6); background-size: 200% 200%;
+  animation: cp-grad 2.5s ease infinite; border-color: transparent; }
+.cp-minions { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 2px 0; }
+.cp-mrow { display: flex; align-items: center; gap: 8px; color: rgba(0,0,0,0.7); }
+.cp-mrow .lbl { color: rgba(0,0,0,0.5); }
+.cp-mrow .mline { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0.8; }
+.tb { --s: 16px; --sp: 0.8s; --c: #5D3FD3; position: relative; display: inline-block;
+  height: var(--s); width: var(--s); min-width: var(--s);
+  animation: tb-spin calc(var(--sp)*2.5) infinite linear; }
+.tb i { position: absolute; height: 100%; width: 30%; }
+.tb i:after { content: ''; position: absolute; height: 0; width: 100%; padding-bottom: 100%; background: var(--c); border-radius: 50%; }
+.tb i:nth-child(1) { bottom: 5%; left: 0; transform: rotate(60deg); transform-origin: 50% 85%; }
+.tb i:nth-child(1):after { bottom: 0; left: 0; animation: tb-w1 var(--sp) infinite ease-in-out; animation-delay: calc(var(--sp)*-0.3); }
+.tb i:nth-child(2) { bottom: 5%; right: 0; transform: rotate(-60deg); transform-origin: 50% 85%; }
+.tb i:nth-child(2):after { bottom: 0; left: 0; animation: tb-w1 var(--sp) infinite calc(var(--sp)*-0.15) ease-in-out; }
+.tb i:nth-child(3) { bottom: -5%; left: 0; transform: translateX(116.666%); }
+.tb i:nth-child(3):after { top: 0; left: 0; animation: tb-w2 var(--sp) infinite ease-in-out; }
+.cp-progress { margin-top: 14px; height: 7px; border-radius: 999px; position: relative; overflow: hidden;
+  background: rgba(0,0,0,0.06); border: 1px solid rgba(0,0,0,0.04); }
+.cp-fill { position: absolute; inset: 0;
+  background: linear-gradient(90deg, rgba(10,160,190,0), rgba(10,160,190,0.6), rgba(130,80,220,0.6), rgba(10,160,190,0));
+  transform: translateX(-70%); animation: cp-flow 1.05s cubic-bezier(0.2,0.8,0.2,1) infinite; }
+@keyframes cp-grad { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
+@keyframes tb-spin { 0%{transform:rotate(0)} 100%{transform:rotate(360deg)} }
+@keyframes tb-w1 { 0%,100%{transform:translateY(0) scale(1);opacity:1} 50%{transform:translateY(-66%) scale(0.65);opacity:0.8} }
+@keyframes tb-w2 { 0%,100%{transform:translateY(0) scale(1);opacity:1} 50%{transform:translateY(66%) scale(0.65);opacity:0.8} }
+@keyframes cp-flow { 0%{transform:translateX(-75%);opacity:0.8} 50%{opacity:1} 100%{transform:translateX(75%);opacity:0.8} }
+
 @keyframes stop-pulse  { 0%{transform:scale(.97)} 15%{transform:scale(1)} 30%{transform:scale(.98)} 45%{transform:scale(1)} 60%{transform:scale(.97)} 85%{transform:scale(1)} 100%{transform:scale(.97)} }
 @keyframes stop-pulse2 { 0%{transform:scale(1)} 15%{transform:scale(1.03)} 30%{transform:scale(.98)} 45%{transform:scale(1.04)} 60%{transform:scale(.97)} 85%{transform:scale(1.03)} 100%{transform:scale(1)} }
 @keyframes stop-bgRotate { 0%{transform:rotate(0)} 20%{transform:rotate(90deg)} 40%{transform:rotate(180deg) scale(.95,1)} 60%,100%{transform:rotate(360deg)} }
@@ -437,11 +495,22 @@ body.has-text { width: 440px; }
 @keyframes icon-cycle-tg { 0%, 40% { opacity: 0 } 50%, 90% { opacity: 1 } 100% { opacity: 0 } }
 </style></head>
 <body>
-<div class="orb-wrap">
-  <iframe class="orb-frame" src="http://127.0.0.1:5000/telegram/telergam_animation.html"
-          scrolling="no" frameborder="0"></iframe>
+<div class="toprow">
+  <div class="orb-wrap">
+    <iframe class="orb-frame" src="http://127.0.0.1:5000/telegram/telergam_animation.html"
+            scrolling="no" frameborder="0"></iframe>
+  </div>
+  <span class="msg" id="msg"></span>
 </div>
-<span class="msg" id="msg"></span>
+<div id="coderPanel">
+  <div class="cp-bar">Auto Use</div>
+  <div class="cp-body">
+    <div class="cp-output" id="cp-output"></div>
+    <div class="cp-todos hidden" id="cp-todos"></div>
+    <div class="cp-minions" id="cp-minions"></div>
+    <div class="cp-progress"><span class="cp-fill"></span></div>
+  </div>
+</div>
 <script>
   // Stream `text` LETTER-BY-LETTER into the msg element. Long messages
   // are PAGED — after each letter we check if scrollWidth has exceeded
@@ -547,6 +616,134 @@ body.has-text { width: 440px; }
     window.addEventListener('load', () => setTimeout(report, 30));
     const ro = new ResizeObserver(report);
     ro.observe(document.body);
+  })();
+
+  // ── embedded coder terminal ──────────────────────────────────────────────
+  // Streams CLI/coder output LETTER-BY-LETTER into a 3-line page: only the
+  // first line of each page carries the "> " prompt; once 3 lines are shown the
+  // page clears and starts fresh at line 1. A short queue (cap) keeps streaming
+  // live when output arrives in bursts. Plus a todo checklist and minion
+  // spinner rows (whose lines also type letter-by-letter). Python toggles the
+  // panel via coderShow()/coderHide().
+  (function () {
+    let queue = [];
+    let streaming = false;
+    let pageLines = 0;
+    const MAX_LINES = 3;
+    const CHAR_DELAY = 11;   // ms per letter (typewriter cadence)
+    const LINE_GAP   = 70;   // ms between lines
+    const QUEUE_CAP  = 6;    // drop backlog so the stream stays current
+    let cliTimer = null;
+
+    const $ = (id) => document.getElementById(id);
+    const escHtml = (s) => (s == null ? '' : String(s))
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const mid = (id) => 'cpm_' + String(id).replace(/[^a-zA-Z0-9_]/g, '_');
+
+    window.coderShow = function () { document.body.classList.add('coder'); };
+
+    window.coderHide = function () {
+      document.body.classList.remove('coder');
+      if (cliTimer) { clearTimeout(cliTimer); cliTimer = null; }
+      queue = []; streaming = false; pageLines = 0;
+      const o = $('cp-output'); if (o) o.innerHTML = '';
+      const t = $('cp-todos'); if (t) { t.innerHTML = ''; t.classList.add('hidden'); }
+      const m = $('cp-minions'); if (m) m.innerHTML = '';
+    };
+
+    window.pushLine = function (text) {
+      if (text == null) return;
+      const t = String(text);
+      if (!t.trim()) return;
+      queue.push(t);
+      while (queue.length > QUEUE_CAP) queue.shift();
+      if (!streaming) streamNext();
+    };
+
+    function streamNext() {
+      const out = $('cp-output');
+      if (!out || !queue.length) { streaming = false; return; }
+      streaming = true;
+      const text = queue.shift();
+      if (pageLines >= MAX_LINES) { out.innerHTML = ''; pageLines = 0; }
+      const first = (pageLines === 0);
+      const line = document.createElement('div');
+      line.className = 'cp-line';
+      if (first) {
+        const p = document.createElement('span');
+        p.className = 'cp-p'; p.textContent = '> ';
+        line.appendChild(p);
+      }
+      const span = document.createElement('span');
+      line.appendChild(span);
+      out.appendChild(line);
+      pageLines++;
+      // letter-by-letter (Array.from keeps emoji / code-points intact)
+      const chars = Array.from(text);
+      let ci = 0;
+      (function nextChar() {
+        if (ci >= chars.length) { cliTimer = setTimeout(streamNext, LINE_GAP); return; }
+        span.textContent += chars[ci++];
+        cliTimer = setTimeout(nextChar, CHAR_DELAY);
+      })();
+    }
+
+    window.setTodo = function (todoText) {
+      const el = $('cp-todos'); if (!el) return;
+      const raw = (todoText == null ? '' : String(todoText)).split('\\n');
+      const items = [];
+      for (let i = 0; i < raw.length; i++) {
+        const ln = raw[i].trim();
+        if (!ln) continue;
+        if (/^objective\\s*:/i.test(ln)) continue;
+        let m = ln.match(/^#\\d+\\.\\s*-\\s*\\[([ xX])\\]\\s*(.*)$/);
+        if (!m) m = ln.match(/^-\\s*\\[([ xX])\\]\\s*(.*)$/);
+        if (!m) continue;
+        items.push({ done: m[1].toLowerCase() === 'x', text: m[2] });
+      }
+      if (!items.length) { el.innerHTML = ''; el.classList.add('hidden'); return; }
+      let html = '';
+      for (let j = 0; j < items.length; j++) {
+        html += '<div class="cp-item"><span class="cp-chk ' + (items[j].done ? 'done' : '') + '"></span>'
+              + '<span class="lbl">' + escHtml(items[j].text) + '</span></div>';
+      }
+      el.innerHTML = html;
+      el.classList.remove('hidden');
+    };
+
+    window.addMinion = function (id, label) {
+      const wrap = $('cp-minions'); if (!wrap || id == null) return;
+      const sid = mid(id);
+      if (document.getElementById(sid)) return;
+      const row = document.createElement('div');
+      row.className = 'cp-mrow'; row.id = sid;
+      row.innerHTML = '<span class="tb"><i></i><i></i><i></i></span>'
+        + '<span class="lbl">' + escHtml(label || 'minion') + '</span>'
+        + '<span class="mline"></span>';
+      wrap.appendChild(row);
+    };
+
+    window.setMinionLine = function (id, text) {
+      const row = document.getElementById(mid(id)); if (!row) return;
+      const ml = row.querySelector('.mline'); if (!ml) return;
+      if (ml._t) { clearTimeout(ml._t); ml._t = null; }
+      const chars = Array.from(text == null ? '' : String(text));
+      let i = 0;
+      ml.textContent = '';
+      (function step() {
+        if (i >= chars.length) { ml._t = null; return; }
+        ml.textContent += chars[i++];
+        ml._t = setTimeout(step, CHAR_DELAY);
+      })();
+    };
+
+    window.removeMinion = function (id) {
+      const row = document.getElementById(mid(id));
+      if (!row) return;
+      const ml = row.querySelector('.mline');
+      if (ml && ml._t) { clearTimeout(ml._t); ml._t = null; }
+      if (row.parentNode) row.parentNode.removeChild(row);
+    };
   })();
 </script>
 </body></html>
@@ -677,8 +874,17 @@ class StatusBanner:
     COMPACT_MAX_W = 440     # = self.W (the setup-wizard banner's max width)
     COMPACT_MAX_H = 44      # single-line height — pill never grows taller
 
+    # Coder terminal: while a CLI/coder sub-agent runs, the compact orb pill
+    # expands (wider + taller) to host an embedded terminal panel BELOW the orb
+    # (streamed lines + todo checklist + minion rows). Same single top-right
+    # anchored window — it just grows leftward and downward. These bigger
+    # clamps are used by _on_size_changed only while the panel is active.
+    COMPACT_CODER_MAX_W = 560
+    COMPACT_CODER_MAX_H = 470
+
     def __init__(self, compact: bool = False):
         self._compact = compact
+        self._coder_active = False  # True while the embedded terminal panel shows
         self._window = None
         self._webview = None
         self._next_handler = None    # strong refs so the JS-bridge handlers
@@ -1045,8 +1251,15 @@ class StatusBanner:
         try:
             if self._window is None or not self._compact:
                 return
-            new_w = max(self.COMPACT_MIN_W, min(int(requested_w), self.COMPACT_MAX_W))
-            new_h = max(self.COMPACT_MIN_H, min(int(requested_h), self.COMPACT_MAX_H))
+            # While the coder terminal panel is showing, the pill expands well
+            # past the single-line stadium — use the bigger clamps and a fixed
+            # rounded-rect corner instead of the half-height stadium radius.
+            if self._coder_active:
+                max_w, max_h = self.COMPACT_CODER_MAX_W, self.COMPACT_CODER_MAX_H
+            else:
+                max_w, max_h = self.COMPACT_MAX_W, self.COMPACT_MAX_H
+            new_w = max(self.COMPACT_MIN_W, min(int(requested_w), max_w))
+            new_h = max(self.COMPACT_MIN_H, min(int(requested_h), max_h))
             if abs(new_w - self._current_w) < 1 and abs(new_h - self._current_h) < 1:
                 return
             self._current_w = new_w
@@ -1060,11 +1273,14 @@ class StatusBanner:
             new_frame = NSMakeRect(new_x, new_y, new_w, new_h)
             self._window.setFrame_display_animate_(new_frame, True, True)
             # Update the rounded clip — half the smaller dimension keeps
-            # the shape stadium-pill (or perfect circle at 44×44).
+            # the shape stadium-pill (or perfect circle at 44×44). With the
+            # terminal panel open the window is tall, so clamp to a sane
+            # card radius instead of a huge oval.
             try:
                 content = self._window.contentView()
                 if content is not None:
-                    content.layer().setCornerRadius_(min(new_w, new_h) / 2.0)
+                    corner = 16.0 if self._coder_active else (min(new_w, new_h) / 2.0)
+                    content.layer().setCornerRadius_(corner)
             except Exception:
                 pass
         except Exception as e:
@@ -1095,6 +1311,77 @@ class StatusBanner:
             # would visually jump to its final size rather than morph.
         except Exception as e:
             logger.warning(f"banner: _on_height_changed failed ({e})")
+
+    # ---- embedded coder terminal API (compact mode; callable from any thread) ----
+    #
+    # While a CLI/coder sub-agent runs, the compact orb pill expands to host a
+    # terminal panel below the orb. These methods drive the JS in COMPACT_HTML.
+    # All are no-ops unless this is a compact banner.
+
+    @staticmethod
+    def _js_multiline(text):
+        """Escape a string for a single-quoted JS literal while PRESERVING
+        newlines as \\n (so JS-side .split('\\n') still works). Used for the
+        todo blob; _js_escape collapses newlines and must not be used for
+        multi-line payloads."""
+        return (str(text)
+                .replace("\\", "\\\\")
+                .replace("'", "\\'")
+                .replace("\r", "")
+                .replace("\n", "\\n"))
+
+    def _coder_eval(self, js):
+        try:
+            if self._webview is not None:
+                self._webview.evaluateJavaScript_completionHandler_(js, None)
+        except Exception:
+            pass
+
+    def coder_start(self):
+        """Reveal the embedded terminal panel (the pill expands wider+taller)."""
+        if not _COCOA_OK or not self._compact:
+            return
+        self._coder_active = True
+        callAfter(self._coder_eval, "if (window.coderShow) coderShow();")
+
+    def coder_stop(self):
+        """Hide the terminal panel and collapse the pill back to the orb pill."""
+        if not _COCOA_OK or not self._compact:
+            return
+        self._coder_active = False
+        callAfter(self._coder_eval, "if (window.coderHide) coderHide();")
+
+    def push_cli_line(self, line):
+        """Stream one CLI output line into the terminal (word-by-word, 3-line page)."""
+        if not _COCOA_OK or not self._compact:
+            return
+        callAfter(self._coder_eval, f"if (window.pushLine) pushLine('{self._js_escape(line)}');")
+
+    def set_todo(self, todo_text):
+        """(Re)render the todo checklist from the raw todo.md text."""
+        if not _COCOA_OK or not self._compact:
+            return
+        callAfter(self._coder_eval, f"if (window.setTodo) setTodo('{self._js_multiline(todo_text)}');")
+
+    def add_minion(self, minion_id, label="minion"):
+        """Add a spinner row for a minion."""
+        if not _COCOA_OK or not self._compact:
+            return
+        callAfter(self._coder_eval,
+                  f"if (window.addMinion) addMinion('{self._js_escape(minion_id)}', '{self._js_escape(label)}');")
+
+    def set_minion_line(self, minion_id, line):
+        """Replace a minion row's single streamed line."""
+        if not _COCOA_OK or not self._compact:
+            return
+        callAfter(self._coder_eval,
+                  f"if (window.setMinionLine) setMinionLine('{self._js_escape(minion_id)}', '{self._js_escape(line)}');")
+
+    def remove_minion(self, minion_id):
+        """Remove a minion row (it exited)."""
+        if not _COCOA_OK or not self._compact:
+            return
+        callAfter(self._coder_eval, f"if (window.removeMinion) removeMinion('{self._js_escape(minion_id)}');")
 
     def _destroy(self):
         try:
@@ -1134,3 +1421,131 @@ class StatusBanner:
             self._save_handler = None
             self._reveal_handler = None
             self._size_handler = None
+
+
+class CoderBannerManager:
+    """Turns the agent's `cli_callback` event stream into the embedded terminal
+    panel inside the compact orb banner.
+
+    It does NOT own a window — it drives an existing compact StatusBanner (the
+    "task in progress" orb): while a CLI/coder sub-agent runs, the orb pill
+    expands to show a terminal panel (streamed lines + todo checklist + minion
+    spinner rows), then collapses back when the CLI agent is done.
+
+    Surface-agnostic (knows nothing about Telegram). A caller constructs it with
+    the compact banner and passes `cli_callback=mgr.handle_event` to
+    AgentService, then calls `mgr.close_all()` when the run finishes.
+
+    Lifecycle — the panel stays up for the whole cli_await halt and only closes
+    when the CLI agent is actually done:
+
+        await_start(reason)                        main agent halts → show panel
+        task_start(task_id, desc)                  coder begins      → show panel
+        task_line(task_id, line, stream)           coder stdout      → stream a line
+        todo_update(task_id, todo_text)            todo changed      → render checklist
+        task_end(task_id, status, summary)         coder done        → hide iff no await
+        minion_start(parent_id, m_id, query)       minion begins     → add spinner row
+        minion_line(m_id, line, stream)            minion stdout     → replace its line
+        minion_end(m_id, status, summary)          minion done       → remove the row
+        await_end()                                halt over         → hide panel
+
+    `task_start` whose description starts with "[minion] " is a bare top-level
+    minion (no coder stream) and is ignored; coder-spawned minions arrive as
+    `minion_*`. All StatusBanner methods marshal onto the Cocoa main thread
+    internally, so handle_event is safe to call from the agent/pipe-reader
+    threads.
+    """
+
+    def __init__(self, banner):
+        self._banner = banner            # the compact StatusBanner (orb pill)
+        self._lock = threading.Lock()
+        self._coder_tasks = set()        # active coder task_ids (own a terminal stream)
+        self._minion_ids = set()         # active minion ids (own a spinner row)
+        self._await_active = False       # True between await_start and await_end
+
+    def handle_event(self, event_type, *args):
+        try:
+            self._dispatch(event_type, args)
+        except Exception:
+            logger.warning("CoderBannerManager.handle_event(%s) failed", event_type, exc_info=True)
+
+    def close_all(self):
+        """Hide the panel and reset (call from the caller's finally block)."""
+        with self._lock:
+            self._coder_tasks.clear()
+            self._minion_ids.clear()
+            self._await_active = False
+        try:
+            self._banner.coder_stop()
+        except Exception:
+            pass
+
+    def _dispatch(self, event_type, args):
+        if event_type == "await_start":
+            with self._lock:
+                self._await_active = True
+            self._banner.coder_start()
+
+        elif event_type == "await_end":
+            with self._lock:
+                self._await_active = False
+            self._banner.coder_stop()
+
+        elif event_type == "task_start":
+            task_id = args[0] if len(args) > 0 else None
+            desc = args[1] if len(args) > 1 else ""
+            if task_id is None:
+                return
+            if isinstance(desc, str) and desc.startswith("[minion] "):
+                return  # bare top-level minion — no coder stream of its own
+            with self._lock:
+                self._coder_tasks.add(task_id)
+            self._banner.coder_start()
+
+        elif event_type == "task_line":
+            task_id = args[0] if len(args) > 0 else None
+            line = args[1] if len(args) > 1 else ""
+            with self._lock:
+                is_coder = task_id in self._coder_tasks
+            if is_coder and line is not None and str(line).strip():
+                self._banner.push_cli_line(str(line))
+
+        elif event_type == "todo_update":
+            todo_text = args[1] if len(args) > 1 else ""
+            self._banner.set_todo(str(todo_text))
+
+        elif event_type == "task_end":
+            task_id = args[0] if len(args) > 0 else None
+            with self._lock:
+                self._coder_tasks.discard(task_id)
+                # Hide only if no cli_await is holding the panel open and no
+                # other coder is still streaming — otherwise keep it up until
+                # await_end (the CLI agent isn't "done" until the halt lifts).
+                hide = (not self._await_active) and (not self._coder_tasks)
+            if hide:
+                self._banner.coder_stop()
+
+        elif event_type == "minion_start":
+            minion_id = args[1] if len(args) > 1 else None
+            if minion_id is None:
+                return
+            with self._lock:
+                self._minion_ids.add(minion_id)
+            self._banner.coder_start()
+            self._banner.add_minion(minion_id, "minion")
+
+        elif event_type == "minion_line":
+            minion_id = args[0] if len(args) > 0 else None
+            line = args[1] if len(args) > 1 else ""
+            with self._lock:
+                known = minion_id in self._minion_ids
+            if known and line is not None and str(line).strip():
+                self._banner.set_minion_line(minion_id, str(line))
+
+        elif event_type == "minion_end":
+            minion_id = args[0] if len(args) > 0 else None
+            with self._lock:
+                self._minion_ids.discard(minion_id)
+            self._banner.remove_minion(minion_id)
+
+        # pill_web_loading_* and other events: nothing to do.

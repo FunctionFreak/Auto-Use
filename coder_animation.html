@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terminal Loader</title>
+    <style>
+        /* Base styles to center the loader */
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #ffffff; /* Pure white background outside */
+        }
+
+        /* From Uiverse.io by egehan_1415 (Adapted for Light Theme) */ 
+        .ui-loader {
+          width: 340px;
+          border-radius: 18px;
+          border: 1px solid rgba(0, 0, 0, 0.08);
+          background: #e5e7eb; /* A little more grey for the terminal body */
+          box-shadow: 0 15px 35px rgba(0, 0, 0, 0.08);
+          overflow: hidden;
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          position: relative;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+            "Liberation Mono", "Courier New", monospace;
+        }
+
+        .term-bar {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          padding: 12px 12px;
+          border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+          background: #d1d5db; /* Slightly darker grey for the top bar */
+        }
+        .term-title {
+          font:
+            700 12px/1 ui-sans-serif,
+            system-ui;
+          color: rgba(0, 0, 0, 0.5);
+          letter-spacing: 0.2px;
+        }
+
+        .term-body {
+          padding: 14px 14px 16px;
+          color: rgba(0, 0, 0, 0.8);
+          font-size: 12px;
+          line-height: 1.55;
+        }
+
+        .line {
+          margin: 6px 0;
+        }
+        .line b {
+          color: rgba(0, 0, 0, 0.95);
+        }
+        .muted {
+          color: rgba(0, 0, 0, 0.5);
+        }
+
+        /* From Uiverse.io by dovatgabriel */ 
+        .three-body {
+          --uib-size: 20px; /* Adjusted size to fit nicely inline */
+          --uib-speed: 0.8s;
+          --uib-color: #5D3FD3;
+          position: relative;
+          display: inline-block;
+          height: var(--uib-size);
+          width: var(--uib-size);
+          animation: spin78236 calc(var(--uib-speed) * 2.5) infinite linear;
+          margin-right: 8px;
+          vertical-align: middle;
+        }
+
+        .three-body__dot {
+          position: absolute;
+          height: 100%;
+          width: 30%;
+        }
+
+        .three-body__dot:after {
+          content: '';
+          position: absolute;
+          height: 0%;
+          width: 100%;
+          padding-bottom: 100%;
+          background-color: var(--uib-color);
+          border-radius: 50%;
+        }
+
+        .three-body__dot:nth-child(1) {
+          bottom: 5%;
+          left: 0;
+          transform: rotate(60deg);
+          transform-origin: 50% 85%;
+        }
+
+        .three-body__dot:nth-child(1)::after {
+          bottom: 0;
+          left: 0;
+          animation: wobble1 var(--uib-speed) infinite ease-in-out;
+          animation-delay: calc(var(--uib-speed) * -0.3);
+        }
+
+        .three-body__dot:nth-child(2) {
+          bottom: 5%;
+          right: 0;
+          transform: rotate(-60deg);
+          transform-origin: 50% 85%;
+        }
+
+        .three-body__dot:nth-child(2)::after {
+          bottom: 0;
+          left: 0;
+          animation: wobble1 var(--uib-speed) infinite
+            calc(var(--uib-speed) * -0.15) ease-in-out;
+        }
+
+        .three-body__dot:nth-child(3) {
+          bottom: -5%;
+          left: 0;
+          transform: translateX(116.666%);
+        }
+
+        .three-body__dot:nth-child(3)::after {
+          top: 0;
+          left: 0;
+          animation: wobble2 var(--uib-speed) infinite ease-in-out;
+        }
+
+        @keyframes spin78236 {
+          0% {
+            transform: rotate(0deg);
+          }
+          100% {
+            transform: rotate(360deg);
+          }
+        }
+
+        @keyframes wobble1 {
+          0%,
+          100% {
+            transform: translateY(0%) scale(1);
+            opacity: 1;
+          }
+          50% {
+            transform: translateY(-66%) scale(0.65);
+            opacity: 0.8;
+          }
+        }
+
+        @keyframes wobble2 {
+          0%,
+          100% {
+            transform: translateY(0%) scale(1);
+            opacity: 1;
+          }
+          50% {
+            transform: translateY(66%) scale(0.65);
+            opacity: 0.8;
+          }
+        }
+
+        .progress {
+          margin-top: 12px;
+          height: 8px;
+          border-radius: 999px;
+          position: relative;
+          overflow: hidden;
+          background: rgba(0, 0, 0, 0.06);
+          border: 1px solid rgba(0, 0, 0, 0.04);
+        }
+        .fill {
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(
+            90deg,
+            rgba(10, 160, 190, 0),
+            rgba(10, 160, 190, 0.6),
+            rgba(130, 80, 220, 0.6),
+            rgba(10, 160, 190, 0)
+          );
+          transform: translateX(-70%);
+          animation: flow 1.05s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+        }
+        .glint {
+          position: absolute;
+          inset: -30% -40%;
+          background: linear-gradient(
+            110deg,
+            transparent 0%,
+            rgba(255, 255, 255, 0.6) 22%,
+            rgba(255, 255, 255, 0.9) 28%,
+            transparent 40%
+          );
+          transform: translateX(-55%);
+          animation: glint 1.05s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+          mix-blend-mode: overlay;
+        }
+
+        @keyframes flow {
+          0% {
+            transform: translateX(-75%);
+            opacity: 0.8;
+          }
+          50% {
+            opacity: 1;
+          }
+          100% {
+            transform: translateX(75%);
+            opacity: 0.8;
+          }
+        }
+        @keyframes glint {
+          0% {
+            transform: translateX(-60%);
+            opacity: 0;
+          }
+          20% {
+            opacity: 1;
+          }
+          100% {
+            transform: translateX(60%);
+            opacity: 0;
+          }
+        }
+
+        @keyframes gradientShift {
+          0% {
+            background-position: 0% 50%;
+          }
+          50% {
+            background-position: 100% 50%;
+          }
+          100% {
+            background-position: 0% 50%;
+          }
+        }
+
+        @keyframes breathe {
+          0%, 100% {
+            transform: scale(1);
+            box-shadow: 0 0 10px rgba(139, 92, 246, 0.6), 0 0 15px rgba(59, 130, 246, 0.3);
+          }
+          50% {
+            transform: scale(1.08);
+            box-shadow: 0 0 16px rgba(139, 92, 246, 0.9), 0 0 25px rgba(59, 130, 246, 0.6);
+          }
+        }
+
+        .todo-list {
+          margin: 10px 0 12px 20px;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .todo-item {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: rgba(0, 0, 0, 0.75);
+        }
+        .check-box {
+          width: 14px;
+          height: 14px;
+          border-radius: 4px;
+          border: 1px solid rgba(0, 0, 0, 0.3);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .check-box.done {
+          background: linear-gradient(135deg, #8b5cf6, #3b82f6, #8b5cf6);
+          background-size: 200% 200%;
+          animation: gradientShift 2.5s ease infinite, breathe 3s ease-in-out infinite;
+          border-color: transparent;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- From Uiverse.io by egehan_1415 --> 
+    <div class="ui-loader term" role="status" aria-label="Loading">
+      <div class="term-bar">
+        <div class="term-title">Auto Use</div>
+      </div>
+
+      <div class="term-body">
+        <div class="line"><b>></b> npm run build</div>
+        
+        <div class="todo-list">
+          <div class="todo-item">
+            <span class="check-box done"></span>
+            <span>task 1</span>
+          </div>
+          <div class="todo-item">
+            <span class="check-box"></span>
+            <span>task 2</span>
+          </div>
+          <div class="todo-item">
+            <span class="check-box"></span>
+            <span>task 3</span>
+          </div>
+        </div>
+
+        <div class="line">
+          <div class="three-body">
+            <div class="three-body__dot"></div>
+            <div class="three-body__dot"></div>
+            <div class="three-body__dot"></div>
+          </div>
+          minion
+        </div>
+        <div class="line">
+          <div class="three-body">
+            <div class="three-body__dot"></div>
+            <div class="three-body__dot"></div>
+            <div class="three-body__dot"></div>
+          </div>
+          minion
+        </div>
+
+        <div class="progress">
+          <span class="fill"></span>
+          <span class="glint" aria-hidden="true"></span>
+        </div>
+      </div>
+    </div>
+
+</body>
+</html>
