@@ -114,9 +114,11 @@ Most "AI controls your screen" projects pick one approach. Auto Use uses three, 
 The AppleScript pathway is a first-class action type, not a bash escape hatch.
 
 - Executes arbitrary `tell application "..."` blocks via `osascript`.
-- **Auto-handles TCC permission dialogs** — `_click_automation_allow_button()` watches for macOS "Allow / Don't Allow" consent prompts mid-run and clicks through them so first-time automation doesn't deadlock.
+- **Auto-handles TCC permission popups** — a background watcher (`_scan_permission_dialog()`) detects macOS consent popups mid-run and clicks the affirmative button — **"Allow", "OK", or "Always Allow"** — so both automation prompts ("Allow / Don't Allow") and folder prompts ("Don't Allow / OK") don't deadlock the CLI agents. If a popup can't be clicked (Accessibility not granted), the blocked shell command fails fast (~8s) with a clear `permission_dialog` message instead of stalling.
 - **Smart app lifecycle** — uses `open` for inactive apps, strips redundant `activate` / `launch` directives for already-running apps so foregrounding doesn't fight the user's focus.
 - **30-second execution cap** with structured error reporting back to the agent.
+
+> **One-time setup — grant Full Disk Access.** So the coder/minion agents can read & write Desktop/Documents/Downloads without macOS permission popups, grant Full Disk Access in **System Settings → Privacy & Security → Full Disk Access**: add **AutoUse.app** (packaged) or your **Terminal / VS Code / `python`** binary (dev runs). Auto Use opens this pane for you on first launch if it isn't granted.
 
 ---
 

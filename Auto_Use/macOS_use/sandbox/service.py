@@ -40,6 +40,7 @@ IDLE_TIMEOUT_PROMPT = 15     # Seconds of silence before checking prompt pattern
 IDLE_TIMEOUT_FALLBACK = 60   # Seconds of silence to assume input needed (safety)
 TOTAL_TIMEOUT = 600          # Maximum execution time (10 minutes)
 POLL_INTERVAL = 0.1          # How often to check for new output
+DIALOG_BLOCK_TIMEOUT = 8     # Seconds a macOS permission popup may block before failing fast
 
 # Patterns that indicate program is waiting for input
 PROMPT_PATTERNS = [
@@ -224,14 +225,24 @@ class Sandbox:
 
         # macOS: a shell command that touches a protected folder triggers a TCC
         # popup ("…wants to access your Desktop folder") that blocks until clicked.
-        # While the command runs, a background thread clicks Allow if one appears.
+        # While the command runs, a background thread auto-clicks Allow/OK if one
+        # appears. If a popup is up but can't be clicked (Accessibility not granted),
+        # `blocked_since` records when it was first seen so the run loop can fail fast
+        # instead of stalling on the 60s idle timeout.
         stop_watcher = threading.Event()
+        dialog_state = {"blocked_since": None}
         if sys.platform == "darwin":
-            from ..controller.tool.applescript import _click_automation_allow_button
+            from ..controller.tool.applescript import _scan_permission_dialog
 
             def _watch():
                 while not stop_watcher.is_set():
-                    _click_automation_allow_button()
+                    status = _scan_permission_dialog()
+                    if status == "present":
+                        if dialog_state["blocked_since"] is None:
+                            dialog_state["blocked_since"] = time.time()
+                    else:
+                        # "clicked" (dismissed) or "none" (no popup) → not blocked
+                        dialog_state["blocked_since"] = None
                     if stop_watcher.wait(1.0):
                         break
 
@@ -319,6 +330,27 @@ class Sandbox:
                         "stdout": stdout_buffer,
                         "stderr": stderr_buffer,
                         "returncode": poll_result
+                    }
+
+                # macOS permission popup that couldn't be auto-clicked is blocking the
+                # command — fail fast (with a permission-specific message) instead of
+                # stalling on the 60s idle timeout. Only fires when a popup is actually
+                # detected, so legitimate long silent commands are never killed early.
+                blocked_since = dialog_state["blocked_since"]
+                if blocked_since is not None and (time.time() - blocked_since) > DIALOG_BLOCK_TIMEOUT:
+                    process.kill()
+                    last_chunk = self._get_last_output_chunk(stdout_buffer + stderr_buffer)
+                    return {
+                        "success": False,
+                        "error": "permission_dialog",
+                        "message": (
+                            "A macOS permission popup couldn't be auto-clicked. Grant Auto-Use "
+                            "(dev: your Terminal/Python) Accessibility + Full Disk Access in "
+                            "System Settings > Privacy & Security, then retry."
+                        ),
+                        "last_output": last_chunk,
+                        "stdout": stdout_buffer,
+                        "stderr": stderr_buffer
                     }
 
                 # Check idle timeout (only if no input was provided)

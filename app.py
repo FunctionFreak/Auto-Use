@@ -364,6 +364,35 @@ def request_macos_permissions():
         except Exception:
             pass
 
+        # Full Disk Access — macOS has no API to request it, only to open its pane.
+        # FDA stops the Desktop/Documents/Downloads popups that block coder/minion
+        # shell commands, and lets the auto-clicker work. Probe by reading an
+        # FDA-gated, always-present path; PermissionError ⇒ not granted.
+        try:
+            tcc_db = os.path.expanduser("~/Library/Application Support/com.apple.TCC/TCC.db")
+            has_fda = True
+            try:
+                with open(tcc_db, "rb") as _f:
+                    _f.read(1)
+            except PermissionError:
+                has_fda = False
+            except Exception:
+                has_fda = True  # missing path / other error — don't nag
+            if not has_fda:
+                print(
+                    "\n⚠️  Full Disk Access not granted. Auto Use needs it so shell commands can\n"
+                    "    read/write Desktop, Documents and Downloads without macOS permission popups.\n"
+                    "    Opening System Settings — add to Full Disk Access:\n"
+                    "      • Packaged app: add 'AutoUse'\n"
+                    "      • Dev run: add your Terminal / VS Code / the python you launch from\n"
+                )
+                subprocess.run(
+                    ["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"],
+                    capture_output=True, timeout=10
+                )
+        except Exception:
+            pass
+
     except Exception:
         debug_exception("request_macos_permissions")
 
