@@ -95,6 +95,14 @@ SETUP_MAX_H = 170   # cap — an unusually long message clips rather than fill t
 COMPACT_WIN_W = 580
 COMPACT_WIN_H = 50
 SCREEN_MARGIN = 20
+# Coder terminal: while a CLI/coder sub-agent runs, the compact pill expands
+# into a tall card hosting an embedded terminal panel. The window grows
+# (top-right anchored, downward) to fit the panel, clamped to these bounds,
+# then snaps back to COMPACT_WIN_W×COMPACT_WIN_H when the panel closes. The
+# width never actually changes (panel fits in the 580 stadium width); only the
+# height grows. Mirrors the macOS COMPACT_CODER_MAX_W/H clamps.
+COMPACT_CODER_WIN_W = 580
+COMPACT_CODER_WIN_H = 520
 
 # Win32 extended-window-style constants for click-through (compact pill).
 # WS_EX_TRANSPARENT removes the window from mouse hit-testing → clicks fall
@@ -528,14 +536,25 @@ COMPACT_HTML = r"""<!DOCTYPE html>
   }
   /* PILL: right edge fixed to the window's right (top-right of screen);
      width animates 50px → 580px so it grows LEFT. Empty state = a 50×50
-     circle (orb only); has-text = a stadium with streaming text. */
+     circle (orb only); has-text = a stadium with streaming text. The pill is
+     a flex COLUMN so the coder terminal panel can stack BELOW the orb+text
+     top row when a CLI/coder sub-agent runs (body.coder). */
   .pill {
     position: absolute; right: 0; top: 0;
-    height: 50px; width: 50px; border-radius: 25px;
+    width: 50px; border-radius: 25px;
     background: #ffffff; overflow: hidden;
     transition: width 0.42s cubic-bezier(.22,1,.36,1);
+    display: flex; flex-direction: column;
   }
   body.has-text .pill { width: 580px; }
+  /* Coder terminal open: the pill becomes a wide, tall card. Declared AFTER
+     .has-text so its width/height win regardless of the streaming has-text
+     toggle. Height is content-driven; Python grows the window to fit (the
+     size_changed bridge reports the pill's natural height). */
+  body.coder .pill { width: 580px; height: auto; border-radius: 16px; padding-bottom: 12px; }
+
+  /* Top row = orb + the single-line streaming ticker (the original pill). */
+  .toprow { position: relative; height: 50px; width: 100%; flex-shrink: 0; }
   /* Orb pinned to the pill's left cap (centre = cap centre); it rides left
      as the pill grows. */
   .stop-agent-button { position: absolute; left: 4px; top: 4px;
@@ -546,22 +565,100 @@ COMPACT_HTML = r"""<!DOCTYPE html>
   /* Vertically centred via top/translateY — NOT display:flex. With flex, each
      streamed per-character <span> becomes a flex item and a space-only item
      collapses to zero width, eating the spaces between words. Plain inline
-     flow preserves spaces. */
+     flow preserves spaces. top:50% resolves against the 50px .toprow. */
   .msg {
     position: absolute; left: 56px; right: 16px; top: 50%;
     transform: translateY(-50%);
     font-size: 13px; color: #374151; line-height: 1.4;
     white-space: nowrap; overflow: hidden;
   }
+
+  /* ── embedded coder terminal panel (shown only while a CLI/coder runs) ── */
+  #coderPanel { display: none; position: relative; margin: 8px 8px 0; box-sizing: border-box;
+    border-radius: 12px; overflow: hidden; background: #f7f7f9;
+    box-shadow: inset 0 0 0 1px rgba(139,92,246,0.55), inset 0 0 8px rgba(139,92,246,0.45);
+    animation: cp-edgeGlow 3s ease-in-out infinite; }
+  body.coder #coderPanel { display: block; }
+  .cp-particles { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+  .cp-body { position: relative; z-index: 1; padding: 14px 14px 18px; color: rgba(0,0,0,0.82);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+    font-size: 12px; line-height: 1.5; }
+  /* Single streaming line (paginated). Top shows the coder's real output (or
+     filler while a minion runs); each minion row shows its own real output. */
+  .cp-output { min-height: 22px; overflow: hidden; }
+  .cp-line { white-space: nowrap; overflow: hidden; margin: 2px 0; }
+  .cp-mrow .cp-line { margin: 0; }
+  .cp-p { color: rgba(0,0,0,0.4); }
+  .cp-todos { margin: 9px 0 4px 0; display: flex; flex-direction: column; gap: 6px; }
+  .cp-todos.hidden { display: none; }
+  .cp-item { display: flex; align-items: center; gap: 8px; }
+  .cp-item .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cp-chk { width: 14px; height: 14px; min-width: 14px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.3); }
+  /* Completed task: a subtle glowing purple checkmark (no box) — the tick
+     itself is the marker. Drawn as a rotated element with right+bottom borders;
+     the glow gently pulses via drop-shadow. */
+  .cp-chk.done { background: transparent; border-color: transparent; position: relative; }
+  .cp-chk.done::after { content: ""; position: absolute; left: 5px; top: 1px;
+    width: 4px; height: 8px; box-sizing: border-box;
+    border: solid #8b5cf6; border-width: 0 2px 2px 0;
+    transform: rotate(45deg); transform-origin: center;
+    animation: cp-tickGlow 2.4s ease-in-out infinite; }
+  /* Current (first not-yet-done) task: a spinning loading circle. */
+  .cp-loading { width: 14px; height: 14px; min-width: 14px; box-sizing: border-box; border-radius: 50%;
+    border: 2px solid rgba(139,92,246,0.3); border-top-color: #8b5cf6;
+    animation: cp-spin 1s linear infinite; display: inline-block; }
+  .cp-minions { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 2px 0; }
+  .cp-mrow { display: flex; align-items: center; gap: 8px; color: rgba(0,0,0,0.7);
+    animation: cp-rise 0.28s ease-out; }
+  .cp-mrow .mline { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    opacity: 0.85; transition: opacity 0.25s ease; }
+  .tb { --s: 16px; --sp: 0.8s; --c: #5D3FD3; position: relative; display: inline-block;
+    height: var(--s); width: var(--s); min-width: var(--s);
+    animation: tb-spin calc(var(--sp)*2.5) infinite linear; }
+  .tb i { position: absolute; height: 100%; width: 30%; }
+  .tb i:after { content: ''; position: absolute; height: 0; width: 100%; padding-bottom: 100%; background: var(--c); border-radius: 50%; }
+  .tb i:nth-child(1) { bottom: 5%; left: 0; transform: rotate(60deg); transform-origin: 50% 85%; }
+  .tb i:nth-child(1):after { bottom: 0; left: 0; animation: tb-w1 var(--sp) infinite ease-in-out; animation-delay: calc(var(--sp)*-0.3); }
+  .tb i:nth-child(2) { bottom: 5%; right: 0; transform: rotate(-60deg); transform-origin: 50% 85%; }
+  .tb i:nth-child(2):after { bottom: 0; left: 0; animation: tb-w1 var(--sp) infinite calc(var(--sp)*-0.15) ease-in-out; }
+  .tb i:nth-child(3) { bottom: -5%; left: 0; transform: translateX(116.666%); }
+  .tb i:nth-child(3):after { top: 0; left: 0; animation: tb-w2 var(--sp) infinite ease-in-out; }
+  .cp-progress { margin-top: 14px; height: 7px; border-radius: 999px; position: relative; overflow: hidden;
+    background: rgba(0,0,0,0.06); border: 1px solid rgba(0,0,0,0.04); }
+  .cp-fill { position: absolute; inset: 0;
+    background: linear-gradient(90deg, rgba(10,160,190,0), rgba(10,160,190,0.6), rgba(130,80,220,0.6), rgba(10,160,190,0));
+    transform: translateX(-70%); animation: cp-flow 1.05s cubic-bezier(0.2,0.8,0.2,1) infinite; }
+  @keyframes cp-tickGlow { 0%,100%{filter:drop-shadow(0 0 1px rgba(139,92,246,0.55))} 50%{filter:drop-shadow(0 0 4px rgba(139,92,246,1))} }
+  @keyframes cp-spin { to { transform: rotate(360deg); } }
+  @keyframes cp-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  @keyframes cp-edgeGlow {
+    0%, 100% { box-shadow: inset 0 0 0 1px rgba(139,92,246,0.45), inset 0 0 6px rgba(139,92,246,0.35); }
+    50%      { box-shadow: inset 0 0 0 1px rgba(139,92,246,0.85), inset 0 0 12px rgba(139,92,246,0.6); }
+  }
+  @keyframes tb-spin { 0%{transform:rotate(0)} 100%{transform:rotate(360deg)} }
+  @keyframes tb-w1 { 0%,100%{transform:translateY(0) scale(1);opacity:1} 50%{transform:translateY(-66%) scale(0.65);opacity:0.8} }
+  @keyframes tb-w2 { 0%,100%{transform:translateY(0) scale(1);opacity:1} 50%{transform:translateY(66%) scale(0.65);opacity:0.8} }
+  @keyframes cp-flow { 0%{transform:translateX(-75%);opacity:0.8} 50%{opacity:1} 100%{transform:translateX(75%);opacity:0.8} }
 </style>
 </head>
 <body>
   <div class="pill">
-    <div class="stop-agent-button">
-      <iframe class="orb-frame" src="http://127.0.0.1:5000/telegram/telergam_animation.html"
-              scrolling="no" frameborder="0"></iframe>
+    <div class="toprow">
+      <div class="stop-agent-button">
+        <iframe class="orb-frame" src="http://127.0.0.1:5000/telegram/telergam_animation.html"
+                scrolling="no" frameborder="0"></iframe>
+      </div>
+      <span class="msg" id="msg"></span>
     </div>
-    <span class="msg" id="msg"></span>
+    <div id="coderPanel">
+      <canvas class="cp-particles" id="cp-particles"></canvas>
+      <div class="cp-body">
+        <div class="cp-output" id="cp-output"></div>
+        <div class="cp-todos hidden" id="cp-todos"></div>
+        <div class="cp-minions" id="cp-minions"></div>
+        <div class="cp-progress"><span class="cp-fill"></span></div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -630,6 +727,421 @@ COMPACT_HTML = r"""<!DOCTYPE html>
       _revealTimer = setTimeout(streamChar, startDelay);
     }
     window.setMsg = setMsg;
+
+    // ── embedded coder terminal ──────────────────────────────────────────────
+    // Faithful port of the macOS pill's coder panel. Every incoming line is
+    // QUEUED and streamed letter-by-letter with pagination (overflow -> hold ->
+    // clear -> continue), so the full real content flows by rather than just the
+    // latest fragment. The top line shows the coder's REAL output; only while a
+    // minion runs AND the coder is idle does it stream playful filler phrases
+    // (CP_MSGS). Each minion row shows that minion's REAL per-iteration output.
+    // Python toggles the panel via coderShow()/coderHide().
+    (function () {
+      const CHAR_STAGGER    = 8;     // ms between letters (fallback)
+      const REAL_STAGGER    = 4;     // the agent's real output streams FAST
+      const FILLER_STAGGER  = 18;    // playful filler streams a little slower
+      const CHAR_FADE       = 60;    // ms opacity fade-in per letter
+      const PAGE_HOLD       = 550;   // ms a full page lingers before clearing
+      const LINE_HOLD       = 260;   // ms between distinct lines
+      const FILLER_IDLE     = 1800;  // ms of coder silence before filler starts
+      const FILLER_HOLD     = 3000;  // ms a filler phrase lingers AFTER it finishes streaming
+
+      // Playful "thinking" lines each minion row cycles through (one at a time).
+      // A backtick template literal avoids escaping the many apostrophes/quotes;
+      // trim()+filter() strips the code indentation and blank edges.
+      const CP_MSGS = (`
+        summoned minions…
+        digging through the codebase…
+        don't bother me, i'm busy still
+        reticulating splines…
+        consulting the rubber duck…
+        untangling spaghetti…
+        watching minions go brrr…
+        this is fine, everything is fine…
+        spinning up neurons…
+        arguing with the linter…
+        minions are reading… patience, human
+        pondering the orb…
+        grepping the unknown…
+        feeding the hamsters…
+        still thinking, hold tight…
+        writing tiny love letters to stdout…
+        asking stack overflow nicely…
+        looking for the missing semicolon…
+        blaming the intern…
+        performing arcane git rituals…
+        have you tried turning it off and on…
+        just one more refactor, i promise…
+        regex go brrr…
+        negotiating with the type checker…
+        Schrödinger's bug: works on my machine…
+        pretending to understand recursion…
+        this codebase has feelings too…
+        arguing with prettier…
+        i swear i tested this earlier…
+        checking if it's a feature, not a bug…
+        the code works, nobody knows why…
+        reading documentation as last resort…
+        blaming the cache…
+        praying to the build gods…
+        git blame says it was past me…
+        compiling existential dread…
+        tabs vs spaces war ongoing…
+        training a goldfish to write tests…
+        minions arguing over indentation…
+        still cheaper than a senior dev…
+        pushing to prod on a friday…
+        one does not simply async in python…
+        404: motivation not found…
+        rewriting it in rust… mentally…
+        petting the dog, brb…
+        yelling politely at the json…
+        checking if it's plugged in…
+        the cake is a bug…
+        explaining mondays to the AI…
+        deploying vibes…
+        this stack trace feels personal…
+        i was promised flying cars, got jira…
+        writing tests… eventually…
+        minions on coffee break…
+        this wasn't in the spec…
+        ctrl-z is my therapist…
+        running from technical debt…
+        console.log debugger gang…
+        the docs lied to us…
+        trying to remember what i was doing…
+        rebooting reality…
+        yes, that's a feature now…
+        speedrun: any% blame git…
+        thinking too hard, please wait…
+        yet another deeply nested if…
+        promise resolved with disappointment…
+        hot reload, cold coffee…
+        aligning ducks in rows…
+        one liner that took two hours…
+        naming things, the hardest problem…
+        off-by-one somewhere, definitely…
+        loading more excuses…
+        the bug is in another castle…
+        your code is fine, the universe is broken…
+        the linter has strong opinions…
+        minion overheard saying lgtm…
+        convincing the tests to pass…
+        renaming the variable to fix it…
+        drowning in callback hell…
+        73 unread warnings, vibes only…
+        yes it works, no i don't know why…
+        minions found 47 todos, ignored all…
+        scrolling error logs like reels…
+        two minions, one task…
+        sacrificing a keyboard to the demo gods…
+        undoing the undo…
+        reading the error message, finally…
+        minions whispering to each other…
+        the algorithm has thoughts…
+        trying not to break prod…
+        minion union meeting in progress…
+        shaking the magic 8-ball…
+        asking the cat for code review…
+        running tests with fingers crossed…
+        exorcising the legacy code…
+        i promise this is the last bug…
+        binary search through 200 tabs…
+        feature creep is a feature now…
+        minions found a TODO from 2014…
+        deprecated, but still working…
+        putting console.logs in production…
+        redefining what "done" means…
+      `).split('\n').map((s) => s.trim()).filter(Boolean);
+
+      const $ = (id) => document.getElementById(id);
+      const escHtml = (s) => (s == null ? '' : String(s))
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const mid = (id) => 'cpm_' + String(id).replace(/[^a-zA-Z0-9_]/g, '_');
+
+      // ── line runner: queue + paginated letter-by-letter streaming ──
+      function makeRunner() { return { queue: [], running: false, timer: null, onIdle: null }; }
+
+      function pump(outEl, runner, prompt) {
+        if (!outEl || runner.running || !runner.queue.length) return;
+        runner.running = true;
+        const item = runner.queue.shift();
+        const text = (item && item.text != null) ? item.text : item;
+        const stagger = (item && item.stagger) || CHAR_STAGGER;
+        const chars = Array.from(String(text));
+        if (!chars.length) { runner.running = false; pump(outEl, runner, prompt); return; }
+
+        let page = null;
+        const startPage = () => {
+          page = document.createElement('div');
+          page.className = 'cp-line';
+          if (prompt) {
+            const p = document.createElement('span');
+            p.className = 'cp-p'; p.textContent = prompt;
+            page.appendChild(p);
+          }
+          outEl.replaceChildren(page);
+        };
+        startPage();
+
+        let i = 0;
+        const tick = () => {
+          if (i >= chars.length) {
+            runner.timer = setTimeout(() => {
+              runner.running = false;
+              if (runner.queue.length) {
+                pump(outEl, runner, prompt);
+              } else if (runner.onIdle) {
+                const cb = runner.onIdle; runner.onIdle = null; cb();
+              }
+            }, LINE_HOLD);
+            return;
+          }
+          const firstChar = page.querySelector('.cp-char') == null;
+          const span = document.createElement('span');
+          span.className = 'cp-char';
+          span.textContent = chars[i];
+          page.appendChild(span);
+          if (page.scrollWidth > page.clientWidth + 1 && !firstChar) {
+            page.removeChild(span);
+            runner.timer = setTimeout(() => {
+              startPage();
+              while (i < chars.length && /\s/.test(chars[i])) i++;
+              tick();
+            }, PAGE_HOLD);
+            return;
+          }
+          if (firstChar) {
+            span.style.opacity = '1';
+          } else {
+            span.style.opacity = '0';
+            span.style.transition = 'opacity ' + CHAR_FADE + 'ms ease-out';
+            requestAnimationFrame(() => { span.style.opacity = '1'; });
+          }
+          i++;
+          runner.timer = setTimeout(tick, stagger);
+        };
+        tick();
+      }
+
+      function stopRunner(runner) {
+        if (!runner) return;
+        if (runner.timer) { clearTimeout(runner.timer); runner.timer = null; }
+        runner.queue = []; runner.running = false; runner.onIdle = null;
+      }
+
+      // ── top (coder) line + filler ──
+      const topRunner = makeRunner();
+      const filler = { active: false, hasMinion: false, minions: 0, bag: [], lastIdx: -1, idleTimer: null, tickTimer: null };
+
+      function fillerPhrase() {
+        if (!filler.bag.length) {
+          const bag = CP_MSGS.map((_, i) => i);
+          for (let i = bag.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const x = bag[i]; bag[i] = bag[j]; bag[j] = x; }
+          if (filler.lastIdx >= 0 && bag.length > 1 && bag[bag.length - 1] === filler.lastIdx) { const x = bag[bag.length - 1]; bag[bag.length - 1] = bag[0]; bag[0] = x; }
+          filler.bag = bag;
+        }
+        const idx = filler.bag.pop(); filler.lastIdx = idx; return CP_MSGS[idx];
+      }
+
+      function stopFiller() {
+        filler.active = false;
+        if (filler.idleTimer) { clearTimeout(filler.idleTimer); filler.idleTimer = null; }
+        if (filler.tickTimer) { clearTimeout(filler.tickTimer); filler.tickTimer = null; }
+        topRunner.onIdle = null;
+      }
+
+      function scheduleFiller() {
+        if (!filler.hasMinion) return;
+        if (filler.idleTimer) clearTimeout(filler.idleTimer);
+        filler.idleTimer = setTimeout(() => {
+          filler.idleTimer = null;
+          if (!filler.hasMinion) return;
+          filler.active = true;
+          const tickFiller = () => {
+            if (!filler.active) return;
+            const out = $('cp-output'); if (!out) { filler.active = false; return; }
+            topRunner.onIdle = () => {
+              if (!filler.active) return;
+              filler.tickTimer = setTimeout(tickFiller, FILLER_HOLD);
+            };
+            topRunner.queue.push({ text: fillerPhrase(), stagger: FILLER_STAGGER });
+            pump(out, topRunner, '> ');
+          };
+          tickFiller();
+        }, FILLER_IDLE);
+      }
+
+      window.coderShow = function () {
+        if (window.bridge) { try { bridge.coder_active(true); } catch (e) {} }
+        document.body.classList.add('coder');
+      };
+
+      window.coderHide = function () {
+        document.body.classList.remove('coder');
+        stopFiller();
+        filler.hasMinion = false; filler.minions = 0; filler.bag = []; filler.lastIdx = -1;
+        stopRunner(topRunner);
+        const o = $('cp-output'); if (o) o.innerHTML = '';
+        const t = $('cp-todos'); if (t) { t.innerHTML = ''; t.classList.add('hidden'); }
+        const m = $('cp-minions');
+        if (m) {
+          m.querySelectorAll('.cp-mrow').forEach((row) => { if (row._runner) stopRunner(row._runner); });
+          m.innerHTML = '';
+        }
+        if (window.bridge) { try { bridge.coder_active(false); } catch (e) {} }
+      };
+
+      // Real coder line -> top. A real line beats filler: stop it, then re-arm
+      // for the next idle window if minions are still running.
+      window.pushLine = function (text) {
+        const out = $('cp-output'); if (!out) return;
+        const t = (text == null ? '' : String(text));
+        if (!t.trim()) return;
+        stopFiller();
+        if (filler.hasMinion) scheduleFiller();
+        topRunner.queue.push({ text: t, stagger: REAL_STAGGER });
+        pump(out, topRunner, '> ');
+      };
+
+      window.setTodo = function (todoText) {
+        const el = $('cp-todos'); if (!el) return;
+        const raw = (todoText == null ? '' : String(todoText)).split('\n');
+        const items = [];
+        for (let i = 0; i < raw.length; i++) {
+          const ln = raw[i].trim();
+          if (!ln) continue;
+          if (/^objective\s*:/i.test(ln)) continue;
+          let m = ln.match(/^#\d+\.\s*-\s*\[([ xX])\]\s*(.*)$/);
+          if (!m) m = ln.match(/^-\s*\[([ xX])\]\s*(.*)$/);
+          if (!m) continue;
+          items.push({ done: m[1].toLowerCase() === 'x', text: m[2] });
+        }
+        if (!items.length) { el.innerHTML = ''; el.classList.add('hidden'); return; }
+        // The current task is the first not-yet-done one: it gets the spinning
+        // loading circle. Done tasks show the breathing gradient box.
+        let activeIdx = -1;
+        for (let k = 0; k < items.length; k++) { if (!items[k].done) { activeIdx = k; break; } }
+        let html = '';
+        for (let j = 0; j < items.length; j++) {
+          let marker;
+          if (items[j].done) marker = '<span class="cp-chk done"></span>';
+          else if (j === activeIdx) marker = '<span class="cp-loading"></span>';
+          else marker = '<span class="cp-chk"></span>';
+          html += '<div class="cp-item">' + marker + '<span class="lbl">' + escHtml(items[j].text) + '</span></div>';
+        }
+        el.innerHTML = html;
+        el.classList.remove('hidden');
+      };
+
+      window.addMinion = function (id, label) {
+        const wrap = $('cp-minions'); if (!wrap || id == null) return;
+        const sid = mid(id);
+        if (document.getElementById(sid)) return;
+        const row = document.createElement('div');
+        row.className = 'cp-mrow'; row.id = sid;
+        row.innerHTML = '<span class="tb"><i></i><i></i><i></i></span>'
+          + '<span class="mline"></span>';
+        wrap.appendChild(row);
+        row._runner = makeRunner();
+        filler.minions++;
+        filler.hasMinion = true;
+        scheduleFiller();
+      };
+
+      window.setMinionLine = function (id, text) {
+        const row = document.getElementById(mid(id)); if (!row) return;
+        const ml = row.querySelector('.mline'); if (!ml) return;
+        const t = (text == null ? '' : String(text));
+        if (!t.trim()) return;
+        if (!row._runner) row._runner = makeRunner();
+        row._runner.queue.push({ text: t, stagger: REAL_STAGGER });
+        pump(ml, row._runner);
+      };
+
+      window.removeMinion = function (id) {
+        const row = document.getElementById(mid(id));
+        if (!row) return;
+        if (row._runner) stopRunner(row._runner);
+        if (row.parentNode) row.parentNode.removeChild(row);
+        filler.minions = Math.max(0, filler.minions - 1);
+        if (filler.minions === 0) { filler.hasMinion = false; stopFiller(); }
+      };
+    })();
+
+    // Floating twinkling purple particles behind the terminal panel. Resizes
+    // with the panel (height grows as todos / minion rows appear); cheap (16 dots).
+    (function () {
+      const canvas = document.getElementById('cp-particles');
+      if (!canvas || !canvas.getContext) return;
+      const ctx = canvas.getContext('2d');
+      const host = canvas.parentElement;  // #coderPanel
+      const dpr = window.devicePixelRatio || 1;
+      let W = 0, H = 0;
+      function resize() {
+        const r = host.getBoundingClientRect();
+        W = r.width; H = r.height;
+        canvas.width = Math.max(1, Math.round(W * dpr));
+        canvas.height = Math.max(1, Math.round(H * dpr));
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+      resize();
+      try { new ResizeObserver(resize).observe(host); } catch (e) {}
+      const COUNT = 16;
+      const ps = [];
+      for (let i = 0; i < COUNT; i++) {
+        ps.push({
+          x: Math.random() * (W || 540), y: Math.random() * (H || 300),
+          r: 0.6 + Math.random() * 1.4,
+          vx: (Math.random() - 0.5) * 0.35, vy: (Math.random() - 0.5) * 0.35,
+          a: 0.2 + Math.random() * 0.5, tw: Math.random() * Math.PI * 2,
+        });
+      }
+      function tick(t) {
+        if (W > 0 && H > 0) {
+          ctx.clearRect(0, 0, W, H);
+          for (const p of ps) {
+            p.vx += (Math.random() - 0.5) * 0.04; p.vy += (Math.random() - 0.5) * 0.04;
+            p.vx = Math.max(-0.6, Math.min(0.6, p.vx));
+            p.vy = Math.max(-0.6, Math.min(0.6, p.vy));
+            p.x += p.vx; p.y += p.vy;
+            if (p.x < -2) p.x = W + 2; if (p.x > W + 2) p.x = -2;
+            if (p.y < -2) p.y = H + 2; if (p.y > H + 2) p.y = -2;
+            const twinkle = 0.6 + 0.4 * Math.sin(t * 0.002 + p.tw);
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(139, 92, 246,' + (p.a * twinkle) + ')';
+            ctx.shadowBlur = 6;
+            ctx.shadowColor = 'rgba(139, 92, 246, 0.9)';
+            ctx.fill();
+          }
+        }
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    })();
+
+    // Report the pill's natural size to Python so the window can grow to host
+    // the coder panel (and shrink back). The window only acts on these while
+    // the coder panel is active (Python gates on _coder_active); during normal
+    // text streaming the fixed 580×50 canvas is unchanged. Last-value debounce
+    // (the pill height is content-driven, independent of window size, so this
+    // can't feedback-loop with the window resize).
+    (function () {
+      var lastW = -1, lastH = -1;
+      var pill = document.querySelector('.pill');
+      function report() {
+        if (!window.bridge || !pill) return;
+        var r = pill.getBoundingClientRect();
+        var w = Math.ceil(r.width);
+        var h = Math.ceil(r.height);
+        if (w === lastW && h === lastH) return;
+        lastW = w; lastH = h;
+        try { bridge.size_changed(w, h); } catch (e) {}
+      }
+      window.addEventListener('load', function () { setTimeout(report, 30); });
+      try { var ro = new ResizeObserver(report); ro.observe(pill); } catch (e) {}
+    })();
   </script>
 </body>
 </html>
@@ -681,6 +1193,30 @@ def _stdin_reader(emit_js, on_close, on_focus=None) -> None:
                         on_focus()
                 elif cmd == "CLEAR":
                     emit_js("if(window.clearAll) clearAll();")
+                # ── embedded coder terminal (compact pill only) ──────────────
+                elif cmd == "CODER_START":
+                    emit_js("if(window.coderShow) coderShow();")
+                elif cmd == "CODER_STOP":
+                    emit_js("if(window.coderHide) coderHide();")
+                elif cmd == "PUSH_CLI_LINE":
+                    esc = _js_escape(msg.get("text", ""))
+                    emit_js(f"if(window.pushLine) pushLine('{esc}');")
+                elif cmd == "SET_TODO":
+                    # _js_escape preserves newlines as \\n, which setTodo's
+                    # .split('\\n') needs — no separate multiline escape required.
+                    esc = _js_escape(msg.get("text", ""))
+                    emit_js(f"if(window.setTodo) setTodo('{esc}');")
+                elif cmd == "ADD_MINION":
+                    mid = _js_escape(msg.get("id", ""))
+                    label = _js_escape(msg.get("label", "minion"))
+                    emit_js(f"if(window.addMinion) addMinion('{mid}', '{label}');")
+                elif cmd == "SET_MINION_LINE":
+                    mid = _js_escape(msg.get("id", ""))
+                    line_text = _js_escape(msg.get("line", ""))
+                    emit_js(f"if(window.setMinionLine) setMinionLine('{mid}', '{line_text}');")
+                elif cmd == "REMOVE_MINION":
+                    mid = _js_escape(msg.get("id", ""))
+                    emit_js(f"if(window.removeMinion) removeMinion('{mid}');")
                 elif cmd == "CLOSE":
                     _log("stdin_reader: CLOSE received, closing window")
                     on_close()
@@ -771,6 +1307,28 @@ def _run_subprocess_banner() -> None:
             except Exception:
                 pass
 
+        @Slot(int, int)
+        def size_changed(self, w=0, h=0):
+            # Compact coder pill only — JS reports the pill's natural size so the
+            # window can grow to host the embedded coder terminal panel (and
+            # shrink back). Runs on the GUI thread (QWebChannel slot), so it can
+            # resize the window directly — like height_changed above.
+            try:
+                self._win._on_coder_size(w, h)
+            except Exception:
+                pass
+
+        @Slot(bool)
+        def coder_active(self, on=False):
+            # Compact coder pill only — coderShow()/coderHide() flip this so the
+            # window-grow path (size_changed) knows whether the panel is open.
+            # GUI-thread write paired with the GUI-thread size_changed read, so
+            # the flag and the resize never race.
+            try:
+                self._win._set_coder_active(on)
+            except Exception:
+                pass
+
     class _PillWindow(QWidget):
         """Transparent frameless top-right pill window hosting the HTML.
 
@@ -789,6 +1347,17 @@ def _run_subprocess_banner() -> None:
             self._ready = False
             self._target_h = COMPACT_WIN_H if compact else SETUP_MIN_H
             self._anim = None
+            # True while the embedded coder terminal panel is open (compact pill
+            # only). Gates _on_coder_size so the window only grows/shrinks while
+            # the panel is showing; normal text streaming keeps the fixed canvas.
+            self._coder_active = False
+            # Coder-panel size animation (compact pill only). _coder_target_* is
+            # the size we're easing toward, so repeated identical size reports
+            # don't restart the animation. Separate handle from _anim (the setup
+            # pill's height animator) so the two can never stomp each other.
+            self._size_anim = None
+            self._coder_target_w = COMPACT_WIN_W
+            self._coder_target_h = COMPACT_WIN_H
             # Setup-pill click-through state. The setup pill is click-through by
             # default and becomes interactive only while a wizard control is
             # visible (see _apply_click_through / _on_hit_rects).
@@ -883,6 +1452,77 @@ def _run_subprocess_banner() -> None:
             anim.setEasingCurve(QEasingCurve.OutCubic)
             anim.valueChanged.connect(lambda v: self.setFixedHeight(int(v)))
             self._anim = anim
+            anim.start()
+
+        def _set_coder_active(self, on):
+            """Flip the coder-panel-open flag (GUI thread, from bridge.coder_active).
+            Turning OFF smoothly collapses the window back to the orb pill —
+            _on_coder_size early-returns once inactive, so it can't fight the
+            collapse with a stale grow report."""
+            if not self._compact:
+                return
+            self._coder_active = bool(on)
+            if not self._coder_active:
+                self._animate_compact_size(COMPACT_WIN_W, COMPACT_WIN_H)
+
+        def _on_coder_size(self, w, h):
+            """Grow/shrink the compact window to fit the coder panel's natural
+            size (GUI thread, from bridge.size_changed). No-op unless the panel
+            is open. Top-right anchored — height grows downward; width is fixed at
+            580 so only the height clamp matters. Mirrors macOS _on_size_changed."""
+            if not self._compact or not self._coder_active:
+                return
+            try:
+                new_w = max(COMPACT_WIN_W, min(int(w), COMPACT_CODER_WIN_W))
+                new_h = max(COMPACT_WIN_H, min(int(h), COMPACT_CODER_WIN_H))
+                self._animate_compact_size(new_w, new_h)
+            except Exception:
+                pass
+
+        def _animate_compact_size(self, target_w, target_h):
+            """Smoothly ease the compact window to (target_w, target_h), top-right
+            anchored so the pill grows/shrinks DOWNWARD (the coder panel slides in
+            from below instead of snapping into place). Width is effectively
+            constant at 580, so only the height animates. Repeated reports for the
+            same target are ignored so streaming content doesn't restart the
+            animation needlessly."""
+            if (target_w, target_h) == (self._coder_target_w, self._coder_target_h):
+                return
+            self._coder_target_w = target_w
+            self._coder_target_h = target_h
+            start_h = self.height()
+            # Width never animates (constant 580) — apply any change immediately.
+            if self.width() != target_w:
+                try:
+                    self.setFixedSize(target_w, start_h)
+                    self._move_to_top_right()
+                except Exception:
+                    pass
+            if target_h == start_h:
+                return
+            if self._size_anim is not None:
+                try:
+                    self._size_anim.stop()
+                except Exception:
+                    pass
+            anim = QVariantAnimation(self)
+            anim.setDuration(280)
+            anim.setStartValue(start_h)
+            anim.setEndValue(target_h)
+            anim.setEasingCurve(QEasingCurve.OutCubic)
+
+            def _apply(v):
+                try:
+                    self.setFixedSize(target_w, int(v))
+                    # Re-pin top-right each frame: x from the (constant) width so
+                    # the right edge stays put, y constant so the top edge is
+                    # fixed and the growth reads as downward.
+                    self._move_to_top_right()
+                except Exception:
+                    pass
+
+            anim.valueChanged.connect(_apply)
+            self._size_anim = anim
             anim.start()
 
         def showEvent(self, event):
@@ -1120,6 +1760,55 @@ class StatusBanner:
         # text in its msg span and grows to fit; the setup pill pages it.
         self._send({"cmd": "MSG", "text": text or ""})
 
+    # ── embedded coder terminal API (compact mode; callable from any thread) ──
+    # While a CLI/coder sub-agent runs, the compact orb pill expands into a
+    # terminal panel below the orb. These forward to the subprocess over the
+    # JSON wire protocol; the subprocess drives the JS in COMPACT_HTML. All are
+    # no-ops on the setup (non-compact) banner. The parent passes raw text — the
+    # subprocess does the JS escaping, so never double-escape here.
+
+    def coder_start(self) -> None:
+        """Reveal the embedded terminal panel (the pill expands wider+taller)."""
+        if not self._compact:
+            return
+        self._send({"cmd": "CODER_START"})
+
+    def coder_stop(self) -> None:
+        """Hide the terminal panel and collapse the pill back to the orb pill."""
+        if not self._compact:
+            return
+        self._send({"cmd": "CODER_STOP"})
+
+    def push_cli_line(self, line: str) -> None:
+        """Stream one of the coder's real output lines into the top line."""
+        if not self._compact:
+            return
+        self._send({"cmd": "PUSH_CLI_LINE", "text": line or ""})
+
+    def set_todo(self, todo_text: str) -> None:
+        """(Re)render the todo checklist from the raw todo.md text."""
+        if not self._compact:
+            return
+        self._send({"cmd": "SET_TODO", "text": todo_text or ""})
+
+    def add_minion(self, minion_id, label: str = "minion") -> None:
+        """Add a spinner row for a minion."""
+        if not self._compact:
+            return
+        self._send({"cmd": "ADD_MINION", "id": str(minion_id), "label": label or "minion"})
+
+    def set_minion_line(self, minion_id, line: str) -> None:
+        """Stream the minion's latest real output line into its row."""
+        if not self._compact:
+            return
+        self._send({"cmd": "SET_MINION_LINE", "id": str(minion_id), "line": line or ""})
+
+    def remove_minion(self, minion_id) -> None:
+        """Remove a minion row (it exited)."""
+        if not self._compact:
+            return
+        self._send({"cmd": "REMOVE_MINION", "id": str(minion_id)})
+
     def wait_for_next(self, timeout: float | None = None) -> bool:
         if self._compact:
             return True
@@ -1283,6 +1972,144 @@ class StatusBanner:
                 q.get_nowait()
         except Empty:
             pass
+
+
+class CoderBannerManager:
+    """Turns the agent's `cli_callback` event stream into the embedded terminal
+    panel inside the compact orb banner.
+
+    It does NOT own a window — it drives an existing compact StatusBanner (the
+    "task in progress" orb): while a CLI/coder sub-agent runs, the orb pill
+    expands to show a terminal panel (streamed lines + todo checklist + minion
+    spinner rows), then collapses back when the CLI agent is done.
+
+    Surface-agnostic (knows nothing about Telegram). A caller constructs it with
+    the compact banner and passes `cli_callback=mgr.handle_event` to
+    AgentService, then calls `mgr.close_all()` when the run finishes.
+
+    Lifecycle — the panel stays up for the whole cli_await halt and only closes
+    when the CLI agent is actually done:
+
+        await_start(reason)                        main agent halts → SHOW panel
+        task_start(task_id, desc)                  coder begins      → track only
+                                                   (panel waits for cli_await so it
+                                                    can't occlude live OS actions)
+        task_line(task_id, line, stream)           coder stdout      → stream the top line
+                                                   (filler phrases fill in only
+                                                    while a minion runs + coder idle)
+        todo_update(task_id, todo_text)            todo changed      → render checklist
+        task_end(task_id, status, summary)         coder done        → hide iff no await
+        minion_start(parent_id, m_id, query)       minion begins     → add spinner row
+        minion_line(m_id, line, stream)            minion stdout     → stream into the row
+        minion_end(m_id, status, summary)          minion done       → remove the row
+        await_end()                                halt over         → hide panel
+
+    `task_start` whose description starts with "[minion] " is a bare top-level
+    minion (no coder stream) and is ignored; coder-spawned minions arrive as
+    `minion_*`. All StatusBanner methods forward over the subprocess wire
+    protocol, which is threadsafe, so handle_event is safe to call from the
+    agent/pipe-reader threads.
+    """
+
+    def __init__(self, banner):
+        self._banner = banner            # the compact StatusBanner (orb pill)
+        self._lock = threading.Lock()
+        self._coder_tasks = set()        # active coder task_ids (own a terminal stream)
+        self._minion_ids = set()         # active minion ids (own a spinner row)
+        self._await_active = False       # True between await_start and await_end
+
+    def handle_event(self, event_type, *args):
+        try:
+            self._dispatch(event_type, args)
+        except Exception:
+            logger.warning("CoderBannerManager.handle_event(%s) failed", event_type, exc_info=True)
+
+    def close_all(self):
+        """Hide the panel and reset (call from the caller's finally block)."""
+        with self._lock:
+            self._coder_tasks.clear()
+            self._minion_ids.clear()
+            self._await_active = False
+        try:
+            self._banner.coder_stop()
+        except Exception:
+            pass
+
+    def _dispatch(self, event_type, args):
+        if event_type == "await_start":
+            with self._lock:
+                self._await_active = True
+            self._banner.coder_start()
+
+        elif event_type == "await_end":
+            with self._lock:
+                self._await_active = False
+            self._banner.coder_stop()
+
+        elif event_type == "task_start":
+            task_id = args[0] if len(args) > 0 else None
+            desc = args[1] if len(args) > 1 else ""
+            if task_id is None:
+                return
+            if isinstance(desc, str) and desc.startswith("[minion] "):
+                return  # bare top-level minion — no coder stream of its own
+            with self._lock:
+                self._coder_tasks.add(task_id)
+            # Deliberately do NOT show the panel here. A cli_agent dispatch is
+            # non-blocking — the main agent keeps performing on-screen OS actions
+            # until it runs cli_await. Expanding the panel now would occlude the
+            # screen the agent is automating. The panel expands only on
+            # await_start (main agent halted); lines stream into it meanwhile.
+
+        elif event_type == "task_line":
+            task_id = args[0] if len(args) > 0 else None
+            line = args[1] if len(args) > 1 else ""
+            with self._lock:
+                is_coder = task_id in self._coder_tasks
+            if is_coder and line is not None and str(line).strip():
+                self._banner.push_cli_line(str(line))
+
+        elif event_type == "todo_update":
+            todo_text = args[1] if len(args) > 1 else ""
+            self._banner.set_todo(str(todo_text))
+
+        elif event_type == "task_end":
+            task_id = args[0] if len(args) > 0 else None
+            with self._lock:
+                self._coder_tasks.discard(task_id)
+                # Hide only if no cli_await is holding the panel open and no
+                # other coder is still streaming — otherwise keep it up until
+                # await_end (the CLI agent isn't "done" until the halt lifts).
+                hide = (not self._await_active) and (not self._coder_tasks)
+            if hide:
+                self._banner.coder_stop()
+
+        elif event_type == "minion_start":
+            minion_id = args[1] if len(args) > 1 else None
+            if minion_id is None:
+                return
+            with self._lock:
+                self._minion_ids.add(minion_id)
+            # Add the row but do NOT expand the panel (same reason as task_start —
+            # a minion can spawn before the main agent halts at cli_await). The
+            # row becomes visible when await_start expands the panel.
+            self._banner.add_minion(minion_id, "minion")
+
+        elif event_type == "minion_line":
+            minion_id = args[0] if len(args) > 0 else None
+            line = args[1] if len(args) > 1 else ""
+            with self._lock:
+                known = minion_id in self._minion_ids
+            if known and line is not None and str(line).strip():
+                self._banner.set_minion_line(minion_id, str(line))
+
+        elif event_type == "minion_end":
+            minion_id = args[0] if len(args) > 0 else None
+            with self._lock:
+                self._minion_ids.discard(minion_id)
+            self._banner.remove_minion(minion_id)
+
+        # pill_web_loading_* and other events: nothing to do.
 
 
 # ── module entry: run as subprocess if invoked via `python -m …banner` ──

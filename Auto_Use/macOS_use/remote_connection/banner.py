@@ -458,9 +458,15 @@ body.coder #coderPanel { display: block; }
 .cp-item { display: flex; align-items: center; gap: 8px; }
 .cp-item .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cp-chk { width: 14px; height: 14px; min-width: 14px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.3); }
-/* Completed task: gradient box with a subtle breathing pulse. */
-.cp-chk.done { background: linear-gradient(135deg,#8b5cf6,#3b82f6,#8b5cf6); background-size: 200% 200%;
-  animation: cp-grad 2.5s ease infinite, cp-breathe 3s ease-in-out infinite; border-color: transparent; }
+/* Completed task: a subtle glowing purple checkmark (no box) — the tick
+   itself is the marker. Drawn as a rotated element with right+bottom borders;
+   the glow gently pulses via drop-shadow. */
+.cp-chk.done { background: transparent; border-color: transparent; position: relative; }
+.cp-chk.done::after { content: ""; position: absolute; left: 5px; top: 1px;
+  width: 4px; height: 8px; box-sizing: border-box;
+  border: solid #8b5cf6; border-width: 0 2px 2px 0;
+  transform: rotate(45deg); transform-origin: center;
+  animation: cp-tickGlow 2.4s ease-in-out infinite; }
 /* Current (first not-yet-done) task: a spinning loading circle. */
 .cp-loading { width: 14px; height: 14px; min-width: 14px; box-sizing: border-box; border-radius: 50%;
   border: 2px solid rgba(139,92,246,0.3); border-top-color: #8b5cf6;
@@ -486,8 +492,7 @@ body.coder #coderPanel { display: block; }
 .cp-fill { position: absolute; inset: 0;
   background: linear-gradient(90deg, rgba(10,160,190,0), rgba(10,160,190,0.6), rgba(130,80,220,0.6), rgba(10,160,190,0));
   transform: translateX(-70%); animation: cp-flow 1.05s cubic-bezier(0.2,0.8,0.2,1) infinite; }
-@keyframes cp-grad { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
-@keyframes cp-breathe { 0%,100%{transform:scale(1);box-shadow:0 0 7px rgba(139,92,246,0.5)} 50%{transform:scale(1.12);box-shadow:0 0 14px rgba(139,92,246,0.9)} }
+@keyframes cp-tickGlow { 0%,100%{filter:drop-shadow(0 0 1px rgba(139,92,246,0.55))} 50%{filter:drop-shadow(0 0 4px rgba(139,92,246,1))} }
 @keyframes cp-spin { to { transform: rotate(360deg); } }
 @keyframes cp-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes cp-edgeGlow {

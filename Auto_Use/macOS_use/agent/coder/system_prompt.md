@@ -149,7 +149,7 @@ Use tools only inside the `action`.
   - Format: "action": [{"type": "web", "value": "query"}]
   - Example: "action": [{"type": "web", "value": "fetch the latest available LangChain package version for Groq to install"}]
 8. `todo_list`: Create a to-do list. Follow <Todo_capability>.
-9. `update_todo`: Mark a ToDo item complete by providing its #number. See <todo_capability>.
+9. `update_todo`: Only update once cross verfied thoroughly. Mark a ToDo item complete by providing its #number. See <todo_capability>.
 10. `wait`: Pause the pipeline for x seconds.
    - Format: "action": [{"type": "wait", "value": "2"}]
    - Example: "action": [{"type": "wait", "value": "2"}]
