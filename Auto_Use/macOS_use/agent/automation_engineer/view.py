@@ -30,7 +30,7 @@ class AgentResponseFormatter:
         "thinking": "🧠 Thinking",
         "eval": "📝 Eval",
         "decision": "👁️ Decision",
-        "current_goal": "🎯 Current Goal",
+        "next_goal": "🎯 Next Goal",
         "memory": "💾 Memory",
         "action": "⚡ Action"
     }
@@ -42,13 +42,13 @@ class AgentResponseFormatter:
         Returns dict if successful, None if not XML format.
         """
         # Check if response contains XML-style tags
-        if not re.search(r'<(thinking|eval|decision|current_goal|memory|action)>', raw_response):
+        if not re.search(r'<(thinking|eval|decision|next_goal|memory|action)>', raw_response):
             return None
 
         json_data = {}
 
         # Simple fields - extract content between tags
-        simple_fields = ["thinking", "eval", "decision", "current_goal", "memory"]
+        simple_fields = ["thinking", "eval", "decision", "next_goal", "memory"]
         for field in simple_fields:
             match = re.search(rf'<{field}>(.*?)</{field}>', raw_response, re.DOTALL)
             if match:
@@ -191,7 +191,7 @@ class AgentResponseFormatter:
 
             # Ensure all required fields are present (NEW FORMAT)
             required_fields = ["thinking", "eval", "decision",
-                             "current_goal", "memory", "action"]
+                             "next_goal", "memory", "action"]
 
             for field in required_fields:
                 if field not in json_data:

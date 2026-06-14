@@ -404,37 +404,18 @@ Respond with "action": [{"type": "hotkey", "value": "alt+y"}] to accept or "acti
             if uac_detected:
                 todo_list = ""  # Not needed for UAC prompt
             elif is_first_iteration:
-                # First iteration - user_request + todo creation rules (only needed at step 1)
-                todo_creation_rules = """<todo_capability>
-1. Task Tracking and Initialization
-    1.1. Track and update tasks continuously during the agent loop.
-    1.2. Create the ToDo list exactly once at iteration 1. Never recreate it.
-
-2. Building the ToDo List
-    2.1. Build from the user_request (ignore typos). Write a corrected objective with clear sub-tasks.
-    2.2. Mention the required tools for each task where relevant.
-    2.3. Planning and Data Collection: If a task requires upfront planning or extensive data gathering, explicitly define it as a dedicated sub-task.
-    2.4. CLI agent tasks: Prefix these specific tasks with 'delegating cli:'.
-    2.5. Tasks are auto-numbered (1, 2, 3) when saved.
-
-3. Format and Examples
-    3.1. Standard Format:
-        [{"type": "todo_list", "value": "Objective: <corrected_user_request>\\n1. [ ] <task_1>\\n2. [ ] <task_2>"}]
-        
-    3.2. Complex Example (Data Gathering and Web Excel Reporting):
-        [{"type": "todo_list", "value": "Objective: Make a report and save it on Excel online.\\n1. [ ] Data Gathering: Use the web tool (or alternate browser tool if unavailable) to collect data and save it to the scratchpad.\\n2. [ ] Open Excel online in the browser.\\n3. [ ] Create a new notebook.\\n4. [ ] Create a data table using the information stored in the scratchpad.\\n5. [ ] Visually confirm that the table looks clean and is nicely structured."}]
-</todo_capability>"""
-
+                # First iteration - user_request + element tree only.
+                # ToDo creation and timing are governed by <todo_capability> in the
+                # system prompt (flexible: iteration 1 by default, may create later),
+                # so no hard-coded todo rules are injected here.
                 user_message = f"""<user_request>
 {task}
 </user_request>
-
-{todo_creation_rules}
 """
                 # Inject domain knowledge if available
                 if domain_block:
                     user_message += f"\n{domain_block}\n"
-                
+
                 user_message += f"\n{formatted_element_tree}"
             else:
                 # Fetch fresh todo from file system

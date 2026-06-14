@@ -697,7 +697,7 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
             provider_keys.get(provider_key_name) if provider_key_name else None
         )
 
-        # Pipe each step's formatted response (thinking + current_goal +
+        # Pipe each step's formatted response (thinking + next_goal +
         # memory + eval, with action stripped) into the compact banner.
         # The agent already calls text_callback at
         # main_driver/service.py with exactly this content — same path the
