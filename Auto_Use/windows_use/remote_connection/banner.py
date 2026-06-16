@@ -199,7 +199,7 @@ def _js_escape(text: str) -> str:
 
 # Telegram bot token: "<bot_id>:<auth>" e.g. 7123456789:AAH…35chars… .
 _TG_TOKEN_RE = re.compile(r"\b\d{6,}:[A-Za-z0-9_-]{30,}\b")
-_INTERNAL_LOG_PREFIXES = ("[telegram]", "[banner]")
+_INTERNAL_LOG_PREFIXES = ("[telegram]", "[banner]", "[tls]")
 
 
 def _is_internal_log_line(text) -> bool:
@@ -607,7 +607,6 @@ COMPACT_HTML = r"""<!DOCTYPE html>
     box-shadow: inset 0 0 0 1px rgba(139,92,246,0.55), inset 0 0 8px rgba(139,92,246,0.45);
     animation: cp-edgeGlow 3s ease-in-out infinite; }
   body.coder #coderPanel { display: block; }
-  .cp-particles { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
   .cp-body { position: relative; z-index: 1; padding: 14px 14px 18px; color: rgba(0,0,0,0.82);
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
     font-size: 12px; line-height: 1.5; }
@@ -617,7 +616,9 @@ COMPACT_HTML = r"""<!DOCTYPE html>
   .cp-line { white-space: nowrap; overflow: hidden; margin: 2px 0; }
   .cp-mrow .cp-line { margin: 0; }
   .cp-p { color: rgba(0,0,0,0.4); }
-  .cp-todos { margin: 9px 0 4px 0; display: flex; flex-direction: column; gap: 6px; }
+  /* todos are indented to sit in the SAME column as the minion loaders (both
+     at the cp-body content edge + 22px), matching coder_animation.html. */
+  .cp-todos { margin: 9px 0 4px 22px; display: flex; flex-direction: column; gap: 6px; }
   .cp-todos.hidden { display: none; }
   .cp-item { display: flex; align-items: center; gap: 8px; }
   .cp-item .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -635,22 +636,58 @@ COMPACT_HTML = r"""<!DOCTYPE html>
   .cp-loading { width: 14px; height: 14px; min-width: 14px; box-sizing: border-box; border-radius: 50%;
     border: 2px solid rgba(139,92,246,0.3); border-top-color: #8b5cf6;
     animation: cp-spin 1s linear infinite; display: inline-block; }
-  .cp-minions { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 2px 0; }
-  .cp-mrow { display: flex; align-items: center; gap: 8px; color: rgba(0,0,0,0.7);
-    animation: cp-rise 0.28s ease-out; }
+  /* Minions render as a TREE: a single vertical trunk down the left with a
+     horizontal elbow into each row. The trunk height is driven from JS and
+     animates (stretch/shrink) as minions are added/removed. */
+  /* per-row margin (not container gap) so a removed row can animate its spacing
+     to 0 and let the rows below slide up smoothly. */
+  .cp-minions { position: relative; display: flex; flex-direction: column;
+    margin: 6px 0 2px 0; padding-left: 22px; }
+  .cp-mrow { margin-bottom: 6px; }
+  .cp-mrow:last-child { margin-bottom: 0; }
+  /* single trunk line — a child of .cp-body so it can run from the `>` output
+     line (its L-shape origin) down to the last minion. left/top/height are all
+     set imperatively in JS (layoutTrunk): the top anchor (just below the `>`,
+     nudged left) is computed ONCE and cached so it never jitters; only the
+     height changes as minions are added/removed. */
+  .cp-trunk { position: absolute; left: 16px; top: 0; width: 1px; height: 0;
+    background: rgba(0,0,0,0.22); transform-origin: top;
+    transition: height 0.34s cubic-bezier(.22,1,.36,1); will-change: height; }
+  .cp-trunk.draw-in { animation: cp-drawTrunk 0.34s ease forwards; }
+  /* min-height reserves the FILLED row height from the moment the row is added
+     empty (loader only), so the panel doesn't grow a few px when the minion's
+     first line arrives — that growth (then settle) was the bottom "jiggle". */
+  .cp-mrow { position: relative; display: flex; align-items: center; gap: 8px;
+    min-height: 20px; color: rgba(0,0,0,0.7); }
+  /* removed row: collapse height + spacing + fade so the rows below slide up.
+     min-height:0 lets the height actually animate to 0 (the row's own 20px
+     min-height would otherwise pin it open). */
+  .cp-mrow.removing { min-height: 0; overflow: hidden; pointer-events: none;
+    transition: height 0.3s ease, margin-bottom 0.3s ease, opacity 0.26s ease; }
+  /* per-row horizontal elbow: starts at the trunk (~2px from the cp-body content
+     edge) and stops ~4px short of the loader (row content edge at 22px) so there
+     is a small gap before the loader. A transition (origin left) lets it draw in
+     toward the loader (.elbow-in) and retract right-to-left on exit. */
+  .cp-mrow::after { content: ""; position: absolute; left: -20px; top: 50%;
+    width: 16px; height: 1px; background: rgba(0,0,0,0.22);
+    transform: scaleX(0); transform-origin: left; transition: transform 0.26s ease; }
+  .cp-mrow.elbow-in::after { transform: scaleX(1); }
   .cp-mrow .mline { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     opacity: 0.85; transition: opacity 0.25s ease; }
-  .tb { --s: 16px; --sp: 0.8s; --c: #5D3FD3; position: relative; display: inline-block;
-    height: var(--s); width: var(--s); min-width: var(--s);
-    animation: tb-spin calc(var(--sp)*2.5) infinite linear; }
-  .tb i { position: absolute; height: 100%; width: 30%; }
-  .tb i:after { content: ''; position: absolute; height: 0; width: 100%; padding-bottom: 100%; background: var(--c); border-radius: 50%; }
-  .tb i:nth-child(1) { bottom: 5%; left: 0; transform: rotate(60deg); transform-origin: 50% 85%; }
-  .tb i:nth-child(1):after { bottom: 0; left: 0; animation: tb-w1 var(--sp) infinite ease-in-out; animation-delay: calc(var(--sp)*-0.3); }
-  .tb i:nth-child(2) { bottom: 5%; right: 0; transform: rotate(-60deg); transform-origin: 50% 85%; }
-  .tb i:nth-child(2):after { bottom: 0; left: 0; animation: tb-w1 var(--sp) infinite calc(var(--sp)*-0.15) ease-in-out; }
-  .tb i:nth-child(3) { bottom: -5%; left: 0; transform: translateX(116.666%); }
-  .tb i:nth-child(3):after { top: 0; left: 0; animation: tb-w2 var(--sp) infinite ease-in-out; }
+  /* orbiting 5-dot loader (port of the coder_animation.html .loader/.orbe);
+     faded in per-add via the .show class. */
+  .cp-loader { --size-loader: 14px; --size-orbe: 4px; width: var(--size-loader);
+    height: var(--size-loader); min-width: var(--size-loader); position: relative;
+    transform: rotate(45deg); display: inline-block; vertical-align: middle;
+    opacity: 0; transition: opacity 0.3s ease; }
+  .cp-loader.show { opacity: 1; }
+  .cp-loader > i { position: absolute; width: 100%; height: 100%;
+    --delay: calc(var(--index) * 0.1s);
+    animation: cp-orbit 1.5s var(--delay) ease-in-out infinite;
+    opacity: calc(1 - (0.2 * var(--index))); }
+  .cp-loader > i::after { content: ""; position: absolute; top: 0; left: 0;
+    width: var(--size-orbe); height: var(--size-orbe); background-color: #8b5cf6;
+    box-shadow: 0 0 6px 0 rgba(139,92,246,0.6); border-radius: 50%; }
   .cp-progress { margin-top: 14px; height: 7px; border-radius: 999px; position: relative; overflow: hidden;
     background: rgba(0,0,0,0.06); border: 1px solid rgba(0,0,0,0.04); }
   .cp-fill { position: absolute; inset: 0;
@@ -658,14 +695,12 @@ COMPACT_HTML = r"""<!DOCTYPE html>
     transform: translateX(-70%); animation: cp-flow 1.05s cubic-bezier(0.2,0.8,0.2,1) infinite; }
   @keyframes cp-tickGlow { 0%,100%{filter:drop-shadow(0 0 1px rgba(139,92,246,0.55))} 50%{filter:drop-shadow(0 0 4px rgba(139,92,246,1))} }
   @keyframes cp-spin { to { transform: rotate(360deg); } }
-  @keyframes cp-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   @keyframes cp-edgeGlow {
     0%, 100% { box-shadow: inset 0 0 0 1px rgba(139,92,246,0.45), inset 0 0 6px rgba(139,92,246,0.35); }
     50%      { box-shadow: inset 0 0 0 1px rgba(139,92,246,0.85), inset 0 0 12px rgba(139,92,246,0.6); }
   }
-  @keyframes tb-spin { 0%{transform:rotate(0)} 100%{transform:rotate(360deg)} }
-  @keyframes tb-w1 { 0%,100%{transform:translateY(0) scale(1);opacity:1} 50%{transform:translateY(-66%) scale(0.65);opacity:0.8} }
-  @keyframes tb-w2 { 0%,100%{transform:translateY(0) scale(1);opacity:1} 50%{transform:translateY(66%) scale(0.65);opacity:0.8} }
+  @keyframes cp-orbit { 80%, 100% { transform: rotate(360deg); } }
+  @keyframes cp-drawTrunk { from { transform: scaleY(0); } to { transform: scaleY(1); } }
   @keyframes cp-flow { 0%{transform:translateX(-75%);opacity:0.8} 50%{opacity:1} 100%{transform:translateX(75%);opacity:0.8} }
 </style>
 </head>
@@ -679,7 +714,6 @@ COMPACT_HTML = r"""<!DOCTYPE html>
       <span class="msg" id="msg"></span>
     </div>
     <div id="coderPanel">
-      <canvas class="cp-particles" id="cp-particles"></canvas>
       <div class="cp-body">
         <div class="cp-output" id="cp-output"></div>
         <div class="cp-todos hidden" id="cp-todos"></div>
@@ -767,6 +801,9 @@ COMPACT_HTML = r"""<!DOCTYPE html>
     (function () {
       const CHAR_STAGGER    = 8;     // ms between letters (fallback)
       const REAL_STAGGER    = 4;     // the agent's real output streams FAST
+      const REAL_STEP       = 5;     // …and emits this many chars per tick (timers
+                                     // clamp to ~4ms, so batching is what makes
+                                     // real output stream VERY fast). Filler = 1.
       const FILLER_STAGGER  = 18;    // playful filler streams a little slower
       const CHAR_FADE       = 60;    // ms opacity fade-in per letter
       const PAGE_HOLD       = 550;   // ms a full page lingers before clearing
@@ -896,6 +933,7 @@ COMPACT_HTML = r"""<!DOCTYPE html>
         const item = runner.queue.shift();
         const text = (item && item.text != null) ? item.text : item;
         const stagger = (item && item.stagger) || CHAR_STAGGER;
+        const step = (item && item.step) || 1;   // chars per tick (>1 = faster)
         const chars = Array.from(String(text));
         if (!chars.length) { runner.running = false; pump(outEl, runner, prompt); return; }
 
@@ -914,39 +952,43 @@ COMPACT_HTML = r"""<!DOCTYPE html>
 
         let i = 0;
         const tick = () => {
-          if (i >= chars.length) {
-            runner.timer = setTimeout(() => {
-              runner.running = false;
-              if (runner.queue.length) {
-                pump(outEl, runner, prompt);
-              } else if (runner.onIdle) {
-                const cb = runner.onIdle; runner.onIdle = null; cb();
-              }
-            }, LINE_HOLD);
-            return;
+          // Emit up to `step` chars this tick (timers clamp to ~4ms, so batching
+          // — not a smaller stagger — is what makes real output stream fast).
+          for (let n = 0; n < step; n++) {
+            if (i >= chars.length) {
+              runner.timer = setTimeout(() => {
+                runner.running = false;
+                if (runner.queue.length) {
+                  pump(outEl, runner, prompt);
+                } else if (runner.onIdle) {
+                  const cb = runner.onIdle; runner.onIdle = null; cb();
+                }
+              }, LINE_HOLD);
+              return;
+            }
+            const firstChar = page.querySelector('.cp-char') == null;
+            const span = document.createElement('span');
+            span.className = 'cp-char';
+            span.textContent = chars[i];
+            page.appendChild(span);
+            if (page.scrollWidth > page.clientWidth + 1 && !firstChar) {
+              page.removeChild(span);
+              runner.timer = setTimeout(() => {
+                startPage();
+                while (i < chars.length && /\s/.test(chars[i])) i++;
+                tick();
+              }, PAGE_HOLD);
+              return;
+            }
+            if (firstChar) {
+              span.style.opacity = '1';
+            } else {
+              span.style.opacity = '0';
+              span.style.transition = 'opacity ' + CHAR_FADE + 'ms ease-out';
+              requestAnimationFrame(() => { span.style.opacity = '1'; });
+            }
+            i++;
           }
-          const firstChar = page.querySelector('.cp-char') == null;
-          const span = document.createElement('span');
-          span.className = 'cp-char';
-          span.textContent = chars[i];
-          page.appendChild(span);
-          if (page.scrollWidth > page.clientWidth + 1 && !firstChar) {
-            page.removeChild(span);
-            runner.timer = setTimeout(() => {
-              startPage();
-              while (i < chars.length && /\s/.test(chars[i])) i++;
-              tick();
-            }, PAGE_HOLD);
-            return;
-          }
-          if (firstChar) {
-            span.style.opacity = '1';
-          } else {
-            span.style.opacity = '0';
-            span.style.transition = 'opacity ' + CHAR_FADE + 'ms ease-out';
-            requestAnimationFrame(() => { span.style.opacity = '1'; });
-          }
-          i++;
           runner.timer = setTimeout(tick, stagger);
         };
         tick();
@@ -1001,8 +1043,24 @@ COMPACT_HTML = r"""<!DOCTYPE html>
       }
 
       window.coderShow = function () {
+        const wasHidden = !document.body.classList.contains('coder');
         if (window.bridge) { try { bridge.coder_active(true); } catch (e) {} }
         document.body.classList.add('coder');
+        if (!wasHidden) return;   // already visible — nothing was deferred
+        // The panel may have had minions (and the trunk) created while it was
+        // display:none, when all geometry measured as 0. Now that it's visible,
+        // recompute the trunk against the real layout and reveal every existing
+        // row, staggered, so it appears correct and animates in.
+        _trunkTop = null; _trunkLastH = -1;
+        requestAnimationFrame(() => {
+          const wrap = $('cp-minions');
+          const trunk = document.getElementById('cp-trunk');
+          if (!wrap || !trunk) return;
+          const rows = wrap.querySelectorAll('.cp-mrow');
+          if (!rows.length) return;
+          drawTrunkIn(trunk);
+          rows.forEach((row, idx) => setTimeout(() => revealRow(row), 220 + idx * 140));
+        });
       };
 
       window.coderHide = function () {
@@ -1017,6 +1075,10 @@ COMPACT_HTML = r"""<!DOCTYPE html>
           m.querySelectorAll('.cp-mrow').forEach((row) => { if (row._runner) stopRunner(row._runner); });
           m.innerHTML = '';
         }
+        // trunk lives on .cp-body now, so it isn't cleared by emptying cp-minions.
+        const trunkEl = document.getElementById('cp-trunk');
+        if (trunkEl && trunkEl.parentNode) trunkEl.parentNode.removeChild(trunkEl);
+        _trunkTop = null; _trunkLastH = -1;   // recompute the anchor next session
         if (window.bridge) { try { bridge.coder_active(false); } catch (e) {} }
       };
 
@@ -1028,7 +1090,7 @@ COMPACT_HTML = r"""<!DOCTYPE html>
         if (!t.trim()) return;
         stopFiller();
         if (filler.hasMinion) scheduleFiller();
-        topRunner.queue.push({ text: t, stagger: REAL_STAGGER });
+        topRunner.queue.push({ text: t, stagger: REAL_STAGGER, step: REAL_STEP });
         pump(out, topRunner, '> ');
       };
 
@@ -1045,7 +1107,11 @@ COMPACT_HTML = r"""<!DOCTYPE html>
           if (!m) continue;
           items.push({ done: m[1].toLowerCase() === 'x', text: m[2] });
         }
-        if (!items.length) { el.innerHTML = ''; el.classList.add('hidden'); return; }
+        if (!items.length) {
+          el.innerHTML = ''; el.classList.add('hidden');
+          if (document.getElementById('cp-trunk')) requestAnimationFrame(layoutTrunk);
+          return;
+        }
         // The current task is the first not-yet-done one: it gets the spinning
         // loading circle. Done tasks show the breathing gradient box.
         let activeIdx = -1;
@@ -1060,18 +1126,140 @@ COMPACT_HTML = r"""<!DOCTYPE html>
         }
         el.innerHTML = html;
         el.classList.remove('hidden');
+        // todo rows just shifted the minions down → re-anchor the trunk.
+        if (document.getElementById('cp-trunk')) requestAnimationFrame(layoutTrunk);
       };
+
+      // Position the single trunk line. Its TOP anchor (just below the `>`, with
+      // a small gap so it isn't joined to the glyph) is computed ONCE, ROUNDED to
+      // a whole pixel, and cached — the `>` never moves, so recomputing it each
+      // call only caused jitter. Its LEFT is NOT set here: the fixed CSS `left:
+      // 16px` already lines up exactly with the elbow's left edge (a measured,
+      // fractional left made the 1px line straddle pixels — looking thick — and
+      // miss the elbow joint). Only the HEIGHT changes, tracked to the LAST
+      // non-removing row's centre and applied as a whole pixel; identical integer
+      // heights are skipped so sub-pixel re-measures can't churn the line.
+      let _trunkTop = null;   // cached, rounded, px
+      let _trunkLastH = -1;   // last applied integer height
+      function layoutTrunk() {
+        const body = document.querySelector('.cp-body');
+        const out = $('cp-output');
+        const wrap = $('cp-minions');
+        const trunk = document.getElementById('cp-trunk');
+        if (!body || !out || !wrap || !trunk) return;
+        // While the panel is display:none (minions can be added before the agent
+        // halts at cli_await) every rect is 0 — measuring would cache a bogus top
+        // and zero height. coderShow() lays the trunk out once it's visible.
+        if (!document.body.classList.contains('coder')) return;
+        const all = wrap.querySelectorAll('.cp-mrow');
+        if (!all.length) { applyTrunkHeight(trunk, 0); return; }
+        const bRect = body.getBoundingClientRect();
+        if (_trunkTop == null) {
+          const prompt = out.querySelector('.cp-p');
+          const pRect = (prompt || out).getBoundingClientRect();
+          _trunkTop = Math.round((pRect.bottom - bRect.top) + 1);   // small gap below the `>`
+          trunk.style.top = _trunkTop + 'px';
+        }
+        // Track the last row that isn't being removed; while one collapses, fall
+        // back to it so the trunk follows the collapse down to nothing.
+        let last = null;
+        for (let i = all.length - 1; i >= 0; i--) {
+          if (!all[i].classList.contains('removing')) { last = all[i]; break; }
+        }
+        if (!last) last = all[all.length - 1];
+        const lRect = last.getBoundingClientRect();
+        const bottom = (lRect.top - bRect.top) + lRect.height / 2;
+        applyTrunkHeight(trunk, bottom - _trunkTop);
+      }
+
+      // Set the trunk height as a whole pixel, skipping no-op integer changes so
+      // a stable layout never re-triggers the height transition (no shaky line).
+      function applyTrunkHeight(trunk, h) {
+        h = Math.max(0, Math.round(h));
+        if (h === _trunkLastH) return;
+        _trunkLastH = h;
+        trunk.style.height = h + 'px';
+      }
+
+      // Drive the trunk height per-frame for `durationMs` (used during a row
+      // collapse so the trunk shrinks in lock-step with the rows sliding up).
+      let _trunkRAF = null;
+      function trackTrunk(durationMs) {
+        const trunk = document.getElementById('cp-trunk');
+        if (!trunk) return;
+        if (_trunkRAF) cancelAnimationFrame(_trunkRAF);
+        trunk.style.transition = 'none';
+        const startedAt = performance.now();
+        const step = () => {
+          layoutTrunk();
+          if (performance.now() - startedAt < durationMs) {
+            _trunkRAF = requestAnimationFrame(step);
+          } else {
+            _trunkRAF = null;
+            trunk.style.transition = '';
+          }
+        };
+        _trunkRAF = requestAnimationFrame(step);
+      }
+
+      // Reveal a row: draw its elbow toward the loader, then fade the loader in.
+      function revealRow(row) {
+        if (!row) return;
+        row.classList.add('elbow-in');
+        const ld = row.querySelector('.cp-loader');
+        setTimeout(() => { if (ld) ld.classList.add('show'); }, 160);
+      }
+
+      // Snap the trunk to full height, then play the scaleY draw-in from the top.
+      function drawTrunkIn(trunk) {
+        if (!trunk) return;
+        trunk.style.transition = 'none';
+        layoutTrunk();
+        void trunk.offsetHeight;
+        trunk.style.transition = '';
+        trunk.classList.add('draw-in');
+        trunk.addEventListener('animationend',
+          () => trunk.classList.remove('draw-in'), { once: true });
+      }
 
       window.addMinion = function (id, label) {
         const wrap = $('cp-minions'); if (!wrap || id == null) return;
         const sid = mid(id);
         if (document.getElementById(sid)) return;
+
+        // One trunk line, lazily created as a child of .cp-body so it can run up
+        // to the `>` output line. The first one draws-in via scaleY.
+        const body = document.querySelector('.cp-body');
+        let trunk = document.getElementById('cp-trunk');
+        const firstTrunk = !trunk;
+        if (firstTrunk && body) {
+          trunk = document.createElement('span');
+          trunk.className = 'cp-trunk'; trunk.id = 'cp-trunk';
+          body.appendChild(trunk);
+        }
+
         const row = document.createElement('div');
         row.className = 'cp-mrow'; row.id = sid;
-        row.innerHTML = '<span class="tb"><i></i><i></i><i></i></span>'
-          + '<span class="mline"></span>';
+        row.innerHTML =
+          '<span class="cp-loader">'
+          + '<i style="--index:0"></i><i style="--index:1"></i><i style="--index:2"></i>'
+          + '<i style="--index:3"></i><i style="--index:4"></i>'
+          + '</span><span class="mline"></span>';
         wrap.appendChild(row);
         row._runner = makeRunner();
+
+        // Lay out + animate only if the panel is visible. If it's still hidden
+        // (the agent spawned this minion before halting at cli_await), defer: all
+        // geometry measures as 0 while display:none. coderShow() recomputes the
+        // trunk and reveals every deferred row once the panel actually appears.
+        if (document.body.classList.contains('coder')) {
+          requestAnimationFrame(() => {
+            if (firstTrunk && trunk) drawTrunkIn(trunk);  // first trunk: scaleY draw-in
+            else layoutTrunk();                           // others: height transition
+            setTimeout(() => revealRow(row), 340);
+          });
+        }
+
         filler.minions++;
         filler.hasMinion = true;
         scheduleFiller();
@@ -1083,70 +1271,73 @@ COMPACT_HTML = r"""<!DOCTYPE html>
         const t = (text == null ? '' : String(text));
         if (!t.trim()) return;
         if (!row._runner) row._runner = makeRunner();
-        row._runner.queue.push({ text: t, stagger: REAL_STAGGER });
+        row._runner.queue.push({ text: t, stagger: REAL_STAGGER, step: REAL_STEP });
         pump(ml, row._runner);
       };
 
+      // Smooth exit: (1) retract the elbow right-to-left, (2) collapse the row's
+      // height + spacing so the rows below slide up, with the trunk shrinking in
+      // step, (3) drop the row (and the trunk if it was the last one).
+      const COLLAPSE_MS = 300;
       window.removeMinion = function (id) {
         const row = document.getElementById(mid(id));
         if (!row) return;
+        if (row.classList.contains('removing')) return;
         if (row._runner) stopRunner(row._runner);
-        if (row.parentNode) row.parentNode.removeChild(row);
+
         filler.minions = Math.max(0, filler.minions - 1);
         if (filler.minions === 0) { filler.hasMinion = false; stopFiller(); }
-      };
-    })();
 
-    // Floating twinkling purple particles behind the terminal panel. Resizes
-    // with the panel (height grows as todos / minion rows appear); cheap (16 dots).
-    (function () {
-      const canvas = document.getElementById('cp-particles');
-      if (!canvas || !canvas.getContext) return;
-      const ctx = canvas.getContext('2d');
-      const host = canvas.parentElement;  // #coderPanel
-      const dpr = window.devicePixelRatio || 1;
-      let W = 0, H = 0;
-      function resize() {
-        const r = host.getBoundingClientRect();
-        W = r.width; H = r.height;
-        canvas.width = Math.max(1, Math.round(W * dpr));
-        canvas.height = Math.max(1, Math.round(H * dpr));
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      }
-      resize();
-      try { new ResizeObserver(resize).observe(host); } catch (e) {}
-      const COUNT = 16;
-      const ps = [];
-      for (let i = 0; i < COUNT; i++) {
-        ps.push({
-          x: Math.random() * (W || 540), y: Math.random() * (H || 300),
-          r: 0.6 + Math.random() * 1.4,
-          vx: (Math.random() - 0.5) * 0.35, vy: (Math.random() - 0.5) * 0.35,
-          a: 0.2 + Math.random() * 0.5, tw: Math.random() * Math.PI * 2,
-        });
-      }
-      function tick(t) {
-        if (W > 0 && H > 0) {
-          ctx.clearRect(0, 0, W, H);
-          for (const p of ps) {
-            p.vx += (Math.random() - 0.5) * 0.04; p.vy += (Math.random() - 0.5) * 0.04;
-            p.vx = Math.max(-0.6, Math.min(0.6, p.vx));
-            p.vy = Math.max(-0.6, Math.min(0.6, p.vy));
-            p.x += p.vx; p.y += p.vy;
-            if (p.x < -2) p.x = W + 2; if (p.x > W + 2) p.x = -2;
-            if (p.y < -2) p.y = H + 2; if (p.y > H + 2) p.y = -2;
-            const twinkle = 0.6 + 0.4 * Math.sin(t * 0.002 + p.tw);
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(139, 92, 246,' + (p.a * twinkle) + ')';
-            ctx.shadowBlur = 6;
-            ctx.shadowColor = 'rgba(139, 92, 246, 0.9)';
-            ctx.fill();
+        const hasRowsBelow = !!row.nextElementSibling;
+        const prevRow = row.previousElementSibling;
+        const trunk = document.getElementById('cp-trunk');
+
+        // (1) retract the elbow (origin left → shrinks right-to-left) and fade.
+        row.classList.add('removing');
+        row.classList.remove('elbow-in');
+        const loader = row.querySelector('.cp-loader');
+        if (loader) loader.classList.remove('show');
+
+        // (2) once the elbow has retracted, collapse the row so siblings slide up.
+        setTimeout(() => {
+          row.style.height = row.offsetHeight + 'px';
+          void row.offsetHeight;                 // commit start height
+          row.style.height = '0px';
+          row.style.marginBottom = '0px';
+          row.style.opacity = '0';
+
+          if (trunk) {
+            if (hasRowsBelow) {
+              trackTrunk(COLLAPSE_MS + 40);       // follow the sliding rows per-frame
+            } else if (prevRow) {
+              const body = document.querySelector('.cp-body');
+              const bRect = body.getBoundingClientRect();
+              const pr = prevRow.getBoundingClientRect();
+              const newBottom = (pr.top - bRect.top) + pr.height / 2;
+              trunk.style.transition = '';        // smooth shrink to the new last row
+              applyTrunkHeight(trunk, newBottom - (_trunkTop != null ? _trunkTop : 0));
+            } else {
+              trunk.style.transition = '';
+              applyTrunkHeight(trunk, 0);          // only row → shrink to nothing
+            }
           }
-        }
-        requestAnimationFrame(tick);
-      }
-      requestAnimationFrame(tick);
+
+          // (3) drop the row; drop+reset the trunk if none remain.
+          setTimeout(() => {
+            if (row.parentNode) row.parentNode.removeChild(row);
+            const minions = $('cp-minions');
+            const tr = document.getElementById('cp-trunk');
+            if (minions && tr) {
+              if (!minions.querySelector('.cp-mrow')) {
+                if (tr.parentNode) tr.parentNode.removeChild(tr);
+                _trunkTop = null; _trunkLastH = -1;
+              } else {
+                layoutTrunk();
+              }
+            }
+          }, COLLAPSE_MS + 60);
+        }, 240);
+      };
     })();
 
     // Report the pill's natural size to Python so the window can grow to host
@@ -1163,7 +1354,10 @@ COMPACT_HTML = r"""<!DOCTYPE html>
         var r = pill.getBoundingClientRect();
         var w = Math.ceil(r.width);
         var h = Math.ceil(r.height);
-        if (w === lastW && h === lastH) return;
+        // Ignore ±1px height jitter so a sub-pixel content fluctuation can't make
+        // the window re-animate up and down (shaky bottom edge). Real content
+        // changes (a minion row / todo line ≈ 24px) clear the threshold.
+        if (w === lastW && Math.abs(h - lastH) < 2) return;
         lastW = w; lastH = h;
         try { bridge.size_changed(w, h); } catch (e) {}
       }

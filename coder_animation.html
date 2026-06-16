@@ -68,132 +68,60 @@
 
         .term-body {
           padding: 14px 14px 16px;
-          color: rgba(0, 0, 0, 0.8);
+          color: rgba(0, 0, 0, 0.55);
           font-size: 12px;
           line-height: 1.55;
-          position: relative;
-          z-index: 1;
-        }
-
-        .particles {
-          position: absolute;
-          inset: 0;
-          width: 100%;
-          height: 100%;
-          z-index: 0;
-          pointer-events: none;
         }
 
         .line {
           margin: 6px 0;
         }
         .line b {
-          color: rgba(0, 0, 0, 0.95);
+          color: rgba(0, 0, 0, 0.65);
         }
         .muted {
-          color: rgba(0, 0, 0, 0.5);
+          color: rgba(0, 0, 0, 0.4);
         }
 
-        /* From Uiverse.io by dovatgabriel */ 
-        .three-body {
-          --uib-size: 20px; /* Adjusted size to fit nicely inline */
-          --uib-speed: 0.8s;
-          --uib-color: #5D3FD3;
+        /* From Uiverse.io by krlozCJ */
+        .loader {
+          --size-loader: 14px;
+          --size-orbe: 4px;
+          width: var(--size-loader);
+          height: var(--size-loader);
           position: relative;
+          transform: rotate(45deg);
           display: inline-block;
-          height: var(--uib-size);
-          width: var(--uib-size);
-          animation: spin78236 calc(var(--uib-speed) * 2.5) infinite linear;
-          margin-right: 8px;
           vertical-align: middle;
+          margin-right: 0;
         }
-
-        .three-body__dot {
+        .orbe {
           position: absolute;
-          height: 100%;
-          width: 30%;
-        }
-
-        .three-body__dot:after {
-          content: '';
-          position: absolute;
-          height: 0%;
           width: 100%;
-          padding-bottom: 100%;
-          background-color: var(--uib-color);
-          border-radius: 50%;
+          height: 100%;
+          --delay: calc(var(--index) * 0.1s);
+          animation: orbit7456 ease-in-out 1.5s var(--delay) infinite;
+          opacity: calc(1 - calc(0.2 * var(--index)));
         }
-
-        .three-body__dot:nth-child(1) {
-          bottom: 5%;
-          left: 0;
-          transform: rotate(60deg);
-          transform-origin: 50% 85%;
-        }
-
-        .three-body__dot:nth-child(1)::after {
-          bottom: 0;
-          left: 0;
-          animation: wobble1 var(--uib-speed) infinite ease-in-out;
-          animation-delay: calc(var(--uib-speed) * -0.3);
-        }
-
-        .three-body__dot:nth-child(2) {
-          bottom: 5%;
-          right: 0;
-          transform: rotate(-60deg);
-          transform-origin: 50% 85%;
-        }
-
-        .three-body__dot:nth-child(2)::after {
-          bottom: 0;
-          left: 0;
-          animation: wobble1 var(--uib-speed) infinite
-            calc(var(--uib-speed) * -0.15) ease-in-out;
-        }
-
-        .three-body__dot:nth-child(3) {
-          bottom: -5%;
-          left: 0;
-          transform: translateX(116.666%);
-        }
-
-        .three-body__dot:nth-child(3)::after {
+        .orbe::after {
+          position: absolute;
+          content: '';
           top: 0;
           left: 0;
-          animation: wobble2 var(--uib-speed) infinite ease-in-out;
+          width: var(--size-orbe);
+          height: var(--size-orbe);
+          background-color: #8b5cf6;
+          box-shadow: 0px 0px 6px 0px rgba(139, 92, 246, 0.6);
+          border-radius: 50%;
         }
-
-        @keyframes spin78236 {
+        @keyframes orbit7456 {
           0% {
-            transform: rotate(0deg);
+          }
+          80% {
+            transform: rotate(360deg);
           }
           100% {
             transform: rotate(360deg);
-          }
-        }
-
-        @keyframes wobble1 {
-          0%,
-          100% {
-            transform: translateY(0%) scale(1);
-            opacity: 1;
-          }
-          50% {
-            transform: translateY(-66%) scale(0.65);
-            opacity: 0.8;
-          }
-        }
-
-        @keyframes wobble2 {
-          0%,
-          100% {
-            transform: translateY(0%) scale(1);
-            opacity: 1;
-          }
-          50% {
-            transform: translateY(66%) scale(0.65);
-            opacity: 0.8;
           }
         }
 
@@ -289,16 +217,17 @@
         }
 
         .todo-list {
-          margin: 10px 0 12px 20px;
+          margin: 10px 0 12px 22px;
           display: flex;
           flex-direction: column;
-          gap: 6px;
+          gap: 0;
         }
         .todo-item {
           display: flex;
           align-items: center;
           gap: 8px;
-          color: rgba(0, 0, 0, 0.75);
+          height: 22px;
+          color: rgba(0, 0, 0, 0.55);
         }
         .check-box {
           width: 14px;
@@ -310,10 +239,21 @@
           justify-content: center;
         }
         .check-box.done {
-          background: linear-gradient(135deg, #8b5cf6, #3b82f6, #8b5cf6);
-          background-size: 200% 200%;
-          animation: gradientShift 2.5s ease infinite, breathe 3s ease-in-out infinite;
+          background: transparent;
           border-color: transparent;
+        }
+        .check-box.done::after {
+          content: "";
+          width: 4px;
+          height: 8px;
+          border: solid #8b5cf6;
+          border-width: 0 2px 2px 0;
+          transform: rotate(45deg) translate(-0.5px, -1px);
+          animation: tickGlow 3s ease-in-out infinite;
+        }
+        @keyframes tickGlow {
+          0%, 100% { filter: drop-shadow(0 0 2px rgba(139, 92, 246, 0.6)); }
+          50% { filter: drop-shadow(0 0 5px rgba(139, 92, 246, 1)); }
         }
         .loading-circle {
           width: 14px;
@@ -325,16 +265,148 @@
           display: inline-block;
           box-sizing: border-box;
         }
+
+        .tree {
+          position: relative;
+          margin: 0 0 12px 4px;
+          --cycle: 17s;
+        }
+        /* trunk: from the > prompt down to the FIRST elbow */
+        .tree::before {
+          content: "";
+          position: absolute;
+          left: 0;
+          top: -94px;
+          height: 105px;
+          width: 1px;
+          background: rgba(0, 0, 0, 0.22);
+          transform-origin: top;
+          animation: drawTrunk var(--cycle) ease infinite;
+        }
+        .tree-item {
+          position: relative;
+          padding-left: 18px;
+          height: 22px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: rgba(0, 0, 0, 0.55);
+        }
+        /* horizontal elbow on each item */
+        .tree-item::after {
+          content: "";
+          position: absolute;
+          left: 0;
+          top: 50%;
+          width: 18px;
+          height: 1px;
+          background: rgba(0, 0, 0, 0.22);
+        }
+        /* connector: from the first elbow down to the second elbow
+           (only exists with the second branch, so no dangling stub) */
+        .tree-item.last::before {
+          content: "";
+          position: absolute;
+          left: 0;
+          top: -11px;
+          height: 22px;
+          width: 1px;
+          background: rgba(0, 0, 0, 0.22);
+          transform-origin: top;
+          animation: drawConnector var(--cycle) ease infinite;
+        }
+
+        /* ---- reveal, hold ~10s, then go away, looping ---- */
+        .m-word {
+          display: inline-block;
+          overflow: hidden;
+          white-space: nowrap;
+          vertical-align: bottom;
+          flex-shrink: 0;
+          width: 0;
+        }
+        .tree-item:first-child::after {
+          transform-origin: left;
+          animation: drawElbow1 var(--cycle) ease infinite;
+        }
+        .tree-item:first-child .loader {
+          animation: fadeLoader1 var(--cycle) ease infinite;
+        }
+        .tree-item:first-child .m-word {
+          animation: typeWord1 var(--cycle) linear infinite;
+        }
+        .tree-item.last::after {
+          transform-origin: left;
+          animation: drawElbow2 var(--cycle) ease infinite;
+        }
+        .tree-item.last .loader {
+          animation: fadeLoader2 var(--cycle) ease infinite;
+        }
+        .tree-item.last .m-word {
+          animation: typeWord2 var(--cycle) linear infinite;
+        }
+
+        @keyframes drawTrunk {
+          0% { transform: scaleY(0); }
+          2% { transform: scaleY(1); }
+          97% { transform: scaleY(1); }
+          98.5%, 100% { transform: scaleY(0); }
+        }
+        @keyframes drawElbow1 {
+          0%, 2% { transform: scaleX(0); }
+          4% { transform: scaleX(1); }
+          95.5% { transform: scaleX(1); }
+          97%, 100% { transform: scaleX(0); }
+        }
+        @keyframes fadeLoader1 {
+          0%, 4% { opacity: 0; }
+          6% { opacity: 1; }
+          94% { opacity: 1; }
+          95.5%, 100% { opacity: 0; }
+        }
+        @keyframes typeWord1 {
+          0% { width: 0; }
+          6% { width: 0; animation-timing-function: steps(16, end); }
+          12% { width: 16ch; }
+          92% { width: 16ch; }
+          94% { width: 0; }
+          100% { width: 0; }
+        }
+        @keyframes drawConnector {
+          0%, 12% { transform: scaleY(0); }
+          14% { transform: scaleY(1); }
+          90% { transform: scaleY(1); }
+          92%, 100% { transform: scaleY(0); }
+        }
+        @keyframes drawElbow2 {
+          0%, 14% { transform: scaleX(0); }
+          16% { transform: scaleX(1); }
+          88% { transform: scaleX(1); }
+          90%, 100% { transform: scaleX(0); }
+        }
+        @keyframes fadeLoader2 {
+          0%, 16% { opacity: 0; }
+          18% { opacity: 1; }
+          86% { opacity: 1; }
+          88%, 100% { opacity: 0; }
+        }
+        @keyframes typeWord2 {
+          0% { width: 0; }
+          18% { width: 0; animation-timing-function: steps(16, end); }
+          24% { width: 16ch; }
+          84% { width: 16ch; }
+          86% { width: 0; }
+          100% { width: 0; }
+        }
     </style>
 </head>
 <body>
 
     <!-- From Uiverse.io by egehan_1415 --> 
     <div class="ui-loader term" role="status" aria-label="Loading">
-      <canvas class="particles" id="particles"></canvas>
       <div class="term-body">
         <div class="line"><b>></b> npm run build</div>
-        
+
         <div class="todo-list">
           <div class="todo-item">
             <span class="check-box done"></span>
@@ -350,21 +422,27 @@
           </div>
         </div>
 
-        <div class="line">
-          <div class="three-body">
-            <div class="three-body__dot"></div>
-            <div class="three-body__dot"></div>
-            <div class="three-body__dot"></div>
+        <div class="tree">
+          <div class="tree-item">
+            <div class="loader">
+              <div class="orbe" style="--index: 0"></div>
+              <div class="orbe" style="--index: 1"></div>
+              <div class="orbe" style="--index: 2"></div>
+              <div class="orbe" style="--index: 3"></div>
+              <div class="orbe" style="--index: 4"></div>
+            </div>
+            <span class="m-word">minion activated</span>
           </div>
-          minion
-        </div>
-        <div class="line">
-          <div class="three-body">
-            <div class="three-body__dot"></div>
-            <div class="three-body__dot"></div>
-            <div class="three-body__dot"></div>
+          <div class="tree-item last">
+            <div class="loader">
+              <div class="orbe" style="--index: 0"></div>
+              <div class="orbe" style="--index: 1"></div>
+              <div class="orbe" style="--index: 2"></div>
+              <div class="orbe" style="--index: 3"></div>
+              <div class="orbe" style="--index: 4"></div>
+            </div>
+            <span class="m-word">minion activated</span>
           </div>
-          minion
         </div>
 
         <div class="progress">
@@ -373,72 +451,6 @@
         </div>
       </div>
     </div>
-
-    <script>
-      (function () {
-        const canvas = document.getElementById("particles");
-        const ctx = canvas.getContext("2d");
-        const loader = canvas.parentElement;
-        const dpr = window.devicePixelRatio || 1;
-        let W = 0, H = 0;
-
-        function resize() {
-          const r = loader.getBoundingClientRect();
-          W = r.width;
-          H = r.height;
-          canvas.width = W * dpr;
-          canvas.height = H * dpr;
-          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        }
-        resize();
-        window.addEventListener("resize", resize);
-
-        const COUNT = 18;
-        const particles = [];
-        for (let i = 0; i < COUNT; i++) {
-          particles.push({
-            x: Math.random() * W,
-            y: Math.random() * H,
-            r: 0.6 + Math.random() * 1.4,
-            vx: (Math.random() - 0.5) * 0.35,
-            vy: (Math.random() - 0.5) * 0.35,
-            a: 0.2 + Math.random() * 0.5,
-            tw: Math.random() * Math.PI * 2 // twinkle phase
-          });
-        }
-
-        function tick(t) {
-          ctx.clearRect(0, 0, W, H);
-          for (const p of particles) {
-            // gentle random wander
-            p.vx += (Math.random() - 0.5) * 0.04;
-            p.vy += (Math.random() - 0.5) * 0.04;
-            p.vx = Math.max(-0.6, Math.min(0.6, p.vx));
-            p.vy = Math.max(-0.6, Math.min(0.6, p.vy));
-            p.x += p.vx;
-            p.y += p.vy;
-
-            // wrap around edges
-            if (p.x < -2) p.x = W + 2;
-            if (p.x > W + 2) p.x = -2;
-            if (p.y < -2) p.y = H + 2;
-            if (p.y > H + 2) p.y = -2;
-
-            const twinkle = 0.6 + 0.4 * Math.sin(t * 0.002 + p.tw);
-            const alpha = p.a * twinkle;
-
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-            ctx.fillStyle = "rgba(139, 92, 246," + alpha + ")";
-            ctx.shadowBlur = 6;
-            ctx.shadowColor = "rgba(139, 92, 246, 0.9)";
-            ctx.fill();
-          }
-          requestAnimationFrame(tick);
-        }
-        requestAnimationFrame(tick);
-      })();
-    </script>
 
 </body>
 </html>
