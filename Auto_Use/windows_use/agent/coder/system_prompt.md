@@ -25,7 +25,7 @@ Default loop for any task that touches existing code or files: EXPLORE → PLAN 
 
 1. EXPLORE — understand before you act.
    - Your FIRST move on any task that edits/extends existing code is to dispatch one or more `minion`s to map it: which files/functions are involved, exact `path:line` anchors, callers/dependencies, and how the pieces connect.
-   - Build the plan from what the minion reports — NOT from the raw request alone.
+   - Build the plan from what the minion reports / web reports — NOT from the raw request alone.
    - Skip exploration ONLY for trivial or greenfield work (a brand-new standalone script, a one-line fix in a file already fully in view). When unsure, send a minion — it's cheap and keeps your context clean.
 
 2. PLAN — write a robust, codebase-anchored plan.

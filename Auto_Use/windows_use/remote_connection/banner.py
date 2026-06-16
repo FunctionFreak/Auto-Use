@@ -63,6 +63,7 @@ import datetime
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -184,6 +185,33 @@ def _js_escape(text: str) -> str:
         .replace("\n", "\\n")
         .replace("\r", "")
     )
+
+
+# ── pill content hygiene ───────────────────────────────────────────────────
+# The compact pill streams whatever a sub-agent writes to stdout/stderr. Two
+# kinds of content must never reach the user-facing pill:
+#   1. Our own internal diagnostics — lines our _stderr helpers prefix with
+#      "[telegram]" / "[banner]". These are for the terminal/log, not the pill.
+#   2. Secrets — a Telegram bot token (digits ":" 35-char base64url) must never
+#      render even partially, regardless of which surface produced the line.
+# Both are belt-and-suspenders on top of the app.py guard that stops sub-agent
+# children from booting a bot in the first place.
+
+# Telegram bot token: "<bot_id>:<auth>" e.g. 7123456789:AAH…35chars… .
+_TG_TOKEN_RE = re.compile(r"\b\d{6,}:[A-Za-z0-9_-]{30,}\b")
+_INTERNAL_LOG_PREFIXES = ("[telegram]", "[banner]")
+
+
+def _is_internal_log_line(text) -> bool:
+    """True for our own diagnostic lines (``[telegram] …`` / ``[banner] …``)
+    that should be filtered out of the user-facing pill stream."""
+    return str(text or "").lstrip().startswith(_INTERNAL_LOG_PREFIXES)
+
+
+def _redact_secrets(text) -> str:
+    """Mask anything that looks like a Telegram bot token so no fragment can
+    ever render on the pill."""
+    return _TG_TOKEN_RE.sub("…<redacted>", str(text or ""))
 
 
 # ── shared orb (pure CSS — the default AutoUse orb) ───────────────────────
@@ -1758,7 +1786,9 @@ class StatusBanner:
     def update(self, text: str) -> None:
         # Both modes accept MSG — the compact pill renders the thinking-stream
         # text in its msg span and grows to fit; the setup pill pages it.
-        self._send({"cmd": "MSG", "text": text or ""})
+        # Redact any token-like text as a final guard (the setup-wizard prompts
+        # and agent thinking-stream never contain one, so this is a no-op there).
+        self._send({"cmd": "MSG", "text": _redact_secrets(text)})
 
     # ── embedded coder terminal API (compact mode; callable from any thread) ──
     # While a CLI/coder sub-agent runs, the compact orb pill expands into a
@@ -2066,8 +2096,15 @@ class CoderBannerManager:
             line = args[1] if len(args) > 1 else ""
             with self._lock:
                 is_coder = task_id in self._coder_tasks
-            if is_coder and line is not None and str(line).strip():
-                self._banner.push_cli_line(str(line))
+            # Drop our own "[telegram]"/"[banner]" diagnostics (never meant for
+            # the pill) and redact any token-like text before it can render.
+            if (
+                is_coder
+                and line is not None
+                and str(line).strip()
+                and not _is_internal_log_line(line)
+            ):
+                self._banner.push_cli_line(_redact_secrets(line))
 
         elif event_type == "todo_update":
             todo_text = args[1] if len(args) > 1 else ""
@@ -2100,8 +2137,13 @@ class CoderBannerManager:
             line = args[1] if len(args) > 1 else ""
             with self._lock:
                 known = minion_id in self._minion_ids
-            if known and line is not None and str(line).strip():
-                self._banner.set_minion_line(minion_id, str(line))
+            if (
+                known
+                and line is not None
+                and str(line).strip()
+                and not _is_internal_log_line(line)
+            ):
+                self._banner.set_minion_line(minion_id, _redact_secrets(line))
 
         elif event_type == "minion_end":
             minion_id = args[0] if len(args) > 0 else None

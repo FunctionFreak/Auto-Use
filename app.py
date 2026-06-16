@@ -74,7 +74,11 @@ IS_CLI_SUBPROCESS = "--cli-mode" in sys.argv
 # or wipe the parent's scratchpad. --banner-mode pops the floating Telegram
 # pill (compiled-binary path — see banner.py:_IS_COMPILED branch). Treated
 # identically to --cli-mode at the bootstrap-suppression layer below.
-IS_SECONDARY_PROCESS = IS_CLI_SUBPROCESS or "--banner-mode" in sys.argv
+IS_SECONDARY_PROCESS = (
+    IS_CLI_SUBPROCESS
+    or "--banner-mode" in sys.argv
+    or "--minion-mode" in sys.argv
+)
 
 
 def app_data_dir() -> Path:
@@ -1067,24 +1071,36 @@ def main():
     # Wire the Telegram remote-control bot. Windows mounts a Flask blueprint
     # plus a polling bot; macOS just starts the polling bot (no blueprint yet —
     # token is read from .env / api_key.txt directly).
-    if IS_WINDOWS:
-        try:
-            from Auto_Use.windows_use.remote_connection.telegram.view import telegram_bp, start_bot
-            app.register_blueprint(telegram_bp)
-            start_bot()
-        except Exception:
-            debug_exception("telegram_blueprint_init")
-    elif IS_MAC:
-        try:
-            from Auto_Use.macOS_use.remote_connection.telegram.view import telegram_bp
-            from Auto_Use.macOS_use.remote_connection.telegram.service import start_bot as start_telegram_bot
-            app.register_blueprint(telegram_bp)
-            start_telegram_bot()
-        except Exception as _tg_e:
-            import traceback as _tg_tb
-            print(f"[telegram] IMPORT/INIT FAILED: {_tg_e!r}", file=sys.stderr, flush=True)
-            _tg_tb.print_exc(file=sys.stderr)
-            debug_exception("telegram_bot_init")
+    #
+    # Only the REAL GUI process runs the bot. Re-exec'd secondary processes
+    # (--cli-mode / --minion-mode / --banner-mode) must NOT start a bot: in the
+    # compiled binary the controller spawns sub-agents by re-exec'ing
+    # AutoUse.exe, which re-enters main() and would otherwise boot a *second*
+    # Telegram bot per child. That duplicates the "AutoUse online" announcement,
+    # fights the parent's getUpdates long-poll (HTTP 409), and prints
+    # "[telegram] starting bot …" to the child's stderr — which the parent
+    # streams onto the on-screen pill (token leak + looping line). The cli/minion
+    # dispatch blocks below return before Flask/start_server is ever reached, so
+    # skipping the blueprint registration here is a no-op for those children.
+    if not IS_SECONDARY_PROCESS:
+        if IS_WINDOWS:
+            try:
+                from Auto_Use.windows_use.remote_connection.telegram.view import telegram_bp, start_bot
+                app.register_blueprint(telegram_bp)
+                start_bot()
+            except Exception:
+                debug_exception("telegram_blueprint_init")
+        elif IS_MAC:
+            try:
+                from Auto_Use.macOS_use.remote_connection.telegram.view import telegram_bp
+                from Auto_Use.macOS_use.remote_connection.telegram.service import start_bot as start_telegram_bot
+                app.register_blueprint(telegram_bp)
+                start_telegram_bot()
+            except Exception as _tg_e:
+                import traceback as _tg_tb
+                print(f"[telegram] IMPORT/INIT FAILED: {_tg_e!r}", file=sys.stderr, flush=True)
+                _tg_tb.print_exc(file=sys.stderr)
+                debug_exception("telegram_bot_init")
 
     if "--cli-mode" in sys.argv:
         # CLI mode - delegate to the platform-specific CLI agent

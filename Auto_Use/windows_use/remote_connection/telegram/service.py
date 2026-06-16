@@ -916,7 +916,10 @@ def start_bot() -> None:
             "api_key.txt. Paste your @BotFather token into one of those files."
         )
         return
-    _stderr(f"starting bot (token ends in …{token[-6:]})")
+    # Never include any part of the token in user-facing output: in the compiled
+    # build a stray bot-start in a sub-agent child gets its stderr streamed onto
+    # the on-screen pill, so even a 6-char suffix would leak.
+    _stderr("starting bot")
 
     def _runner():
         import sys, traceback

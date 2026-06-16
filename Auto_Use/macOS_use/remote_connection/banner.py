@@ -205,19 +205,22 @@ body { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
       try { f.contentWindow.postMessage('pcbtn:show', '*'); } catch (e) {}
     });
   })();
-  // Word-by-word reveal: Python calls setMsg("…") with the full text; we
-  // animate it in word-at-a-time so the banner reads smoothly. A new call
-  // cancels any in-flight animation and starts over with the latest text.
+  // Char-by-char reveal: Python calls setMsg("…") with the full text; we
+  // animate it letter-at-a-time (matching the Windows banner) so the pill
+  // types out smoothly. A new call cancels any in-flight animation and
+  // starts over with the latest text.
+  const _CHAR_DELAY_MS = 8;     // per-letter cadence — fast typewriter feel
+  const _FADE_MS = 60;          // per-letter fade-in duration
   let _revealTimer = null;
   function setMsg(fullText) {
     if (_revealTimer) { clearTimeout(_revealTimer); _revealTimer = null; }
     const el = document.getElementById('msg');
     if (!el) return;
-    const words = (fullText || '').split(/(\s+)/);  // keep whitespace tokens
+    const chars = Array.from((fullText || '').toString());  // split by code point so emoji stay intact
     el.textContent = '';
     let i = 0;
     const step = () => {
-      if (i >= words.length) {
+      if (i >= chars.length) {
         _revealTimer = null;
         // Tell Python the streaming reveal has finished so it can now show
         // whichever control set (Next / choice / input) is appropriate for
@@ -226,18 +229,18 @@ body { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
         try { webkit.messageHandlers.reveal_done.postMessage(1); } catch (e) {}
         return;
       }
-      // Wrap each token in its own span and fade it in. Multiple spans are
-      // in their transition at once because the inter-word delay (55 ms) is
-      // shorter than the fade duration (220 ms) — that overlap is what
+      // Wrap each character in its own span and fade it in. Multiple spans are
+      // in their transition at once because the inter-letter delay (8 ms) is
+      // shorter than the fade duration (60 ms) — that overlap is what
       // makes the stream read as smooth rather than as discrete pops.
       const span = document.createElement('span');
-      span.textContent = words[i];
+      span.textContent = chars[i];
       span.style.opacity = '0';
-      span.style.transition = 'opacity 220ms ease-out';
+      span.style.transition = 'opacity ' + _FADE_MS + 'ms ease-out';
       el.appendChild(span);
       requestAnimationFrame(() => { span.style.opacity = '1'; });
       i++;
-      _revealTimer = setTimeout(step, 55);
+      _revealTimer = setTimeout(step, _CHAR_DELAY_MS);
     };
     step();
   }
