@@ -602,17 +602,21 @@ COMPACT_HTML = r"""<!DOCTYPE html>
   }
 
   /* ── embedded coder terminal panel (shown only while a CLI/coder runs) ── */
-  #coderPanel { display: none; position: relative; margin: 8px 8px 0; box-sizing: border-box;
+  /* #coderPanel is just the STACK container; each coder (CLI agent) is its own
+     bordered, glowing .cp-term box, one-below-the-other — so 2 concurrent coders
+     show as 2 stacked terminals, 3 as 3, etc. */
+  #coderPanel { display: none; margin: 8px 8px 0; box-sizing: border-box; }
+  body.coder #coderPanel { display: flex; flex-direction: column; gap: 8px; }
+  .cp-term { position: relative; width: 100%; box-sizing: border-box;
     border-radius: 12px; overflow: hidden; background: #f7f7f9;
     box-shadow: inset 0 0 0 1px rgba(139,92,246,0.55), inset 0 0 8px rgba(139,92,246,0.45);
     animation: cp-edgeGlow 3s ease-in-out infinite; }
-  body.coder #coderPanel { display: block; }
   .cp-body { position: relative; z-index: 1; padding: 14px 14px 18px; color: rgba(0,0,0,0.82);
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
     font-size: 12px; line-height: 1.5; }
-  /* Single streaming line (paginated). Top shows the coder's real output (or
-     filler while a minion runs); each minion row shows its own real output. */
-  .cp-output { min-height: 22px; overflow: hidden; }
+  /* this coder's own streaming output line (paginated; '>' prompt re-added per
+     page). Shows real output, or filler while it waits on its minions. */
+  .cp-out { min-height: 22px; overflow: hidden; }
   .cp-line { white-space: nowrap; overflow: hidden; margin: 2px 0; }
   .cp-mrow .cp-line { margin: 0; }
   .cp-p { color: rgba(0,0,0,0.4); }
@@ -713,14 +717,7 @@ COMPACT_HTML = r"""<!DOCTYPE html>
       </div>
       <span class="msg" id="msg"></span>
     </div>
-    <div id="coderPanel">
-      <div class="cp-body">
-        <div class="cp-output" id="cp-output"></div>
-        <div class="cp-todos hidden" id="cp-todos"></div>
-        <div class="cp-minions" id="cp-minions"></div>
-        <div class="cp-progress"><span class="cp-fill"></span></div>
-      </div>
-    </div>
+    <div id="coderPanel"></div>
   </div>
 
   <script>
@@ -1000,9 +997,21 @@ COMPACT_HTML = r"""<!DOCTYPE html>
         runner.queue = []; runner.running = false; runner.onIdle = null;
       }
 
-      // ── top (coder) line + filler ──
-      const topRunner = makeRunner();
-      const filler = { active: false, hasMinion: false, minions: 0, bag: [], lastIdx: -1, idleTimer: null, tickTimer: null };
+      // ── coder terminals + filler ──
+      // Each coder (CLI agent) is its OWN independent terminal box (.cp-term) inside
+      // #coderPanel, stacked one-below-the-other. Each box owns its output line, its
+      // todo list, and its OWN minion tree (trunk + rows) — so two concurrent coders
+      // never share a line, and every minion nests under the coder that spawned it.
+      // All per-box state (runner, minion count, trunk geometry) hangs off the box.
+      const cid = (id) => 'cpc_' + String(id).replace(/[^a-zA-Z0-9_]/g, '_');
+      const filler = { active: false, bag: [], lastIdx: -1, idleTimer: null, tickTimer: null };
+
+      const coderBoxes = () => Array.from(document.querySelectorAll('#coderPanel .cp-term'));
+      const boxBody = (box) => box.querySelector('.cp-body');
+      const boxOut = (box) => box.querySelector('.cp-out');
+      const boxMinions = (box) => box.querySelector('.cp-minions');
+      const boxTrunk = (box) => box.querySelector('.cp-trunk');
+      const anyMinions = () => coderBoxes().some((b) => (b._minions || 0) > 0);
 
       function fillerPhrase() {
         if (!filler.bag.length) {
@@ -1018,25 +1027,32 @@ COMPACT_HTML = r"""<!DOCTYPE html>
         filler.active = false;
         if (filler.idleTimer) { clearTimeout(filler.idleTimer); filler.idleTimer = null; }
         if (filler.tickTimer) { clearTimeout(filler.tickTimer); filler.tickTimer = null; }
-        topRunner.onIdle = null;
       }
 
       function scheduleFiller() {
-        if (!filler.hasMinion) return;
+        if (!anyMinions()) return;
         if (filler.idleTimer) clearTimeout(filler.idleTimer);
         filler.idleTimer = setTimeout(() => {
           filler.idleTimer = null;
-          if (!filler.hasMinion) return;
+          if (!anyMinions()) return;
           filler.active = true;
+          // Fill the output line of every IDLE coder box that is waiting on its own
+          // minions (it has nothing real to print meanwhile). Boxes busy streaming
+          // real output — or with no running minions — are skipped, so filler never
+          // stomps live output.
           const tickFiller = () => {
             if (!filler.active) return;
-            const out = $('cp-output'); if (!out) { filler.active = false; return; }
-            topRunner.onIdle = () => {
-              if (!filler.active) return;
-              filler.tickTimer = setTimeout(tickFiller, FILLER_HOLD);
-            };
-            topRunner.queue.push({ text: fillerPhrase(), stagger: FILLER_STAGGER });
-            pump(out, topRunner, '> ');
+            coderBoxes().forEach((box) => {
+              if ((box._minions || 0) <= 0) return;
+              const out = boxOut(box); if (!out) return;
+              if (!box._runner) box._runner = makeRunner();
+              const r = box._runner;
+              if (r.running || r.queue.length) return;
+              r._filler = true;
+              r.queue.push({ text: fillerPhrase(), stagger: FILLER_STAGGER, filler: true });
+              pump(out, r, '> ');
+            });
+            filler.tickTimer = setTimeout(tickFiller, FILLER_HOLD);
           };
           tickFiller();
         }, FILLER_IDLE);
@@ -1047,55 +1063,91 @@ COMPACT_HTML = r"""<!DOCTYPE html>
         if (window.bridge) { try { bridge.coder_active(true); } catch (e) {} }
         document.body.classList.add('coder');
         if (!wasHidden) return;   // already visible — nothing was deferred
-        // The panel may have had minions (and the trunk) created while it was
-        // display:none, when all geometry measured as 0. Now that it's visible,
-        // recompute the trunk against the real layout and reveal every existing
-        // row, staggered, so it appears correct and animates in.
-        _trunkTop = null; _trunkLastH = -1;
-        requestAnimationFrame(() => {
-          const wrap = $('cp-minions');
-          const trunk = document.getElementById('cp-trunk');
-          if (!wrap || !trunk) return;
-          const rows = wrap.querySelectorAll('.cp-mrow');
-          if (!rows.length) return;
-          drawTrunkIn(trunk);
-          rows.forEach((row, idx) => setTimeout(() => revealRow(row), 220 + idx * 140));
+        // Boxes (and their minions/trunks) may have been created while the panel
+        // was display:none, when all geometry measured as 0. Now that it's visible,
+        // recompute EACH box's trunk against the real layout and reveal every
+        // existing row, staggered, so it appears correct and animates in.
+        coderBoxes().forEach((box) => {
+          box._trunkTop = null; box._trunkLastH = -1;
+          requestAnimationFrame(() => {
+            const wrap = boxMinions(box);
+            const trunk = boxTrunk(box);
+            if (!wrap || !trunk) return;
+            const rows = wrap.querySelectorAll('.cp-mrow');
+            if (!rows.length) return;
+            drawTrunkIn(box, trunk);
+            rows.forEach((row, idx) => setTimeout(() => revealRow(row), 220 + idx * 140));
+          });
         });
       };
 
       window.coderHide = function () {
         document.body.classList.remove('coder');
         stopFiller();
-        filler.hasMinion = false; filler.minions = 0; filler.bag = []; filler.lastIdx = -1;
-        stopRunner(topRunner);
-        const o = $('cp-output'); if (o) o.innerHTML = '';
-        const t = $('cp-todos'); if (t) { t.innerHTML = ''; t.classList.add('hidden'); }
-        const m = $('cp-minions');
-        if (m) {
-          m.querySelectorAll('.cp-mrow').forEach((row) => { if (row._runner) stopRunner(row._runner); });
-          m.innerHTML = '';
+        filler.bag = []; filler.lastIdx = -1;
+        const panel = $('coderPanel');
+        if (panel) {
+          panel.querySelectorAll('.cp-term').forEach((box) => {
+            if (box._runner) stopRunner(box._runner);
+            if (box._trunkRAF) cancelAnimationFrame(box._trunkRAF);
+            box.querySelectorAll('.cp-mrow').forEach((row) => { if (row._runner) stopRunner(row._runner); });
+          });
+          panel.innerHTML = '';   // drop every coder terminal box
         }
-        // trunk lives on .cp-body now, so it isn't cleared by emptying cp-minions.
-        const trunkEl = document.getElementById('cp-trunk');
-        if (trunkEl && trunkEl.parentNode) trunkEl.parentNode.removeChild(trunkEl);
-        _trunkTop = null; _trunkLastH = -1;   // recompute the anchor next session
         if (window.bridge) { try { bridge.coder_active(false); } catch (e) {} }
       };
 
-      // Real coder line -> top. A real line beats filler: stop it, then re-arm
-      // for the next idle window if minions are still running.
-      window.pushLine = function (text) {
-        const out = $('cp-output'); if (!out) return;
-        const t = (text == null ? '' : String(text));
-        if (!t.trim()) return;
-        stopFiller();
-        if (filler.hasMinion) scheduleFiller();
-        topRunner.queue.push({ text: t, stagger: REAL_STAGGER, step: REAL_STEP });
-        pump(out, topRunner, '> ');
+      // Each coder is its own independent terminal box (.cp-term) in #coderPanel,
+      // stacked one-below-the-other, keyed by cid(id). The box owns its output line,
+      // todos, and minion tree; all per-box state hangs off the element.
+      window.addCoder = function (id) {
+        const panel = $('coderPanel'); if (!panel || id == null) return;
+        const sid = cid(id);
+        if (document.getElementById(sid)) return;
+        const box = document.createElement('div');
+        box.className = 'cp-term'; box.id = sid;
+        box.innerHTML =
+          '<div class="cp-body">'
+          + '<div class="cp-out"></div>'
+          + '<div class="cp-todos hidden"></div>'
+          + '<div class="cp-minions"></div>'
+          + '<div class="cp-progress"><span class="cp-fill"></span></div>'
+          + '</div>';
+        panel.appendChild(box);
+        box._runner = makeRunner();
+        box._minions = 0;
+        box._trunkTop = null; box._trunkLastH = -1; box._trunkRAF = null;
       };
 
-      window.setTodo = function (todoText) {
-        const el = $('cp-todos'); if (!el) return;
+      // A real coder line streams into THAT coder's own output line; real output
+      // supersedes any filler phrase the box was showing.
+      window.setCoderLine = function (id, text) {
+        let box = document.getElementById(cid(id));
+        if (!box) { window.addCoder(id); box = document.getElementById(cid(id)); }
+        if (!box) return;
+        const out = boxOut(box); if (!out) return;
+        const t = (text == null ? '' : String(text));
+        if (!t.trim()) return;
+        if (!box._runner) box._runner = makeRunner();
+        const r = box._runner;
+        if (r._filler) { stopRunner(r); r._filler = false; }
+        r.queue.push({ text: t, stagger: REAL_STAGGER, step: REAL_STEP });
+        pump(out, r, '> ');
+      };
+
+      window.removeCoder = function (id) {
+        const box = document.getElementById(cid(id));
+        if (!box) return;
+        if (box._runner) stopRunner(box._runner);
+        if (box._trunkRAF) cancelAnimationFrame(box._trunkRAF);
+        box.querySelectorAll('.cp-mrow').forEach((row) => { if (row._runner) stopRunner(row._runner); });
+        if (box.parentNode) box.parentNode.removeChild(box);
+        if (!anyMinions()) stopFiller();
+      };
+
+      window.setTodo = function (id, todoText) {
+        const box = document.getElementById(cid(id)); if (!box) return;
+        const el = box.querySelector('.cp-todos'); if (!el) return;
         const raw = (todoText == null ? '' : String(todoText)).split('\n');
         const items = [];
         for (let i = 0; i < raw.length; i++) {
@@ -1109,7 +1161,7 @@ COMPACT_HTML = r"""<!DOCTYPE html>
         }
         if (!items.length) {
           el.innerHTML = ''; el.classList.add('hidden');
-          if (document.getElementById('cp-trunk')) requestAnimationFrame(layoutTrunk);
+          if (boxTrunk(box)) requestAnimationFrame(() => layoutTrunk(box));
           return;
         }
         // The current task is the first not-yet-done one: it gets the spinning
@@ -1126,39 +1178,34 @@ COMPACT_HTML = r"""<!DOCTYPE html>
         }
         el.innerHTML = html;
         el.classList.remove('hidden');
-        // todo rows just shifted the minions down → re-anchor the trunk.
-        if (document.getElementById('cp-trunk')) requestAnimationFrame(layoutTrunk);
+        // todo rows just shifted the minions down → re-anchor this box's trunk.
+        if (boxTrunk(box)) requestAnimationFrame(() => layoutTrunk(box));
       };
 
-      // Position the single trunk line. Its TOP anchor (just below the `>`, with
-      // a small gap so it isn't joined to the glyph) is computed ONCE, ROUNDED to
-      // a whole pixel, and cached — the `>` never moves, so recomputing it each
-      // call only caused jitter. Its LEFT is NOT set here: the fixed CSS `left:
-      // 16px` already lines up exactly with the elbow's left edge (a measured,
-      // fractional left made the 1px line straddle pixels — looking thick — and
-      // miss the elbow joint). Only the HEIGHT changes, tracked to the LAST
-      // non-removing row's centre and applied as a whole pixel; identical integer
-      // heights are skipped so sub-pixel re-measures can't churn the line.
-      let _trunkTop = null;   // cached, rounded, px
-      let _trunkLastH = -1;   // last applied integer height
-      function layoutTrunk() {
-        const body = document.querySelector('.cp-body');
-        const out = $('cp-output');
-        const wrap = $('cp-minions');
-        const trunk = document.getElementById('cp-trunk');
+      // ── per-coder minion tree (one trunk + per-row elbow, scoped to each box) ──
+      // Each coder box owns its OWN trunk line. Its TOP anchor (just below that
+      // box's `>` output line, with a small gap) is computed ONCE per box, ROUNDED,
+      // and cached on the element (box._trunkTop) so it never jitters; only the
+      // HEIGHT changes, tracked to that box's LAST non-removing row's centre. The
+      // fixed CSS `left:16px` lines the 1px line up exactly with the elbow.
+      function layoutTrunk(box) {
+        if (!box) return;
+        const body = boxBody(box);
+        const out = boxOut(box);
+        const wrap = boxMinions(box);
+        const trunk = boxTrunk(box);
         if (!body || !out || !wrap || !trunk) return;
         // While the panel is display:none (minions can be added before the agent
         // halts at cli_await) every rect is 0 — measuring would cache a bogus top
-        // and zero height. coderShow() lays the trunk out once it's visible.
+        // and zero height. coderShow() lays each box's trunk out once it's visible.
         if (!document.body.classList.contains('coder')) return;
         const all = wrap.querySelectorAll('.cp-mrow');
-        if (!all.length) { applyTrunkHeight(trunk, 0); return; }
+        if (!all.length) { applyTrunkHeight(box, trunk, 0); return; }
         const bRect = body.getBoundingClientRect();
-        if (_trunkTop == null) {
-          const prompt = out.querySelector('.cp-p');
-          const pRect = (prompt || out).getBoundingClientRect();
-          _trunkTop = Math.round((pRect.bottom - bRect.top) + 1);   // small gap below the `>`
-          trunk.style.top = _trunkTop + 'px';
+        if (box._trunkTop == null) {
+          const oRect = out.getBoundingClientRect();
+          box._trunkTop = Math.round((oRect.bottom - bRect.top) + 1);   // small gap below the `>`
+          trunk.style.top = box._trunkTop + 'px';
         }
         // Track the last row that isn't being removed; while one collapses, fall
         // back to it so the trunk follows the collapse down to nothing.
@@ -1169,37 +1216,36 @@ COMPACT_HTML = r"""<!DOCTYPE html>
         if (!last) last = all[all.length - 1];
         const lRect = last.getBoundingClientRect();
         const bottom = (lRect.top - bRect.top) + lRect.height / 2;
-        applyTrunkHeight(trunk, bottom - _trunkTop);
+        applyTrunkHeight(box, trunk, bottom - box._trunkTop);
       }
 
       // Set the trunk height as a whole pixel, skipping no-op integer changes so
       // a stable layout never re-triggers the height transition (no shaky line).
-      function applyTrunkHeight(trunk, h) {
+      function applyTrunkHeight(box, trunk, h) {
         h = Math.max(0, Math.round(h));
-        if (h === _trunkLastH) return;
-        _trunkLastH = h;
+        if (h === box._trunkLastH) return;
+        box._trunkLastH = h;
         trunk.style.height = h + 'px';
       }
 
-      // Drive the trunk height per-frame for `durationMs` (used during a row
+      // Drive a box's trunk height per-frame for `durationMs` (used during a row
       // collapse so the trunk shrinks in lock-step with the rows sliding up).
-      let _trunkRAF = null;
-      function trackTrunk(durationMs) {
-        const trunk = document.getElementById('cp-trunk');
+      function trackTrunk(box, durationMs) {
+        const trunk = boxTrunk(box);
         if (!trunk) return;
-        if (_trunkRAF) cancelAnimationFrame(_trunkRAF);
+        if (box._trunkRAF) cancelAnimationFrame(box._trunkRAF);
         trunk.style.transition = 'none';
         const startedAt = performance.now();
         const step = () => {
-          layoutTrunk();
+          layoutTrunk(box);
           if (performance.now() - startedAt < durationMs) {
-            _trunkRAF = requestAnimationFrame(step);
+            box._trunkRAF = requestAnimationFrame(step);
           } else {
-            _trunkRAF = null;
+            box._trunkRAF = null;
             trunk.style.transition = '';
           }
         };
-        _trunkRAF = requestAnimationFrame(step);
+        box._trunkRAF = requestAnimationFrame(step);
       }
 
       // Reveal a row: draw its elbow toward the loader, then fade the loader in.
@@ -1210,11 +1256,11 @@ COMPACT_HTML = r"""<!DOCTYPE html>
         setTimeout(() => { if (ld) ld.classList.add('show'); }, 160);
       }
 
-      // Snap the trunk to full height, then play the scaleY draw-in from the top.
-      function drawTrunkIn(trunk) {
+      // Snap the box's trunk to full height, then play the scaleY draw-in from top.
+      function drawTrunkIn(box, trunk) {
         if (!trunk) return;
         trunk.style.transition = 'none';
-        layoutTrunk();
+        layoutTrunk(box);
         void trunk.offsetHeight;
         trunk.style.transition = '';
         trunk.classList.add('draw-in');
@@ -1222,19 +1268,24 @@ COMPACT_HTML = r"""<!DOCTYPE html>
           () => trunk.classList.remove('draw-in'), { once: true });
       }
 
-      window.addMinion = function (id, label) {
-        const wrap = $('cp-minions'); if (!wrap || id == null) return;
+      window.addMinion = function (parentId, id) {
+        // Resolve the parent coder's box; create it defensively if a minion's
+        // start somehow beats its coder's task_start.
+        let box = parentId != null ? document.getElementById(cid(parentId)) : null;
+        if (!box && parentId != null) { window.addCoder(parentId); box = document.getElementById(cid(parentId)); }
+        if (!box || id == null) return;
+        const wrap = boxMinions(box); if (!wrap) return;
         const sid = mid(id);
         if (document.getElementById(sid)) return;
 
-        // One trunk line, lazily created as a child of .cp-body so it can run up
-        // to the `>` output line. The first one draws-in via scaleY.
-        const body = document.querySelector('.cp-body');
-        let trunk = document.getElementById('cp-trunk');
+        // One trunk line PER BOX, lazily created as a child of that box's .cp-body
+        // so it can run up to the `>` output line. The first one draws-in via scaleY.
+        const body = boxBody(box);
+        let trunk = boxTrunk(box);
         const firstTrunk = !trunk;
         if (firstTrunk && body) {
           trunk = document.createElement('span');
-          trunk.className = 'cp-trunk'; trunk.id = 'cp-trunk';
+          trunk.className = 'cp-trunk';
           body.appendChild(trunk);
         }
 
@@ -1250,18 +1301,17 @@ COMPACT_HTML = r"""<!DOCTYPE html>
 
         // Lay out + animate only if the panel is visible. If it's still hidden
         // (the agent spawned this minion before halting at cli_await), defer: all
-        // geometry measures as 0 while display:none. coderShow() recomputes the
-        // trunk and reveals every deferred row once the panel actually appears.
+        // geometry measures as 0 while display:none. coderShow() recomputes each
+        // box's trunk and reveals every deferred row once the panel appears.
         if (document.body.classList.contains('coder')) {
           requestAnimationFrame(() => {
-            if (firstTrunk && trunk) drawTrunkIn(trunk);  // first trunk: scaleY draw-in
-            else layoutTrunk();                           // others: height transition
+            if (firstTrunk && trunk) drawTrunkIn(box, trunk);  // first trunk: scaleY draw-in
+            else layoutTrunk(box);                             // others: height transition
             setTimeout(() => revealRow(row), 340);
           });
         }
 
-        filler.minions++;
-        filler.hasMinion = true;
+        box._minions = (box._minions || 0) + 1;
         scheduleFiller();
       };
 
@@ -1285,12 +1335,13 @@ COMPACT_HTML = r"""<!DOCTYPE html>
         if (row.classList.contains('removing')) return;
         if (row._runner) stopRunner(row._runner);
 
-        filler.minions = Math.max(0, filler.minions - 1);
-        if (filler.minions === 0) { filler.hasMinion = false; stopFiller(); }
+        const box = row.closest('.cp-term');
+        if (box) box._minions = Math.max(0, (box._minions || 0) - 1);
+        if (!anyMinions()) stopFiller();
 
         const hasRowsBelow = !!row.nextElementSibling;
         const prevRow = row.previousElementSibling;
-        const trunk = document.getElementById('cp-trunk');
+        const trunk = box ? boxTrunk(box) : null;
 
         // (1) retract the elbow (origin left → shrinks right-to-left) and fade.
         row.classList.add('removing');
@@ -1306,33 +1357,35 @@ COMPACT_HTML = r"""<!DOCTYPE html>
           row.style.marginBottom = '0px';
           row.style.opacity = '0';
 
-          if (trunk) {
+          if (box && trunk) {
             if (hasRowsBelow) {
-              trackTrunk(COLLAPSE_MS + 40);       // follow the sliding rows per-frame
+              trackTrunk(box, COLLAPSE_MS + 40);  // follow the sliding rows per-frame
             } else if (prevRow) {
-              const body = document.querySelector('.cp-body');
+              const body = boxBody(box);
               const bRect = body.getBoundingClientRect();
               const pr = prevRow.getBoundingClientRect();
               const newBottom = (pr.top - bRect.top) + pr.height / 2;
               trunk.style.transition = '';        // smooth shrink to the new last row
-              applyTrunkHeight(trunk, newBottom - (_trunkTop != null ? _trunkTop : 0));
+              applyTrunkHeight(box, trunk, newBottom - (box._trunkTop != null ? box._trunkTop : 0));
             } else {
               trunk.style.transition = '';
-              applyTrunkHeight(trunk, 0);          // only row → shrink to nothing
+              applyTrunkHeight(box, trunk, 0);     // only row → shrink to nothing
             }
           }
 
-          // (3) drop the row; drop+reset the trunk if none remain.
+          // (3) drop the row; drop+reset this box's trunk if none remain.
           setTimeout(() => {
             if (row.parentNode) row.parentNode.removeChild(row);
-            const minions = $('cp-minions');
-            const tr = document.getElementById('cp-trunk');
-            if (minions && tr) {
-              if (!minions.querySelector('.cp-mrow')) {
-                if (tr.parentNode) tr.parentNode.removeChild(tr);
-                _trunkTop = null; _trunkLastH = -1;
-              } else {
-                layoutTrunk();
+            if (box) {
+              const minions = boxMinions(box);
+              const tr = boxTrunk(box);
+              if (minions && tr) {
+                if (!minions.querySelector('.cp-mrow')) {
+                  if (tr.parentNode) tr.parentNode.removeChild(tr);
+                  box._trunkTop = null; box._trunkLastH = -1;
+                } else {
+                  layoutTrunk(box);
+                }
               }
             }
           }, COLLAPSE_MS + 60);
@@ -1420,18 +1473,26 @@ def _stdin_reader(emit_js, on_close, on_focus=None) -> None:
                     emit_js("if(window.coderShow) coderShow();")
                 elif cmd == "CODER_STOP":
                     emit_js("if(window.coderHide) coderHide();")
+                elif cmd == "ADD_CODER":
+                    coder = _js_escape(msg.get("id", ""))
+                    emit_js(f"if(window.addCoder) addCoder('{coder}');")
+                elif cmd == "REMOVE_CODER":
+                    coder = _js_escape(msg.get("id", ""))
+                    emit_js(f"if(window.removeCoder) removeCoder('{coder}');")
                 elif cmd == "PUSH_CLI_LINE":
+                    coder = _js_escape(msg.get("id", ""))
                     esc = _js_escape(msg.get("text", ""))
-                    emit_js(f"if(window.pushLine) pushLine('{esc}');")
+                    emit_js(f"if(window.setCoderLine) setCoderLine('{coder}', '{esc}');")
                 elif cmd == "SET_TODO":
                     # _js_escape preserves newlines as \\n, which setTodo's
                     # .split('\\n') needs — no separate multiline escape required.
+                    coder = _js_escape(msg.get("id", ""))
                     esc = _js_escape(msg.get("text", ""))
-                    emit_js(f"if(window.setTodo) setTodo('{esc}');")
+                    emit_js(f"if(window.setTodo) setTodo('{coder}', '{esc}');")
                 elif cmd == "ADD_MINION":
+                    pid = _js_escape(msg.get("parent_id", ""))
                     mid = _js_escape(msg.get("id", ""))
-                    label = _js_escape(msg.get("label", "minion"))
-                    emit_js(f"if(window.addMinion) addMinion('{mid}', '{label}');")
+                    emit_js(f"if(window.addMinion) addMinion('{pid}', '{mid}');")
                 elif cmd == "SET_MINION_LINE":
                     mid = _js_escape(msg.get("id", ""))
                     line_text = _js_escape(msg.get("line", ""))
@@ -2003,23 +2064,35 @@ class StatusBanner:
             return
         self._send({"cmd": "CODER_STOP"})
 
-    def push_cli_line(self, line: str) -> None:
-        """Stream one of the coder's real output lines into the top line."""
+    def add_coder(self, coder_id, label: str = "coder") -> None:
+        """Add a terminal box for a coder (CLI agent); they stack vertically."""
         if not self._compact:
             return
-        self._send({"cmd": "PUSH_CLI_LINE", "text": line or ""})
+        self._send({"cmd": "ADD_CODER", "id": str(coder_id)})
 
-    def set_todo(self, todo_text: str) -> None:
-        """(Re)render the todo checklist from the raw todo.md text."""
+    def remove_coder(self, coder_id) -> None:
+        """Remove a coder's terminal box (it finished)."""
         if not self._compact:
             return
-        self._send({"cmd": "SET_TODO", "text": todo_text or ""})
+        self._send({"cmd": "REMOVE_CODER", "id": str(coder_id)})
 
-    def add_minion(self, minion_id, label: str = "minion") -> None:
-        """Add a spinner row for a minion."""
+    def push_cli_line(self, coder_id, line: str) -> None:
+        """Stream one of a coder's real output lines into THAT coder's own box."""
         if not self._compact:
             return
-        self._send({"cmd": "ADD_MINION", "id": str(minion_id), "label": label or "minion"})
+        self._send({"cmd": "PUSH_CLI_LINE", "id": str(coder_id), "text": line or ""})
+
+    def set_todo(self, coder_id, todo_text: str) -> None:
+        """(Re)render a coder's todo checklist inside its own terminal box."""
+        if not self._compact:
+            return
+        self._send({"cmd": "SET_TODO", "id": str(coder_id), "text": todo_text or ""})
+
+    def add_minion(self, parent_id, minion_id, label: str = "minion") -> None:
+        """Add a spinner row for a minion, nested in its parent coder's box."""
+        if not self._compact:
+            return
+        self._send({"cmd": "ADD_MINION", "parent_id": str(parent_id), "id": str(minion_id)})
 
     def set_minion_line(self, minion_id, line: str) -> None:
         """Stream the minion's latest real output line into its row."""
@@ -2279,11 +2352,14 @@ class CoderBannerManager:
                 return  # bare top-level minion — no coder stream of its own
             with self._lock:
                 self._coder_tasks.add(task_id)
-            # Deliberately do NOT show the panel here. A cli_agent dispatch is
-            # non-blocking — the main agent keeps performing on-screen OS actions
-            # until it runs cli_await. Expanding the panel now would occlude the
-            # screen the agent is automating. The panel expands only on
-            # await_start (main agent halted); lines stream into it meanwhile.
+            # CREATE this coder's own terminal box now — it stacks below any
+            # other coders' boxes (2 coders → 2 boxes, etc.). The box is created
+            # even while the panel is hidden; coderShow (await_start) lays it out
+            # and reveals it. Deliberately do NOT expand the panel here: a
+            # cli_agent dispatch is non-blocking and the main agent keeps doing
+            # on-screen OS actions until it halts at cli_await — expanding now
+            # would occlude the screen it's automating.
+            self._banner.add_coder(task_id)
 
         elif event_type == "task_line":
             task_id = args[0] if len(args) > 0 else None
@@ -2298,11 +2374,12 @@ class CoderBannerManager:
                 and str(line).strip()
                 and not _is_internal_log_line(line)
             ):
-                self._banner.push_cli_line(_redact_secrets(line))
+                self._banner.push_cli_line(task_id, _redact_secrets(line))
 
         elif event_type == "todo_update":
+            parent_id = args[0] if len(args) > 0 else None
             todo_text = args[1] if len(args) > 1 else ""
-            self._banner.set_todo(str(todo_text))
+            self._banner.set_todo(parent_id, str(todo_text))
 
         elif event_type == "task_end":
             task_id = args[0] if len(args) > 0 else None
@@ -2312,19 +2389,22 @@ class CoderBannerManager:
                 # other coder is still streaming — otherwise keep it up until
                 # await_end (the CLI agent isn't "done" until the halt lifts).
                 hide = (not self._await_active) and (not self._coder_tasks)
+            # Drop this coder's terminal box (its minions go with it).
+            self._banner.remove_coder(task_id)
             if hide:
                 self._banner.coder_stop()
 
         elif event_type == "minion_start":
+            parent_id = args[0] if len(args) > 0 else None
             minion_id = args[1] if len(args) > 1 else None
             if minion_id is None:
                 return
             with self._lock:
                 self._minion_ids.add(minion_id)
-            # Add the row but do NOT expand the panel (same reason as task_start —
-            # a minion can spawn before the main agent halts at cli_await). The
-            # row becomes visible when await_start expands the panel.
-            self._banner.add_minion(minion_id, "minion")
+            # Nest the row under its PARENT coder's terminal box. Do NOT expand
+            # the panel (same reason as task_start — a minion can spawn before the
+            # main agent halts at cli_await). coderShow reveals it on await_start.
+            self._banner.add_minion(parent_id, minion_id)
 
         elif event_type == "minion_line":
             minion_id = args[0] if len(args) > 0 else None

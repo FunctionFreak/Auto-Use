@@ -1,5 +1,0 @@
-{
-  "task": "explore autouse codebase on desktop",
-  "summary": "Exploration of the Auto-Use codebase is complete. The codebase is located at `/Users/ashishyadav/Desktop/github/Auto-Use`. It features a web-based frontend (HTML/JS/CSS) served via Flask and PyWebView (`app.py`), and a Python backend (`main.py`). The core architecture strictly separates `macOS_use` and `windows_use` to prevent cross-platform issues. Each platform implements a multi-agent system (planner, coder, minions) that interfaces with OS-specific controllers for desktop automation.",
-  "status": "complete"
-}
