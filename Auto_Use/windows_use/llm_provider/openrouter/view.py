@@ -118,6 +118,13 @@ MODEL_MAPPINGS = {
         "vision": True,
         "display_name": "Qwen 3.6 Plus",
         "reasoning_support": False
+    },
+    "nex-n2-pro": {
+        "api_name": "nex-agi/nex-n2-pro:free",
+        "vision": True,
+        "display_name": "Nex-N2-Pro (free)",
+        "reasoning_support": True,
+        "reasoning_effort": "medium"
     }
 }
 

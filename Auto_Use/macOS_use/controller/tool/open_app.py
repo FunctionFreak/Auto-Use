@@ -37,9 +37,18 @@ def _normalize(s: str) -> str:
 
 
 def _index_applications():
-    """Scan /Applications and ~/Applications for .app bundles."""
+    """Scan the standard app folders for .app bundles.
+
+    /System/Applications holds Apple's bundled apps (TextEdit, Calculator,
+    Notes, …); its Utilities subfolder (Terminal, Activity Monitor, …) is
+    picked up by the one-level-deep scan below.
+    """
     entries = []
-    app_dirs = ["/Applications", os.path.expanduser("~/Applications")]
+    app_dirs = [
+        "/Applications",
+        os.path.expanduser("~/Applications"),
+        "/System/Applications",
+    ]
 
     seen = set()
     for root in app_dirs:
@@ -151,6 +160,29 @@ def _escape_for_applescript(s: str) -> str:
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _resolve_via_launch_services(app_name: str):
+    """Resolve an app by name through macOS Launch Services.
+
+    `path to application "X"` finds any *registered* app wherever it lives —
+    including Apple's bundled apps under /System/Applications that a plain
+    /Applications scan misses. Returns (display_name, path) or (None, None).
+    """
+    safe = _escape_for_applescript(app_name)
+    script = f'POSIX path of (path to application "{safe}")'
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            path = result.stdout.strip().rstrip("/")
+            if path.endswith(".app") and os.path.isdir(path):
+                return os.path.basename(path)[:-4], path
+    except Exception:
+        pass
+    return None, None
+
+
 def _is_app_running(app_name: str) -> bool:
     """Check if an application is currently running via System Events."""
     safe = _escape_for_applescript(app_name)
@@ -215,8 +247,19 @@ def open_app(app_name: str) -> bool:
             logger.error(f"Failed to open Finder: {e}")
             return False
 
+    # Index the standard app folders (now including /System/Applications, so
+    # Apple's bundled apps like TextEdit/Calculator/Notes resolve) and
+    # fuzzy-match. This is in-process and instant, and also handles loose names
+    # like "vscode" → "Visual Studio Code".
     candidates = _index_applications()
     display, path = _best_match(app_name, candidates)
+
+    # Fallback: ask Launch Services for an app registered in a non-standard
+    # location the scan doesn't cover (e.g. Safari under /System/Volumes). This
+    # is only the fallback because the `path to application` query can be slow
+    # or time out, so we never put it on the hot path.
+    if not path:
+        display, path = _resolve_via_launch_services(app_name)
 
     if not path:
         logger.error(f"App not installed: {app_name}")

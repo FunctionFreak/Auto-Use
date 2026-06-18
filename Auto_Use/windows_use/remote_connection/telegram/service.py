@@ -634,12 +634,16 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
     'ready'."""
     # Compact "Telegram task in progress" indicator + minimise AutoUse window.
     # Both are best-effort — never let UI fluff block the actual task.
-    from Auto_Use.windows_use.remote_connection.banner import StatusBanner
+    from Auto_Use.windows_use.remote_connection.banner import StatusBanner, CoderBannerManager
     task_banner = StatusBanner(compact=True)
     try:
         task_banner.show()
     except Exception:
         logger.warning("could not show task banner", exc_info=True)
+    # Expands the orb pill into an embedded terminal panel (streamed lines +
+    # todo checklist + minion spinner rows) while the main agent is halted in
+    # cli_await, then collapses back. Drives the same task_banner. Best-effort.
+    coder_mgr = CoderBannerManager(task_banner)
     # Minimise the AutoUse pywebview window so the agent has the screen to
     # itself. We talk to pywebview directly via its global `windows` list
     # rather than importing from app.py — `python app.py` makes app.py the
@@ -697,7 +701,7 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
             provider_keys.get(provider_key_name) if provider_key_name else None
         )
 
-        # Pipe each step's formatted response (thinking + current_goal +
+        # Pipe each step's formatted response (thinking + next_goal +
         # memory + eval, with action stripped) into the compact banner.
         # The agent already calls text_callback at
         # main_driver/service.py with exactly this content — same path the
@@ -717,17 +721,33 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
             thinking=True,
             api_key=provider_api_key,
             text_callback=_banner_update,
+            cli_callback=coder_mgr.handle_event,
         )
-        agent.process_request(task)
+        # process_request returns {"status", "message"}: "success" only when a
+        # `done` action ran, "error" on a critical failure (e.g. the API key is
+        # wrong and every attempt 401s), "incomplete" otherwise. Without this we
+        # always sent "✅ Done." even when the agent never actually ran.
+        result = agent.process_request(task)
         # Stop the monitor BEFORE the done message so the final scratchpad
         # sweep happens first — keeps the chat in correct chronological order.
         stop_event.set()
         monitor.join(timeout=SCRATCHPAD_POLL_SEC + 2)
-        # wait=True: block until "✅ Done." is on Telegram's servers before
-        # the finally-block fires _maybe_run_next_queued, which would
+
+        status = result.get("status") if isinstance(result, dict) else "success"
+        message = (result.get("message") if isinstance(result, dict) else "") or ""
+        if len(message) > 400:  # keep the phone message readable
+            message = message[:400] + "…"
+
+        # wait=True: block until the terminal message is on Telegram's servers
+        # before the finally-block fires _maybe_run_next_queued, which would
         # otherwise schedule "📝 Running queued task: …" as a second,
-        # concurrent HTTP POST that can race past Done in delivery.
-        _send_chat(bot, chat_id, "✅ Done.", loop, wait=True)
+        # concurrent HTTP POST that can race past it in delivery.
+        if status == "success":
+            _send_chat(bot, chat_id, "✅ Done.", loop, wait=True)
+        elif status == "error":
+            _send_chat(bot, chat_id, f"❌ Error: {message}", loop, wait=True)
+        else:  # incomplete
+            _send_chat(bot, chat_id, f"⚠️ Stopped without completing: {message}", loop, wait=True)
     except Exception as e:
         logger.exception("agent error")
         stop_event.set()
@@ -738,6 +758,10 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
             stop_event.set()
         try:
             task_banner.close()
+        except Exception:
+            pass
+        try:
+            coder_mgr.close_all()
         except Exception:
             pass
         with _state_lock:
@@ -892,7 +916,10 @@ def start_bot() -> None:
             "api_key.txt. Paste your @BotFather token into one of those files."
         )
         return
-    _stderr(f"starting bot (token ends in …{token[-6:]})")
+    # Never include any part of the token in user-facing output: in the compiled
+    # build a stray bot-start in a sub-agent child gets its stderr streamed onto
+    # the on-screen pill, so even a 6-char suffix would leak.
+    _stderr("starting bot")
 
     def _runner():
         import sys, traceback

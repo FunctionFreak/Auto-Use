@@ -35,7 +35,7 @@ MODEL = "gemini-3.1-pro"  # refer to the model name correctly from model_list.tx
 # Your task here
 task = """
 
-draw  finanacial report of goldman sachs  this years and last year reprot and save it on desktop
+in auotuse folder update the minimax latest model and kimi k2.7 code from open router in the openrouter mac os autouse
 
 """
 
