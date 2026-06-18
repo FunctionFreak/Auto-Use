@@ -94,21 +94,33 @@ class ShellService:
                 output += result["stdout"]
             if result.get("stderr"):
                 output += result["stderr"]
-            
+
+            returncode = result.get("returncode")
+
             response = {
                 "status": "success" if result.get("success") else "failed",
                 "action": "shell",
                 "agent_location": agent_location,
                 "shell": command,
             }
-            
-            if output.strip():
-                response["output"] = output.strip()
-            
+
+            # Always surface the exit code so the agent can tell a real error
+            # from an empty result.
+            if returncode is not None:
+                response["exit_code"] = returncode
+
+            # Show exactly what the command returned (verbatim stdout + stderr).
+            # When the terminal returns absolutely nothing, show a clear marker
+            # instead of a blank string — the status/exit_code already say whether
+            # it succeeded, so this just makes "no output" unambiguous (like a
+            # real terminal / Claude Code).
+            clean_output = output.strip()
+            response["output"] = clean_output if clean_output else "(no output)"
+
             error = result.get("error", "")
             if error:
                 response["error"] = error
-            
+
             return response
             
         except Exception as e:
