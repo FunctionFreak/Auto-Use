@@ -32,55 +32,82 @@ from .open_app import _move_to_main_screen, _is_app_running, _bring_to_front, op
 logger = logging.getLogger(__name__)
 
 
-# Scans every process for a permission dialog and clicks Allow.
-# Fingerprint: any window or sheet that has TWO buttons whose names contain
-# "Allow" (i.e. "Allow" + "Don't Allow"). That structural pattern matches every
-# macOS permission prompt — TCC automation, Local Network, Files & Folders,
-# Screen Recording, Microphone, etc. — without depending on dialog text, which
-# varies wildly across permission types and macOS versions.
+# Scans every process for a macOS permission popup and clicks its affirmative
+# button. Fingerprint: any window or sheet that has a NEGATIVE button — exact
+# name "Don't Allow" or "Deny". That structural pattern matches every TCC prompt
+# (Automation, Local Network, Files & Folders, Screen Recording, Microphone, …)
+# regardless of the affirmative button's label. We then click the affirmative,
+# trying "Allow" → "OK" → "Always Allow" so both the automation popup
+# ("Allow"/"Don't Allow") AND the folder popup ("OK"/"Don't Allow") are handled.
+# AppleScript list membership is exact, so "Don't Allow" never matches "Allow".
+# Returns "clicked" (affirmative pressed), "present" (popup seen but not clicked),
+# or "none".
 _DIALOG_SCANNER_SCRIPT = '''
 tell application "System Events"
-    set didClick to false
+    set denyNames to {"Don't Allow", "Deny"}
+    set affirmNames to {"Allow", "OK", "Always Allow"}
+    set sawDialog to false
     repeat with p in application processes
-        if didClick then exit repeat
         try
             repeat with w in windows of p
-                if didClick then exit repeat
                 set containers to {w}
                 try
                     set containers to containers & (sheets of w)
                 end try
                 repeat with c in containers
                     try
-                        if (count of (buttons of c whose name contains "Allow")) ≥ 2 then
-                            click (first button of c whose name is "Allow")
-                            set didClick to true
-                            exit repeat
+                        set bnames to name of buttons of c
+                        set hasDeny to false
+                        repeat with dn in denyNames
+                            if bnames contains dn then set hasDeny to true
+                        end repeat
+                        if hasDeny then
+                            set sawDialog to true
+                            repeat with an in affirmNames
+                                if bnames contains an then
+                                    click (first button of c whose name is an)
+                                    return "clicked"
+                                end if
+                            end repeat
                         end if
                     end try
                 end repeat
             end repeat
         end try
     end repeat
-    return didClick
+    if sawDialog then
+        return "present"
+    end if
+    return "none"
 end tell
 '''
 
 
-def _click_automation_allow_button() -> bool:
-    """Find any visible TCC automation Allow dialog and click it. Idempotent."""
+def _scan_permission_dialog() -> str:
+    """Scan for a macOS TCC permission popup and click its affirmative button.
+
+    Returns "clicked" (Allow/OK pressed), "present" (popup is up but could not be
+    clicked — usually because Accessibility isn't granted), or "none". Idempotent.
+    """
     try:
         result = subprocess.run(
             ["osascript", "-e", _DIALOG_SCANNER_SCRIPT],
             capture_output=True, text=True, timeout=3
         )
-        clicked = result.returncode == 0 and result.stdout.strip() == "true"
-        if clicked:
-            logger.info("Auto-clicked AppleScript automation Allow dialog")
-        return clicked
+        status = result.stdout.strip() if result.returncode == 0 else "none"
+        if status not in ("clicked", "present", "none"):
+            status = "none"
+        if status == "clicked":
+            logger.info("Auto-clicked macOS permission popup (Allow/OK)")
+        return status
     except Exception as e:
-        logger.debug(f"Allow dialog scan failed: {e}")
-        return False
+        logger.debug(f"Permission dialog scan failed: {e}")
+        return "none"
+
+
+def _click_automation_allow_button() -> bool:
+    """Back-compat wrapper: True if a permission popup's affirmative was clicked."""
+    return _scan_permission_dialog() == "clicked"
 
 
 class AppleScriptService:

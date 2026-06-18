@@ -1540,6 +1540,14 @@ body {
     border-left: 2px solid rgba(150, 120, 200, 0.4);
 }
 
+/* Error variant — shown when a run ends in failure (e.g. API auth error)
+   instead of silently returning to idle. */
+.milestone-line--error {
+    color: rgba(200, 50, 50, 0.95);
+    border-left-color: rgba(220, 70, 70, 0.7);
+    font-weight: 600;
+}
+
 /* Chat Input Field Styling */
 .chat-input {
     position: relative; /* For z-index context */

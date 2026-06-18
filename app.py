@@ -74,7 +74,11 @@ IS_CLI_SUBPROCESS = "--cli-mode" in sys.argv
 # or wipe the parent's scratchpad. --banner-mode pops the floating Telegram
 # pill (compiled-binary path — see banner.py:_IS_COMPILED branch). Treated
 # identically to --cli-mode at the bootstrap-suppression layer below.
-IS_SECONDARY_PROCESS = IS_CLI_SUBPROCESS or "--banner-mode" in sys.argv
+IS_SECONDARY_PROCESS = (
+    IS_CLI_SUBPROCESS
+    or "--banner-mode" in sys.argv
+    or "--minion-mode" in sys.argv
+)
 
 
 def app_data_dir() -> Path:
@@ -361,6 +365,35 @@ def request_macos_permissions():
                 ["osascript", "-e", 'tell application "System Events" to return name of first process whose frontmost is true'],
                 capture_output=True, text=True, timeout=10
             )
+        except Exception:
+            pass
+
+        # Full Disk Access — macOS has no API to request it, only to open its pane.
+        # FDA stops the Desktop/Documents/Downloads popups that block coder/minion
+        # shell commands, and lets the auto-clicker work. Probe by reading an
+        # FDA-gated, always-present path; PermissionError ⇒ not granted.
+        try:
+            tcc_db = os.path.expanduser("~/Library/Application Support/com.apple.TCC/TCC.db")
+            has_fda = True
+            try:
+                with open(tcc_db, "rb") as _f:
+                    _f.read(1)
+            except PermissionError:
+                has_fda = False
+            except Exception:
+                has_fda = True  # missing path / other error — don't nag
+            if not has_fda:
+                print(
+                    "\n⚠️  Full Disk Access not granted. Auto Use needs it so shell commands can\n"
+                    "    read/write Desktop, Documents and Downloads without macOS permission popups.\n"
+                    "    Opening System Settings — add to Full Disk Access:\n"
+                    "      • Packaged app: add 'AutoUse'\n"
+                    "      • Dev run: add your Terminal / VS Code / the python you launch from\n"
+                )
+                subprocess.run(
+                    ["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"],
+                    capture_output=True, timeout=10
+                )
         except Exception:
             pass
 
@@ -890,6 +923,10 @@ def start_agent():
                     except Exception:
                         debug_exception("monitor_milestones final read")
 
+            # Outcome reported back to the web UI. Defaults to success; the
+            # process_request return value or an exception overrides it so the
+            # UI shows the real result instead of always signaling completion.
+            run_outcome = {"status": "success", "message": ""}
             try:
                 AgentService = importlib.import_module(
                     f"Auto_Use.{PLATFORM_PKG}.agent.main_driver.service"
@@ -912,15 +949,29 @@ def start_agent():
                 monitor_thread.daemon = True
                 monitor_thread.start()
 
-                agent.process_request(task)
+                run_outcome = agent.process_request(task)
+                if not isinstance(run_outcome, dict):
+                    # Older return shape (a bare string) → treat as success.
+                    run_outcome = {"status": "success", "message": ""}
 
-            except Exception:
+            except Exception as agent_exc:
                 debug_exception("run_agent")
+                run_outcome = {"status": "error", "message": str(agent_exc)}
             finally:
                 stop_event.set()
                 if webview_window and current_session_id == active_agent_session_id:
                     try:
-                        webview_window.evaluate_js("window.agentComplete()")
+                        status = run_outcome.get("status", "success")
+                        message = run_outcome.get("message", "") or ""
+                        if status == "success":
+                            webview_window.evaluate_js("window.agentComplete()")
+                        else:
+                            # Surface the real reason instead of a silent "complete".
+                            prefix = "❌ Error: " if status == "error" else "⚠️ Stopped without completing: "
+                            reason = prefix + message if message else prefix.strip()
+                            webview_window.evaluate_js(
+                                f"window.agentError('{_js_escape(reason)}')"
+                            )
                     except Exception:
                         debug_exception("signaling agent completion")
 
@@ -1020,24 +1071,36 @@ def main():
     # Wire the Telegram remote-control bot. Windows mounts a Flask blueprint
     # plus a polling bot; macOS just starts the polling bot (no blueprint yet —
     # token is read from .env / api_key.txt directly).
-    if IS_WINDOWS:
-        try:
-            from Auto_Use.windows_use.remote_connection.telegram.view import telegram_bp, start_bot
-            app.register_blueprint(telegram_bp)
-            start_bot()
-        except Exception:
-            debug_exception("telegram_blueprint_init")
-    elif IS_MAC:
-        try:
-            from Auto_Use.macOS_use.remote_connection.telegram.view import telegram_bp
-            from Auto_Use.macOS_use.remote_connection.telegram.service import start_bot as start_telegram_bot
-            app.register_blueprint(telegram_bp)
-            start_telegram_bot()
-        except Exception as _tg_e:
-            import traceback as _tg_tb
-            print(f"[telegram] IMPORT/INIT FAILED: {_tg_e!r}", file=sys.stderr, flush=True)
-            _tg_tb.print_exc(file=sys.stderr)
-            debug_exception("telegram_bot_init")
+    #
+    # Only the REAL GUI process runs the bot. Re-exec'd secondary processes
+    # (--cli-mode / --minion-mode / --banner-mode) must NOT start a bot: in the
+    # compiled binary the controller spawns sub-agents by re-exec'ing
+    # AutoUse.exe, which re-enters main() and would otherwise boot a *second*
+    # Telegram bot per child. That duplicates the "AutoUse online" announcement,
+    # fights the parent's getUpdates long-poll (HTTP 409), and prints
+    # "[telegram] starting bot …" to the child's stderr — which the parent
+    # streams onto the on-screen pill (token leak + looping line). The cli/minion
+    # dispatch blocks below return before Flask/start_server is ever reached, so
+    # skipping the blueprint registration here is a no-op for those children.
+    if not IS_SECONDARY_PROCESS:
+        if IS_WINDOWS:
+            try:
+                from Auto_Use.windows_use.remote_connection.telegram.view import telegram_bp, start_bot
+                app.register_blueprint(telegram_bp)
+                start_bot()
+            except Exception:
+                debug_exception("telegram_blueprint_init")
+        elif IS_MAC:
+            try:
+                from Auto_Use.macOS_use.remote_connection.telegram.view import telegram_bp
+                from Auto_Use.macOS_use.remote_connection.telegram.service import start_bot as start_telegram_bot
+                app.register_blueprint(telegram_bp)
+                start_telegram_bot()
+            except Exception as _tg_e:
+                import traceback as _tg_tb
+                print(f"[telegram] IMPORT/INIT FAILED: {_tg_e!r}", file=sys.stderr, flush=True)
+                _tg_tb.print_exc(file=sys.stderr)
+                debug_exception("telegram_bot_init")
 
     if "--cli-mode" in sys.argv:
         # CLI mode - delegate to the platform-specific CLI agent

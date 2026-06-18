@@ -302,8 +302,16 @@ class AgentService:
         except Exception:
             return response_json
     
-    def process_request(self, task: str) -> str:
-        """Process a user request in an iterative loop until completion"""
+    def process_request(self, task: str) -> dict:
+        """Process a user request in an iterative loop until completion.
+
+        Returns a structured outcome {"status", "message"} so callers (Telegram,
+        web UI) can tell a real completion from a failure instead of always
+        reporting "done":
+          - "success"    a `done` action ran
+          - "error"      a critical exception ended the loop (e.g. API failure)
+          - "incomplete" the loop ended otherwise (stopped, max steps, parse fails)
+        """
         # Initialize tracking variables
         step_number = 0
         last_response = None
@@ -312,6 +320,11 @@ class AgentService:
         cli_await_result = None  # Stores cli_await result for next iteration's light message
         pending_web_response = None  # Stores web tool response for light digest iteration
         json_fail_count = 0  # Track consecutive JSON parse failures (max 3 before exit)
+        # Final outcome reported to the caller. Defaults to "incomplete" so any
+        # loop exit that doesn't explicitly set success/error is reported as
+        # not-finished rather than silently looking like a completion.
+        final_status = "incomplete"
+        final_message = "Agent stopped before completing the task"
         
         # Print model info once at the start
         print(f"\n🔄 Processing with {self.llm_manager.get_model_name()}")
@@ -322,6 +335,7 @@ class AgentService:
             if self.stop_event and self.stop_event.is_set():
                 print("\n🛑 Agent stopped by user.")
                 self.controller.controller_service.release_all_inputs()
+                final_status, final_message = "incomplete", "Stopped by user"
                 # Don't send callback to frontend to avoid re-opening the strip
                 break
 
@@ -330,6 +344,7 @@ class AgentService:
             # Max step limit - prevent infinite loops
             if step_number > 100:
                 print("\n🛑 Max step limit reached (100). Exiting agent loop.")
+                final_status, final_message = "incomplete", "Reached the 100-step limit without finishing"
                 break
             
             # Skip scan for light digest iterations (CLI await or web tool response)
@@ -354,8 +369,9 @@ class AgentService:
                 # Check Stop AFTER Scan
                 if self.stop_event and self.stop_event.is_set():
                     self.controller.controller_service.release_all_inputs()
+                    final_status, final_message = "incomplete", "Stopped by user"
                     break
-                    
+
                 element_tree_text, annotated_image_base64, uac_detected = self.scanner.get_scan_data()
                 
                 # Compress screenshot to reduce token size
@@ -393,37 +409,18 @@ Respond with "action": [{"type": "hotkey", "value": "alt+y"}] to accept or "acti
             if uac_detected:
                 todo_list = ""  # Not needed for UAC prompt
             elif is_first_iteration:
-                # First iteration - user_request + todo creation rules (only needed at step 1)
-                todo_creation_rules = """<todo_capability>
-1. Task Tracking and Initialization
-    1.1. Track and update tasks continuously during the agent loop.
-    1.2. Create the ToDo list exactly once at iteration 1. Never recreate it.
-
-2. Building the ToDo List
-    2.1. Build from the user_request (ignore typos). Write a corrected objective with clear sub-tasks.
-    2.2. Mention the required tools for each task where relevant.
-    2.3. Planning and Data Collection: If a task requires upfront planning or extensive data gathering, explicitly define it as a dedicated sub-task.
-    2.4. CLI agent tasks: Prefix these specific tasks with 'delegating cli:'.
-    2.5. Tasks are auto-numbered (1, 2, 3) when saved.
-
-3. Format and Examples
-    3.1. Standard Format:
-        [{"type": "todo_list", "value": "Objective: <corrected_user_request>\\n1. [ ] <task_1>\\n2. [ ] <task_2>"}]
-        
-    3.2. Complex Example (Data Gathering and Web Excel Reporting):
-        [{"type": "todo_list", "value": "Objective: Make a report and save it on Excel online.\\n1. [ ] Data Gathering: Use the web tool (or alternate browser tool if unavailable) to collect data and save it to the scratchpad.\\n2. [ ] Open Excel online in the browser.\\n3. [ ] Create a new notebook.\\n4. [ ] Create a data table using the information stored in the scratchpad.\\n5. [ ] Visually confirm that the table looks clean and is nicely structured."}]
-</todo_capability>"""
-
+                # First iteration - user_request + element tree only.
+                # ToDo creation and timing are governed by <todo_capability> in the
+                # system prompt (flexible: iteration 1 by default, may create later),
+                # so no hard-coded todo rules are injected here.
                 user_message = f"""<user_request>
 {task}
 </user_request>
-
-{todo_creation_rules}
 """
                 # Inject domain knowledge if available
                 if domain_block:
                     user_message += f"\n{domain_block}\n"
-                
+
                 user_message += f"\n{formatted_element_tree}"
             else:
                 # Fetch fresh todo from file system
@@ -650,6 +647,7 @@ No image and element tree provided. Focus on digesting the web response below.
                 
                 # Check Stop BEFORE LLM
                 if self.stop_event and self.stop_event.is_set():
+                    final_status, final_message = "incomplete", "Stopped by user"
                     break
 
                 # Get raw response from LLM - pass annotated image
@@ -659,6 +657,7 @@ No image and element tree provided. Focus on digesting the web response below.
                 if self.stop_event and self.stop_event.is_set():
                     print("\n🛑 Agent stopped by user (response discarded).")
                     self.controller.controller_service.release_all_inputs()
+                    final_status, final_message = "incomplete", "Stopped by user"
                     break
                     
                 print("✓ LLM response received")
@@ -676,6 +675,7 @@ No image and element tree provided. Focus on digesting the web response below.
                     
                     if json_fail_count >= 3:
                         print("❌ JSON parsing failed 3 consecutive times. Exiting agent.")
+                        final_status, final_message = "incomplete", "Could not parse a valid model response (3 consecutive failures)"
                         break
                     
                     # Rewind step number so next iteration retries the same step
@@ -713,6 +713,7 @@ No image and element tree provided. Focus on digesting the web response below.
                         if "action" in agent_response and agent_response["action"]:
                             # Check Stop BEFORE Action
                             if self.stop_event and self.stop_event.is_set():
+                                final_status, final_message = "incomplete", "Stopped by user"
                                 break
                                 
                             # Execute the action
@@ -728,6 +729,7 @@ No image and element tree provided. Focus on digesting the web response below.
                             # Check if action was stopped mid-execution
                             if action_result.get("status") == "stopped":
                                 print("\n🛑 Agent stopped by user (action interrupted).")
+                                final_status, final_message = "incomplete", "Stopped by user"
                                 break
                             
                             # Check if cli_await was triggered — store for next iteration's light message
@@ -758,6 +760,8 @@ No image and element tree provided. Focus on digesting the web response below.
                             if action_result.get("action") == "done":
                                 print(f"\n🎉 Task Complete: {action_result.get('summary', 'Task completed')}")
                                 print("✅ Agent has finished all tasks. Exiting loop.")
+                                final_status = "success"
+                                final_message = action_result.get("summary", "Task completed")
                                 break
                             
                             # Store the action result as last_response
@@ -809,10 +813,12 @@ No image and element tree provided. Focus on digesting the web response below.
             except Exception as e:
                 error_msg = f"❌ Error processing request: {str(e)}"
                 print(error_msg)
-                # On critical error, break the loop
+                # On critical error, record it and break the loop so the caller
+                # can report the failure instead of a false "done".
+                final_status, final_message = "error", str(e)
                 break
-        
+
         # Cleanup: Stop CLI agent subprocess if running
         self.controller.stop_cli_agent()
-        
-        return "Agent loop completed"
+
+        return {"status": final_status, "message": final_message}

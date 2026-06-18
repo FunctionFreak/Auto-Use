@@ -146,6 +146,28 @@ class ControllerView:
             except Exception:
                 pass
 
+    def _emit_todo_update(self):
+        """Push the coder's current todo list to the UI so its banner checklist
+        updates live as items are added/marked.
+
+        Guarded by cli_mode: only a CLI/coder subprocess emits this. In that
+        process cli_callback is None, so _safe_cli_emit writes a
+        __MINION_UI_EVENT__ marker on stdout; the parent's _read_cli_stream
+        intercepts it in _handle_minion_marker and re-emits it as a proper
+        `todo_update` event tagged with the coder's task_id. The main agent
+        (cli_mode=False) never emits — its todo isn't a coder card."""
+        if not self.cli_mode:
+            return
+        try:
+            todo_file = getattr(self.task_tracker, "todo_file", None)
+            if not todo_file or not os.path.exists(todo_file):
+                return
+            with open(todo_file, "r", encoding="utf-8") as f:
+                todo_text = f.read()
+            self._safe_cli_emit("todo_update", todo_text)
+        except Exception as e:
+            logger.error(f"_emit_todo_update failed: {e}")
+
     def _spawn_cli_external_terminal(self, cli_cmd: list, task_description: str):
         """Spawn the CLI sub-agent in a new visible Terminal.app window on macOS.
 
@@ -252,6 +274,12 @@ class ControllerView:
             line_text = inner_args[1] if len(inner_args) > 1 else ""
             line_stream = inner_args[2] if len(inner_args) > 2 else "out"
             self._safe_cli_emit("minion_line", minion_task_id, line_text, line_stream)
+        elif inner_event == "todo_update":
+            # Coder's todo list changed inside the piped CLI subprocess. Re-emit
+            # tagged with the coder's parent_task_id so the UI routes it to the
+            # right card's checklist.
+            todo_text = inner_args[0] if len(inner_args) > 0 else ""
+            self._safe_cli_emit("todo_update", parent_task_id, todo_text)
         elif inner_event == "web_loading_start":
             # Web tool started inside the piped CLI subprocess — flip the parent
             # CLI pill into web-loading visual state. parent_task_id IS the pill.
@@ -826,13 +854,15 @@ class ControllerView:
                 elif action_type == "todo_list":
                     todo_value = action_item.get("value")
                     self.task_tracker.save_todo(todo_value)
+                    self._emit_todo_update()
                     result = {"status": "success", "action": "todo_created"}
                     results.append(result)
-                
+
                 elif action_type == "update_todo":
                     task_number = int(action_item.get("value", "0"))
                     success = self.task_tracker.update_task(task_number)
                     if success:
+                        self._emit_todo_update()
                         result = {"status": "success", "action": "todo_updated", "task": task_number}
                         results.append(result)
                     else:
@@ -1261,11 +1291,13 @@ class ControllerView:
             
             elif action_key == "todo_list":
                 self.task_tracker.save_todo(action_value)
+                self._emit_todo_update()
                 return {"status": "success", "action": "todo_created"}
-            
+
             elif action_key == "update_todo":
                 success = self.task_tracker.update_task(action_value)
                 if success:
+                    self._emit_todo_update()
                     return {"status": "success", "action": "todo_updated", "task": action_value}
                 else:
                     return {
