@@ -628,10 +628,12 @@ def _monitor_scratchpad(chat_id, bot, loop, stop_event, start_pos):
 def _run_agent(task, provider, model, chat_id, bot, loop):
     """Run the agent and ping the chat when done. Streams scratchpad milestones
     back to the chat live while the agent works. Pops a compact pill so the
-    Mac user can see a Telegram task is running, and minimises the main app
-    window so the agent has the screen to itself. Restores phase to 'ready'."""
-    # Compact "Telegram task in progress" indicator + minimise AutoUse window.
-    # Both are best-effort — never let UI fluff block the actual task.
+    Mac user can see a Telegram task is running, and overlays the main app
+    window with a "Currently occupied by Telegram" state. Restores phase to
+    'ready'."""
+    # Compact "Telegram task in progress" indicator + "occupied" overlay on
+    # the main window. Both are best-effort — never let UI fluff block the
+    # actual task.
     from Auto_Use.macOS_use.remote_connection.banner import StatusBanner, CoderBannerManager
     task_banner = StatusBanner(compact=True)
     try:
@@ -642,18 +644,20 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
     # todo checklist + minion spinner rows) while the main agent is halted in
     # cli_await, then collapses back. Drives the same task_banner. Best-effort.
     coder_mgr = CoderBannerManager(task_banner)
-    # Minimise the AutoUse pywebview window so the agent has the screen to
-    # itself. We talk to pywebview directly via its global `windows` list
-    # rather than importing from app.py — `python app.py` makes app.py the
-    # __main__ module, so `from app import …` would re-import a *second*
-    # copy of app.py whose webview_window is still None, and the call would
-    # silently no-op.
+    # Fade the AutoUse UI away and show the Telegram "occupied" overlay (orb +
+    # message) on the main window instead of minimising it. We talk to pywebview
+    # directly via its global `windows` list rather than importing from app.py —
+    # `python app.py` makes app.py the __main__ module, so `from app import …`
+    # would re-import a *second* copy of app.py whose webview_window is still
+    # None, and the call would silently no-op. evaluate_js from this worker
+    # thread is the same path app.py's send_*_to_frontend helpers already use.
     try:
         import webview as _webview
         if _webview.windows:
-            _webview.windows[0].minimize()
+            _webview.windows[0].evaluate_js(
+                "window.telegramOccupiedShow && window.telegramOccupiedShow()")
     except Exception:
-        logger.warning("could not minimise AutoUse window", exc_info=True)
+        logger.warning("could not show Telegram occupied overlay", exc_info=True)
 
     # Reset the milestone scratchpad to empty before starting the monitor.
     # AgentService.__init__ wipes the entire scratchpad/ directory in
@@ -758,6 +762,16 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
             pass
         try:
             coder_mgr.close_all()
+        except Exception:
+            pass
+        # Restore the main UI — hide the "occupied" overlay. If a queued task
+        # follows, its _run_agent start re-shows it almost immediately (at worst
+        # a brief flicker between back-to-back tasks).
+        try:
+            import webview as _webview
+            if _webview.windows:
+                _webview.windows[0].evaluate_js(
+                    "window.telegramOccupiedHide && window.telegramOccupiedHide()")
         except Exception:
             pass
         with _state_lock:
