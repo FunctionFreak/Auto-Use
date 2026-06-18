@@ -33,7 +33,8 @@ MODEL = "gemini-3.5-flash" #refer to the model name correctly from model_list.tx
 # Your task here
 task = """
 
-Update the autouse codebase with two new providers: MinimaxM3 and Kimi 2.7 (via the OpenRouter provider). Wait for the code update to complete, then document today's progress in the notes. Next, search the internet for the current Nasdaq status and overall stock market performance. After that, download and install the Claude application on Mac. Finally, update the notes with a list of all completed tasks. Please execute these steps one by one.
+one the and play anything on youtube. and make a google sheet of netflix 10 year revenue.
+
 """
 
 # Control conversation saving
