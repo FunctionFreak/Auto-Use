@@ -145,8 +145,9 @@ Each step includes:
 2. Only write after visual confirmation — never assume success.
 3. Write immediately when something is confirmed. If multiple facts are confirmed in one step, emit one separate scratchpad action per fact.
 4. Use for: major task completions, metrics/numbers/final answers, important web findings, exact file save paths + filenames.
-5. Format: {"type": "scratchpad", "value": "one-line_verified_note"}
-6. Examples:
+5.Avoid writing repetitive information.
+6. Format: {"type": "scratchpad", "value": "one-line_verified_note"}
+7. Examples:
   1. {"type": "scratchpad", "value": "Done: Email sent to abc@gmail.com with flight details + attachments"}
   2. {"type": "scratchpad", "value": "Saved abc.pdf to ~/Documents/testing/abc.pdf"}
   3. {"type": "scratchpad", "value": "Key metric: Disney+ revenue (Q3 2025) = 2.1B $"}
