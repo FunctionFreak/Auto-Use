@@ -56,7 +56,7 @@ def _compress_screenshot(base64_str: str, max_width: int = 1080, quality: int = 
 def _cleanup_scratchpad():
     """Clear all contents inside Auto_Use/macOS_use/scratchpad/ for a fresh start."""
     # Clear scratchpad contents
-    scratchpad_dir = Path(__file__).parent.parent / "scratchpad"
+    scratchpad_dir = Path(__file__).parent.parent.parent / "scratchpad"
     if scratchpad_dir.exists():
         for item in scratchpad_dir.iterdir():
             if item.is_dir():
@@ -179,45 +179,48 @@ class AgentService:
         except Exception as e:
             print(f"Error initializing conversation file: {str(e)}")
     
-    def _save_conversation_snapshot(self, assistant_messages: list, user_message: str, current_assistant_response: str, image_sent: bool, interaction_count: int):
-        """Save a new numbered conversation file for this interaction - TRUE agent memory"""
+    def _save_conversation_snapshot(self, messages: list, current_assistant_response: str, image_sent: bool, interaction_count: int):
+        """Save a numbered conversation file rendering the EXACT payload sent this
+        step (system + interleaved assistant/user turns + current user message) plus
+        this step's freshly generated response — a faithful peek into agent memory."""
         try:
-            # Create numbered filename: conversation_1.txt, conversation_2.txt, etc.
             conversation_file = self.conversation_dir / f"conversation_{interaction_count}.txt"
-            
+
+            def _text(content):
+                # Cached messages carry content as a list of {type,text,...} blocks.
+                if isinstance(content, list):
+                    return "\n".join(b.get("text", "") for b in content if isinstance(b, dict))
+                return content if isinstance(content, str) else str(content)
+
             with open(conversation_file, 'w', encoding='utf-8') as f:
-                # Write header
+                # Header
                 f.write("=== CONVERSATION LOG ===\n")
                 f.write(f"Session Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write(f"Provider: {self.llm_manager.get_provider_name()}\n")
                 f.write(f"Model: {self.llm_manager.get_model_name()}\n")
                 f.write(f"Current Interaction: #{interaction_count}\n")
                 f.write("=" * 60 + "\n\n")
-                
-                # Write system prompt
-                f.write("=== SYSTEM PROMPT ===\n")
-                f.write(self.system_prompt)
-                f.write("\n\n" + "=" * 60 + "\n\n")
-                
-                # Write all previous assistant messages (agent history) with step markers
-                for i, assistant_msg in enumerate(assistant_messages, 1):
-                    f.write(f"INTERACTION #{i}\n")
-                    f.write("=" * 60 + "\n")
-                    f.write(f"ASSISTANT:\n<Step: {i}>\n{assistant_msg}\n</Step: {i}>\n")
-                    f.write("\n")
-                
-                # Write current interaction (user message + current assistant response)
-                f.write(f"INTERACTION #{interaction_count}\n")
-                f.write("=" * 60 + "\n")
-                f.write(f"USER:\n{user_message}\n")
+
+                # Render every message in the exact order it was sent to the model.
+                for m in messages:
+                    role = str(m.get("role", "?")).upper()
+                    if role == "SYSTEM":
+                        f.write("=== SYSTEM PROMPT ===\n")
+                        f.write(_text(m.get("content", "")))
+                        f.write("\n\n" + "=" * 60 + "\n\n")
+                    else:
+                        f.write(f"--- {role} ---\n")
+                        f.write(_text(m.get("content", "")))
+                        f.write("\n\n")
+
                 if image_sent:
-                    f.write("\n[Screenshot sent]\n")
+                    f.write("[Screenshot sent with the latest user message]\n\n")
+
+                # This step's freshly generated response (the reply, not part of the request).
+                f.write(f"--- ASSISTANT (response · step {interaction_count}) ---\n")
+                f.write(current_assistant_response)
                 f.write("\n")
-                
-                # Write current assistant response with step marker
-                f.write(f"ASSISTANT:\n<Step: {interaction_count}>\n{current_assistant_response}\n</Step: {interaction_count}>\n")
-                f.write("\n")
-            
+
             print(f"✓ Memory snapshot saved: conversation_{interaction_count}.txt")
         except Exception as e:
             print(f"Error saving conversation snapshot: {str(e)}")
@@ -233,15 +236,17 @@ class AgentService:
             except Exception as e:
                 print(f"⚠ Error saving raw response: {str(e)}")
     
-    def _save_conversation(self, assistant_messages: list, user_message: str, current_assistant_response: str, image_sent: bool, interaction_count: int):
+    def _save_conversation(self, messages: list, current_assistant_response: str, image_sent: bool, interaction_count: int):
         """Save conversation snapshot to file - simple and direct"""
         if self.save_conversation:
-            self._save_conversation_snapshot(assistant_messages, user_message, current_assistant_response, image_sent, interaction_count)
+            self._save_conversation_snapshot(messages, current_assistant_response, image_sent, interaction_count)
     
     def _read_todo_from_file(self) -> str:
         """Read the current todo list from scratchpad/todo/todo.md file"""
         try:
-            todo_file = Path(__file__).parent.parent / "scratchpad" / "todo" / "todo.md"
+            # Read from the task tracker's own file path (single source of truth —
+            # exactly where TaskTrackerService writes), so read can never drift from write.
+            todo_file = Path(self.controller.task_tracker.todo_file)
             if todo_file.exists():
                 with open(todo_file, 'r', encoding='utf-8') as f:
                     return f.read().strip()
@@ -254,7 +259,8 @@ class AgentService:
     def _read_scratchpad_from_file(self) -> str:
         """Read the current scratchpad entries from scratchpad/milestone/milestone.md file"""
         try:
-            scratchpad_file = Path(__file__).parent.parent / "scratchpad" / "milestone" / "milestone.md"
+            # Read from the scratchpad service's own file path (single source of truth).
+            scratchpad_file = Path(self.controller.scratchpad_service.scratchpad_file)
             if scratchpad_file.exists():
                 with open(scratchpad_file, 'r', encoding='utf-8') as f:
                     return f.read().strip()
@@ -301,7 +307,52 @@ class AgentService:
             return json.dumps(response_data, indent=2, ensure_ascii=False)
         except Exception:
             return response_json
-    
+
+    def _tool_response_for_memory(self, action_result: dict) -> dict:
+        """Build the compact tool_response preserved in agent memory for a step.
+
+        Only web-tool results are compacted: their raw text is already removed and
+        digested into the scratchpad, so memory keeps just the query + a pointer.
+        Web is compacted ONLY when it succeeded — a failed web call keeps its exact
+        response so the agent can see what went wrong. Every other result (shell
+        output, click/input results, etc.) is preserved verbatim.
+        """
+        import copy
+        res = copy.deepcopy(action_result)
+
+        def compact(entry):
+            if (isinstance(entry, dict)
+                    and entry.get("tool") == "web"
+                    and entry.get("status") == "success"):
+                return {
+                    "action": "tool",
+                    "tool": "web",
+                    "query": entry.get("query", ""),
+                    "message": "memory optimized — refer to scratchpad for the web result",
+                }
+            return entry
+
+        if res.get("action") == "multiple" and "results" in res:
+            res["results"] = [compact(r) for r in res["results"]]
+            return res
+        return compact(res)
+
+    def _trim_history_entry(self, entry: str) -> str:
+        """Trim an OLDER history step for context: drop 'thinking', 'eval', and
+        'action' (keep decision/memory/next_goal). Only the most recent step is kept
+        full so the agent retains its latest reasoning; everything older is trimmed.
+        Handles the leading '<Step_no=N />' marker.
+        """
+        m = re.match(r'(<Step_no=\d+ />\n)(.*)', entry, re.DOTALL)
+        prefix, json_part = (m.group(1), m.group(2)) if m else ("", entry)
+        try:
+            data = json.loads(json_part)
+            for field in ("thinking", "eval", "action"):
+                data.pop(field, None)
+            return prefix + json.dumps(data, indent=2, ensure_ascii=False)
+        except Exception:
+            return entry
+
     def process_request(self, task: str) -> dict:
         """Process a user request in an iterative loop until completion.
 
@@ -317,6 +368,7 @@ class AgentService:
         last_response = None
         is_first_iteration = True
         assistant_messages = []  # Track all assistant responses for memory
+        tool_responses = []      # Per-step tool result, aligned 1:1 with assistant_messages; replayed as user turns
         cli_await_result = None  # Stores cli_await result for next iteration's light message
         pending_web_response = None  # Stores web tool response for light digest iteration
         json_fail_count = 0  # Track consecutive JSON parse failures (max 3 before exit)
@@ -591,43 +643,45 @@ No image and element tree provided. Focus on digesting the web response below.
                         user_message += "\n\n<image>Annotated screenshot with bounding boxes</image>"
                         user_message += "\n\n<critical>Pure vision first: decide which element to interact with from the screenshot alone, then refer to <element_tree> for its [id].</critical>"
             
-            # Create modified assistant messages for both API and saving
-            # Also strips 'action' from all middle entries (keeps only last entry's action)
-            messages_for_api = []
-            if len(assistant_messages) > 0 and not is_first_iteration:
-                # Step 1: prepend user task + strip action (reinforces objective in context)
-                step1_msg = self._remove_action_from_response(assistant_messages[0])
-                messages_for_api.append(f"<User_Task>\n{task}\n</User_Task>\n\n{step1_msg}")
-                
-                # Remaining entries except last: strip action to save tokens
-                for msg in assistant_messages[1:-1]:
-                    messages_for_api.append(self._remove_action_from_response(msg))
-                
-                # Last entry: keep action intact (needed for eval analysis)
-                if len(assistant_messages) > 1:
-                    messages_for_api.append(assistant_messages[-1])
-            else:
-                # Use original messages
-                messages_for_api = assistant_messages.copy()
-            
-            # Prepare messages for API - include all past assistant messages
+            # Build the API messages as a real interleaved dialogue:
+            #   system, then for each past step:  assistant(step) -> user(tool_response),
+            #   and finally the current user message (live screen + <last_response>).
+            #
+            # Sliding-window trim: only the MOST RECENT past step keeps its full
+            # thinking/eval/action; every older step is trimmed to
+            # decision/memory/next_goal (_trim_history_entry), so the agent always sees
+            # its latest reasoning in full and just the outline of older steps.
+            # Tool results stay on the USER side (correct role -> clean eval, no schema
+            # leakage). The most recent step's result is NOT re-emitted here — it already
+            # rides in the current user message as <last_response>.
             messages = [
                 {"role": "system", "content": self.system_prompt}
             ]
-            
-            # Add all assistant messages (with Step 1 replaced if applicable)
-            for assistant_msg in messages_for_api:
-                messages.append({"role": "assistant", "content": assistant_msg})
 
-            # Add current user message
+            n_hist = len(assistant_messages)
+            for i, step_msg in enumerate(assistant_messages):
+                is_recent = (i == n_hist - 1)
+                content = step_msg if is_recent else self._trim_history_entry(step_msg)
+                # Reinforce the objective by prepending the task to step 1.
+                if i == 0 and not is_first_iteration:
+                    content = f"<User_Task>\n{task}\n</User_Task>\n\n{content}"
+                messages.append({"role": "assistant", "content": content})
+
+                # Interleave this step's tool result as its own user turn — except the
+                # most recent, whose result is carried by the current user message below.
+                if not is_recent:
+                    tr = tool_responses[i] if i < len(tool_responses) else None
+                    if tr:
+                        messages.append({"role": "user", "content": f"<tool_response>\n{tr}\n</tool_response>"})
+
+            # Current user message (live screen + most recent <last_response>)
             messages.append({"role": "user", "content": user_message})
-            
-            # Apply prompt caching for OpenRouter (Gemini/Claude need explicit cache_control)
-            # Cache from system prompt through N-2 (all cleaned assistant messages)
+
+            # Apply prompt caching for OpenRouter/Anthropic (explicit cache_control).
             # messages[-1] = current user message (dynamic, never cache)
-            # messages[-2] = last assistant message (action kept, not yet cleaned)
-            # messages[-3] = last cleaned assistant message (safe to cache up to here)
-            # Starts at step 3 (len >= 4): system + cleaned_step1 + last_step2 + user
+            # messages[-2] = most recent assistant step (full now -> trimmed next step)
+            # messages[-3] = last frozen turn (older tool_response/assistant) — safe to cache
+            # Starts once len >= 4.
             if self.llm_manager.get_provider_name() in ("openrouter", "anthropic") and len(messages) >= 4:
                 cache_idx = len(messages) - 3
                 content = messages[cache_idx]["content"]
@@ -685,16 +739,18 @@ No image and element tree provided. Focus on digesting the web response below.
                 # Reset consecutive JSON fail counter on success
                 json_fail_count = 0
                 
-                # Save EXACTLY what agent memory contains (TRUE memory snapshot)
-                # Note: messages_for_api has previous responses with Step 1 replaced if applicable
-                # normalized_json is current response (with thinking)
-                self._save_conversation(messages_for_api, user_message, normalized_json, image_sent, step_number)
+                # Save a faithful snapshot of the EXACT payload sent this step (system +
+                # interleaved assistant/tool-response turns + current user message) plus
+                # this step's response — a true peek into agent memory.
+                self._save_conversation(messages, normalized_json, image_sent, step_number)
 
-                # Remove thinking from response before adding to memory (saves tokens)
-                normalized_json_without_thinking = self._remove_thinking_from_response(normalized_json)
-                
-                # Add this assistant response (without thinking) to memory for next iteration
-                assistant_messages.append(f"<Step_no={step_number} />\n{normalized_json_without_thinking}")
+                # Store the FULL response (thinking/eval/action included). The sliding-window
+                # trim at send time keeps it full only while it's the most recent step, then
+                # trims thinking/eval/action once it's older.
+                assistant_messages.append(f"<Step_no={step_number} />\n{normalized_json}")
+                # Keep tool_responses aligned 1:1 with assistant_messages; filled in after the
+                # action runs below (stays None for a step that takes no action).
+                tool_responses.append(None)
                 
                 # Format the response with emojis for console output (terminal: include action block)
                 formatted_response = AgentResponseFormatter.format_response(normalized_json, include_action=True)
@@ -766,7 +822,18 @@ No image and element tree provided. Focus on digesting the web response below.
                             
                             # Store the action result as last_response
                             last_response = json.dumps(action_result, indent=2)
-                            
+
+                            # Preserve this step's tool result on the USER side: stash the
+                            # (web-compacted) result in tool_responses, aligned with this
+                            # step's assistant entry, so later iterations replay it as a
+                            # user turn ("I clicked there -> result"). Web results are
+                            # compacted to a scratchpad pointer by _tool_response_for_memory.
+                            if tool_responses:
+                                tool_responses[-1] = json.dumps(
+                                    self._tool_response_for_memory(action_result),
+                                    indent=2, ensure_ascii=False
+                                )
+
                             # Wait before next scan (default 3 seconds, unless wait action was used)
                             wait_time = 3.0  # Default wait
                             if action_result.get("tool") == "wait":

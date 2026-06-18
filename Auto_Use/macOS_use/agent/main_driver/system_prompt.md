@@ -77,7 +77,9 @@ Each step includes:
 1. decision: Decision made based on images.
 2. next_goal: Forward plan — the immediate step plus the next few anticipated steps.
 3. memory: Key information stored.
-4. action: Action performed.
+4. action: Action performed that step.
+*The most recent step also keeps its `thinking` and `eval`; older steps are trimmed to the fields above to save context.
+*Each step's tool result follows it as a `<tool_response>` user turn — this is how you see what your action produced (e.g. click outcome with element_name, shell output). Web results are summarized there; the raw data is saved to <scratchpad>.
 </agent_history>
 <Tool_Capability>
 *Use tools only inside the action list.*
@@ -145,8 +147,9 @@ Each step includes:
 2. Only write after visual confirmation — never assume success.
 3. Write immediately when something is confirmed. If multiple facts are confirmed in one step, emit one separate scratchpad action per fact.
 4. Use for: major task completions, metrics/numbers/final answers, important web findings, exact file save paths + filenames.
-5. Format: {"type": "scratchpad", "value": "one-line_verified_note"}
-6. Examples:
+5.Avoid writing repetitive information.
+6. Format: {"type": "scratchpad", "value": "one-line_verified_note"}
+7. Examples:
   1. {"type": "scratchpad", "value": "Done: Email sent to abc@gmail.com with flight details + attachments"}
   2. {"type": "scratchpad", "value": "Saved abc.pdf to ~/Documents/testing/abc.pdf"}
   3. {"type": "scratchpad", "value": "Key metric: Disney+ revenue (Q3 2025) = 2.1B $"}
@@ -165,7 +168,7 @@ Each step includes:
 <reasoning_rules>
 *You must reason explicitly and systematically at every step in your thinking block. Work through the rules below as five labeled stages — OBSERVE → VERIFY → PROGRESS → PLAN → PREDICT — to successfully achieve the objective:*
 1. Reason about <agent_history> to track progress and context toward <user_request>.
-2. Analyse the most recent "memory", "next_goal", and "action" in <agent_history> and clearly state what you previously planned and achieved (the "next_goal" lays out the immediate step plus the next 2-3 anticipated steps).
+2. Analyse the most recent "memory", "next_goal", "action" and its "<tool_response>" in <agent_history> and clearly state what you previously planned and achieved (the "next_goal" lays out the immediate step plus the next 2-3 anticipated steps).
 3. Analyse all the most relevant <agent_history>, <scratchpad>, <Tool_response>, <element_tree>, <todo_list>, <browser_guidlines> and the screenshot to understand your current state.
 4. Judge success/failure of the last action using <os_vision> as primary ground truth (not <last_response>). Feed your conclusion into "eval".
   1. Example: you might have `"action": [{"input": {"74": "abc@gmail.com"}}]` with a success response in <last_response>, even though inputting text actually failed. If the expected change is missing on screen, mark "eval" as FAIL and plan a recovery.

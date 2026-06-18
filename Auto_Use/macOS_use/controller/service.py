@@ -592,23 +592,29 @@ class ControllerService:
             # Warp cursor to scroll target
             self._warp_cursor_only(center_x, center_y)
 
+            # macOS scrolls in LINE units — pyautogui posts one scroll event per unit,
+            # so this is a small, gentle nudge. This is NOT the Windows "120 == one wheel
+            # notch" convention: a value like 120 here becomes ~120 line events and macOS
+            # momentum scrolling then flings the view straight to the end. Keep it small.
+            # ~3 steps x 5 lines = a modest scroll; tune scroll_clicks to taste.
             scroll_amount = 3
+            scroll_clicks = 5
 
             if direction.lower() == "up":
                 for _ in range(scroll_amount):
-                    pyautogui.scroll(120, x=center_x, y=center_y)
+                    pyautogui.scroll(scroll_clicks, x=center_x, y=center_y)
                     time.sleep(0.05)
             elif direction.lower() == "down":
                 for _ in range(scroll_amount):
-                    pyautogui.scroll(-120, x=center_x, y=center_y)
+                    pyautogui.scroll(-scroll_clicks, x=center_x, y=center_y)
                     time.sleep(0.05)
             elif direction.lower() == "left":
                 for _ in range(scroll_amount):
-                    pyautogui.hscroll(-120, x=center_x, y=center_y)
+                    pyautogui.hscroll(-scroll_clicks, x=center_x, y=center_y)
                     time.sleep(0.05)
             elif direction.lower() == "right":
                 for _ in range(scroll_amount):
-                    pyautogui.hscroll(120, x=center_x, y=center_y)
+                    pyautogui.hscroll(scroll_clicks, x=center_x, y=center_y)
                     time.sleep(0.05)
             else:
                 return {"status": "error", "action": "scroll", "index": index,
