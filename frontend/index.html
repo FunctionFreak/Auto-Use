@@ -437,6 +437,16 @@
         </div>
     </div>
 
+    <!-- Shown while a Telegram task occupies the machine (fades the UI away) -->
+    <div class="telegram-task-overlay" id="telegramTaskOverlay">
+        <div class="telegram-task-content">
+            <div class="telegram-task-orb">
+                <iframe src="/telegram/telergam_animation.html" scrolling="no" frameborder="0"></iframe>
+            </div>
+            <div class="telegram-task-message">Currently occupied by Telegram</div>
+        </div>
+    </div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="script.js"></script>
 </body>

@@ -774,6 +774,89 @@ body {
     transform: scale(1) translateY(0);
 }
 
+/* ── Telegram "occupied" overlay (shown while a Telegram task runs) ───────── */
+.telegram-task-overlay {
+    position: fixed;
+    inset: 0;
+    /* Transparent — the app's background video (#bgVideo) stays visible; only
+       the UI components fade out (see body.tg-occupied) while the orb fades in. */
+    background: transparent;
+    z-index: 101;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.4s ease, visibility 0.4s ease;
+}
+
+.telegram-task-overlay.active {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+}
+
+/* While a Telegram task occupies the machine: fade the app's UI components away
+   but keep the background video. The orb + message live in the transparent
+   overlay above. (id-based selector wins over the components' own .active /
+   .agent-visible show states.) */
+body.tg-occupied #chatWrapper,
+body.tg-occupied #llmWrapper,
+body.tg-occupied #settingsBtn,
+body.tg-occupied #imageStreamContainer,
+body.tg-occupied #mainGlobeContainer,
+body.tg-occupied #shellTerminalContainer {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.4s ease;
+}
+
+.telegram-task-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+
+    transform: scale(0.92);
+    transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.telegram-task-overlay.active .telegram-task-content {
+    transform: scale(1);
+}
+
+.telegram-task-orb {
+    width: 140px;
+    height: 140px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: visible;
+}
+
+/* The orb renders at native 42px when iframed (its 6x preview-scale only kicks
+   in when the file is opened directly). It centres itself in the iframe, so we
+   scale the iframe up to enlarge the orb while keeping a fixed 140px layout box
+   (transform doesn't affect layout) — that keeps the gap to the message clean. */
+.telegram-task-orb iframe {
+    width: 58px;
+    height: 58px;
+    border: 0;
+    background: transparent;
+    pointer-events: none;
+    transform: scale(2.4);
+    transform-origin: center;
+}
+
+.telegram-task-message {
+    font-size: 16px;
+    color: #8a8a92;
+    letter-spacing: 0.2px;
+}
+
 .settings-panel-content {
     position: relative;
     z-index: 3;
