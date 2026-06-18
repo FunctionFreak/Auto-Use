@@ -1406,6 +1406,20 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     // ============================================
+    // TELEGRAM "OCCUPIED" OVERLAY
+    // Shown while a Telegram task runs (instead of minimizing the window).
+    // ============================================
+    const telegramTaskOverlay = document.getElementById('telegramTaskOverlay');
+    window.telegramOccupiedShow = () => {
+        document.body.classList.add('tg-occupied');   // fade UI components away
+        if (telegramTaskOverlay) telegramTaskOverlay.classList.add('active');
+    };
+    window.telegramOccupiedHide = () => {
+        document.body.classList.remove('tg-occupied');
+        if (telegramTaskOverlay) telegramTaskOverlay.classList.remove('active');
+    };
+
+    // ============================================
     // SHELL TERMINAL ANIMATION
     // ============================================
     
