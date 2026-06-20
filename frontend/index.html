@@ -8,6 +8,10 @@
     <link rel="stylesheet" href="settings/settings.css">
     <!-- New Chat button component (markup injected into the left bar body) -->
     <link rel="stylesheet" href="chat/chat.css">
+    <!-- Main content T-grid zone components -->
+    <link rel="stylesheet" href="screen_shot/screen_shot.css">
+    <link rel="stylesheet" href="card/card.css">
+    <link rel="stylesheet" href="tool_response/tool_response.css">
     <!-- Three.js for Globe Animation -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
@@ -194,6 +198,11 @@
 
     <!-- Right side is intentionally transparent now: the glass card layers were
          removed so only the text box shows over the greige background. -->
+    <!-- Main content T-grid: screenshot (top-left, glass) | globe/shell (top-right)
+         / tool response (full-width bottom). Zones are injected by their
+         components (screen_shot/, card/, tool_response/). -->
+    <div class="main-grid" id="mainGrid"></div>
+
     <div class="chat-container-wrapper" id="chatWrapper">
         <div class="chat-container-content">
             <!-- New Output Stream Area -->
@@ -414,6 +423,10 @@
     <script src="settings/settings.js"></script>
     <!-- New Chat button component (mounts into the left bar body) -->
     <script src="chat/chat.js"></script>
+    <!-- Main content T-grid zone components (mount into #mainGrid) -->
+    <script src="screen_shot/screen_shot.js"></script>
+    <script src="card/card.js"></script>
+    <script src="tool_response/tool_response.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
