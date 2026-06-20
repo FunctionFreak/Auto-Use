@@ -33,6 +33,7 @@ file as the single Nuitka entry point.
 import sys
 import io
 import os
+import json
 import platform
 import subprocess
 import traceback
@@ -79,6 +80,18 @@ IS_SECONDARY_PROCESS = (
     or "--banner-mode" in sys.argv
     or "--minion-mode" in sys.argv
 )
+
+# Unique id for this build, injected at build time. Used to gate the launch-time
+# macOS TCC repair so it runs at most once per build identity. Absent in dev runs
+# (repair is gated to compiled builds anyway).
+try:
+    from _build_stamp import BUILD_STAMP
+except Exception:
+    BUILD_STAMP = "unknown"
+
+# Bundle id of the packaged macOS app. Used to target `tccutil reset` at our own
+# TCC entries.
+MACOS_BUNDLE_ID = "com.ashishyadav.autouse"
 
 
 def app_data_dir() -> Path:
@@ -342,6 +355,103 @@ def set_frontend_flag():
     except Exception:
         debug_exception("set_frontend_flag")
 
+def _ax_granted():
+    """True if Accessibility is currently granted (no prompt)."""
+    try:
+        from ApplicationServices import AXIsProcessTrusted
+        return bool(AXIsProcessTrusted())
+    except Exception:
+        return True  # can't tell -> treat as granted so we never reset blindly
+
+
+def _screen_granted():
+    """True if Screen Recording is currently granted (no prompt)."""
+    try:
+        from Quartz import CGPreflightScreenCaptureAccess
+        return bool(CGPreflightScreenCaptureAccess())
+    except Exception:
+        return True
+
+
+def _fda_granted():
+    """True if Full Disk Access is granted (probe an FDA-gated path)."""
+    try:
+        tcc_db = os.path.expanduser("~/Library/Application Support/com.apple.TCC/TCC.db")
+        with open(tcc_db, "rb") as _f:
+            _f.read(1)
+        return True
+    except PermissionError:
+        return False
+    except Exception:
+        return True  # missing path / other -> don't reset
+
+
+def repair_stale_tcc_entries():
+    """Clear orphaned macOS TCC ("ghost") entries for our bundle id, once per build.
+
+    When a previous build's code signature no longer matches the current binary
+    (the classic ad-hoc-signing churn: an unstable signature changes every
+    build), the old permission grant becomes a "ghost" entry in System
+    Settings: the toggle still shows but is bound to a binary that's gone,
+    so the new build silently can't use it AND no fresh prompt appears. We
+    `tccutil reset` such entries so request_macos_permissions() can re-prompt and
+    rebind the grant to the CURRENT binary ("delete the old reference when
+    triggering the new one").
+
+    Safety guarantees:
+      - compiled macOS builds only (dev runs sign Terminal/Python — leave alone)
+      - never reset a permission that currently works (preflight skip)
+      - at most once per build identity (BUILD_STAMP marker) -> no reset-loop,
+        even if the user keeps declining the prompt
+
+    Automation (AppleEvents) is intentionally NOT auto-reset: it has no reliable
+    no-prompt preflight, so a blind once-per-build reset would nuke a working
+    grant on every rebuild. The System Events re-prompt in
+    request_macos_permissions() already rebinds it, and the uninstaller clears it
+    via `tccutil reset All`.
+    """
+    if not (IS_COMPILED and IS_MAC):
+        return
+    try:
+        marker = app_data_dir() / "tcc_repair.json"
+        already = None
+        if marker.exists():
+            try:
+                already = json.loads(marker.read_text()).get("build_stamp")
+            except Exception:
+                already = None
+        if already == BUILD_STAMP:
+            return  # already repaired for this build identity
+
+        # (tccutil service token, preflight returning True when already working)
+        services = [
+            ("Accessibility", _ax_granted),
+            ("ScreenCapture", _screen_granted),
+            ("SystemPolicyAllFiles", _fda_granted),
+        ]
+        for service, is_granted in services:
+            try:
+                if is_granted():
+                    continue  # working — don't touch it
+                # user-level reset of our own bundle's TCC entry (no sudo)
+                subprocess.run(
+                    ["tccutil", "reset", service, MACOS_BUNDLE_ID],
+                    capture_output=True, text=True, timeout=10
+                )
+            except Exception:
+                debug_exception(f"tccutil reset {service}")
+
+        try:
+            marker.write_text(json.dumps({
+                "build_stamp": BUILD_STAMP,
+                "repaired_at": datetime.now().isoformat(),
+            }))
+        except Exception:
+            debug_exception("write tcc_repair marker")
+    except Exception:
+        debug_exception("repair_stale_tcc_entries")
+
+
 def request_macos_permissions():
     """Prompt user for required macOS permissions on first launch (no-op elsewhere)"""
     if not IS_MAC:
@@ -529,7 +639,7 @@ def serve_embedded_file(resource_path):
     try:
         from _embedded_resources import RESOURCES  # type: ignore - generated by the binary build script
         import base64
-        from flask import Response
+        from flask import Response, request
 
         resource_path = resource_path.replace('\\', '/')
 
@@ -539,7 +649,34 @@ def serve_embedded_file(resource_path):
                     content = base64.b64decode(encoded_data)
                     ext = os.path.splitext(resource_path)[1].lower()
                     mime_type = MIME_TYPES.get(ext, 'application/octet-stream')
-                    return Response(content, mimetype=mime_type)
+
+                    # WKWebView's media player (macOS) requires HTTP Range
+                    # support (206) to play <video>; a plain 200 with the whole
+                    # body makes the background video fail to start. Honour the
+                    # Range header for media so the embedded background.mp4 plays.
+                    range_header = request.headers.get('Range')
+                    if range_header and mime_type.startswith(('video/', 'audio/')):
+                        size = len(content)
+                        import re as _re
+                        m = _re.match(r'bytes=(\d*)-(\d*)', range_header)
+                        start, end = 0, size - 1
+                        if m:
+                            if m.group(1):
+                                start = int(m.group(1))
+                            if m.group(2):
+                                end = int(m.group(2))
+                        start = max(0, start)
+                        end = min(end, size - 1)
+                        chunk = content[start:end + 1]
+                        resp = Response(chunk, status=206, mimetype=mime_type)
+                        resp.headers['Content-Range'] = f'bytes {start}-{end}/{size}'
+                        resp.headers['Accept-Ranges'] = 'bytes'
+                        resp.headers['Content-Length'] = str(len(chunk))
+                        return resp
+
+                    resp = Response(content, mimetype=mime_type)
+                    resp.headers['Accept-Ranges'] = 'bytes'
+                    return resp
 
         return None
     except ImportError:
@@ -1015,6 +1152,61 @@ def minimize_main_window():
         debug_exception("minimize_main_window")
 
 
+def _drive_bg_video():
+    """Force the #bgVideo element to start playing on macOS, as early as possible.
+
+    macOS WKWebView (pywebview's backend) blocks a page's own `autoplay`
+    attribute / in-page `play()` with a NotAllowedError, even when the video is
+    muted — so the background video never starts on its own. A `play()` call
+    issued from the host application IS permitted.
+
+    We do NOT wait for the page's `loaded` event: that only fires once the whole
+    page (including the multi-MB video) has finished downloading, which is the
+    "video starts after a few seconds" delay. Instead we start polling the
+    instant the window exists and hammer play() at a tight interval, so playback
+    begins as soon as the element has a frame or two buffered. No-op on Windows.
+    """
+    win = globals().get('webview_window')
+    if win is None:
+        return
+    # Two videos need driving on macOS:
+    #   1) the top document's #bgVideo (the main app background), and
+    #   2) the splash screen's OWN #bgVideo, which lives inside the same-origin
+    #      #splashFrame iframe (frontend/mac_animation.html). That iframe video
+    #      is what the user actually sees first; without this it sits paused
+    #      behind the splash particles showing WKWebView's grey play button.
+    # play() on a still-loading element "arms" playback to start the moment data
+    # is available, so we don't wait for full readiness. Returns a tiny JSON blob
+    # so the host knows when it can stop nudging.
+    play_js = (
+        "(function(){"
+        "function go(v){if(!v)return null;v.muted=true;v.preload='auto';"
+        "var p=v.play();if(p&&p.catch){p.catch(function(){});}return v.paused;}"
+        "var topPaused=go(document.getElementById('bgVideo'));"
+        "var framePaused=null;"
+        "try{var f=document.getElementById('splashFrame');"
+        "if(f&&f.contentWindow&&f.contentWindow.document){"
+        "framePaused=go(f.contentWindow.document.getElementById('bgVideo'));}}catch(e){}"
+        "var splashGone=!document.getElementById('splashOverlay');"
+        "return JSON.stringify({top:topPaused,frame:framePaused,gone:splashGone});"
+        "})();"
+    )
+    import json as _json
+    deadline = time.time() + 25
+    while time.time() < deadline:
+        try:
+            raw = win.evaluate_js(play_js)
+            state = _json.loads(raw) if raw else {}
+            # Stop once the main video is playing AND the splash is gone (so the
+            # iframe video no longer needs nudging). While the splash is up we
+            # keep looping so its video keeps playing too.
+            if state.get("top") is False and state.get("gone"):
+                return
+        except Exception:
+            pass
+        time.sleep(0.05)
+
+
 def _compute_window_center(win_w, win_h):
     """Return (x, y) to center a (win_w, win_h) window on the main display.
     Falls back to a sensible default if the native APIs are unavailable."""
@@ -1134,6 +1326,11 @@ def main():
     # Set the frontend flag
     set_frontend_flag()
 
+    # Clear orphaned macOS TCC "ghost" entries left by a previous build whose
+    # signature no longer matches this binary, so the prompt below rebinds to the
+    # current build (once per build identity; no-op on Windows / dev runs).
+    repair_stale_tcc_entries()
+
     # Prompt for required macOS permissions on first launch (no-op on Windows)
     request_macos_permissions()
 
@@ -1189,6 +1386,18 @@ def main():
             atexit.register(close_all_banners)  # backstop for teardown paths that skip `closing`
         except Exception:
             debug_exception("banner_close_hook")
+
+    # macOS WKWebView blocks the page's own video autoplay (NotAllowedError),
+    # so the background video stays frozen. Kick it off from the host. We start
+    # polling immediately (NOT on the `loaded` event, which only fires after the
+    # whole page + video finish downloading — that's the multi-second delay) so
+    # the video starts the instant it has a frame buffered. Windows autoplay
+    # works natively, so this is macOS-only.
+    if IS_MAC:
+        try:
+            threading.Thread(target=_drive_bg_video, daemon=True).start()
+        except Exception:
+            debug_exception("bg_video_autoplay_hook")
 
     # macOS needs pynput keyboard pre-initialized on the main thread
     # because Carbon APIs require the main dispatch queue.
