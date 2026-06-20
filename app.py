@@ -33,6 +33,7 @@ file as the single Nuitka entry point.
 import sys
 import io
 import os
+import json
 import platform
 import subprocess
 import traceback
@@ -79,6 +80,18 @@ IS_SECONDARY_PROCESS = (
     or "--banner-mode" in sys.argv
     or "--minion-mode" in sys.argv
 )
+
+# Unique id for this build, injected at build time. Used to gate the launch-time
+# macOS TCC repair so it runs at most once per build identity. Absent in dev runs
+# (repair is gated to compiled builds anyway).
+try:
+    from _build_stamp import BUILD_STAMP
+except Exception:
+    BUILD_STAMP = "unknown"
+
+# Bundle id of the packaged macOS app. Used to target `tccutil reset` at our own
+# TCC entries.
+MACOS_BUNDLE_ID = "com.ashishyadav.autouse"
 
 
 def app_data_dir() -> Path:
@@ -341,6 +354,103 @@ def set_frontend_flag():
         pass
     except Exception:
         debug_exception("set_frontend_flag")
+
+def _ax_granted():
+    """True if Accessibility is currently granted (no prompt)."""
+    try:
+        from ApplicationServices import AXIsProcessTrusted
+        return bool(AXIsProcessTrusted())
+    except Exception:
+        return True  # can't tell -> treat as granted so we never reset blindly
+
+
+def _screen_granted():
+    """True if Screen Recording is currently granted (no prompt)."""
+    try:
+        from Quartz import CGPreflightScreenCaptureAccess
+        return bool(CGPreflightScreenCaptureAccess())
+    except Exception:
+        return True
+
+
+def _fda_granted():
+    """True if Full Disk Access is granted (probe an FDA-gated path)."""
+    try:
+        tcc_db = os.path.expanduser("~/Library/Application Support/com.apple.TCC/TCC.db")
+        with open(tcc_db, "rb") as _f:
+            _f.read(1)
+        return True
+    except PermissionError:
+        return False
+    except Exception:
+        return True  # missing path / other -> don't reset
+
+
+def repair_stale_tcc_entries():
+    """Clear orphaned macOS TCC ("ghost") entries for our bundle id, once per build.
+
+    When a previous build's code signature no longer matches the current binary
+    (the classic ad-hoc-signing churn: an unstable signature changes every
+    build), the old permission grant becomes a "ghost" entry in System
+    Settings: the toggle still shows but is bound to a binary that's gone,
+    so the new build silently can't use it AND no fresh prompt appears. We
+    `tccutil reset` such entries so request_macos_permissions() can re-prompt and
+    rebind the grant to the CURRENT binary ("delete the old reference when
+    triggering the new one").
+
+    Safety guarantees:
+      - compiled macOS builds only (dev runs sign Terminal/Python — leave alone)
+      - never reset a permission that currently works (preflight skip)
+      - at most once per build identity (BUILD_STAMP marker) -> no reset-loop,
+        even if the user keeps declining the prompt
+
+    Automation (AppleEvents) is intentionally NOT auto-reset: it has no reliable
+    no-prompt preflight, so a blind once-per-build reset would nuke a working
+    grant on every rebuild. The System Events re-prompt in
+    request_macos_permissions() already rebinds it, and the uninstaller clears it
+    via `tccutil reset All`.
+    """
+    if not (IS_COMPILED and IS_MAC):
+        return
+    try:
+        marker = app_data_dir() / "tcc_repair.json"
+        already = None
+        if marker.exists():
+            try:
+                already = json.loads(marker.read_text()).get("build_stamp")
+            except Exception:
+                already = None
+        if already == BUILD_STAMP:
+            return  # already repaired for this build identity
+
+        # (tccutil service token, preflight returning True when already working)
+        services = [
+            ("Accessibility", _ax_granted),
+            ("ScreenCapture", _screen_granted),
+            ("SystemPolicyAllFiles", _fda_granted),
+        ]
+        for service, is_granted in services:
+            try:
+                if is_granted():
+                    continue  # working — don't touch it
+                # user-level reset of our own bundle's TCC entry (no sudo)
+                subprocess.run(
+                    ["tccutil", "reset", service, MACOS_BUNDLE_ID],
+                    capture_output=True, text=True, timeout=10
+                )
+            except Exception:
+                debug_exception(f"tccutil reset {service}")
+
+        try:
+            marker.write_text(json.dumps({
+                "build_stamp": BUILD_STAMP,
+                "repaired_at": datetime.now().isoformat(),
+            }))
+        except Exception:
+            debug_exception("write tcc_repair marker")
+    except Exception:
+        debug_exception("repair_stale_tcc_entries")
+
 
 def request_macos_permissions():
     """Prompt user for required macOS permissions on first launch (no-op elsewhere)"""
@@ -1215,6 +1325,11 @@ def main():
 
     # Set the frontend flag
     set_frontend_flag()
+
+    # Clear orphaned macOS TCC "ghost" entries left by a previous build whose
+    # signature no longer matches this binary, so the prompt below rebinds to the
+    # current build (once per build identity; no-op on Windows / dev runs).
+    repair_stale_tcc_entries()
 
     # Prompt for required macOS permissions on first launch (no-op on Windows)
     request_macos_permissions()
