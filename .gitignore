@@ -89,7 +89,6 @@ _embedded_resources.py
 _build_stamp.py
 /raw_reasoning
 *.mp4
-!frontend/background.mp4
 !demo.mp4
 /Auto_Use/api_key
 /Auto_Use/windows_use/mcp_tracking

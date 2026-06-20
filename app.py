@@ -651,9 +651,9 @@ def serve_embedded_file(resource_path):
                     mime_type = MIME_TYPES.get(ext, 'application/octet-stream')
 
                     # WKWebView's media player (macOS) requires HTTP Range
-                    # support (206) to play <video>; a plain 200 with the whole
-                    # body makes the background video fail to start. Honour the
-                    # Range header for media so the embedded background.mp4 plays.
+                    # support (206) to play <video>/<audio>; a plain 200 with the
+                    # whole body makes media fail to start. Honour the Range
+                    # header for any embedded media served from the bundle.
                     range_header = request.headers.get('Range')
                     if range_header and mime_type.startswith(('video/', 'audio/')):
                         size = len(content)
@@ -1152,66 +1152,12 @@ def minimize_main_window():
         debug_exception("minimize_main_window")
 
 
-def _drive_bg_video():
-    """Force the #bgVideo element to start playing on macOS, as early as possible.
-
-    macOS WKWebView (pywebview's backend) blocks a page's own `autoplay`
-    attribute / in-page `play()` with a NotAllowedError, even when the video is
-    muted — so the background video never starts on its own. A `play()` call
-    issued from the host application IS permitted.
-
-    We do NOT wait for the page's `loaded` event: that only fires once the whole
-    page (including the multi-MB video) has finished downloading, which is the
-    "video starts after a few seconds" delay. Instead we start polling the
-    instant the window exists and hammer play() at a tight interval, so playback
-    begins as soon as the element has a frame or two buffered. No-op on Windows.
-    """
-    win = globals().get('webview_window')
-    if win is None:
-        return
-    # Two videos need driving on macOS:
-    #   1) the top document's #bgVideo (the main app background), and
-    #   2) the splash screen's OWN #bgVideo, which lives inside the same-origin
-    #      #splashFrame iframe (frontend/mac_animation.html). That iframe video
-    #      is what the user actually sees first; without this it sits paused
-    #      behind the splash particles showing WKWebView's grey play button.
-    # play() on a still-loading element "arms" playback to start the moment data
-    # is available, so we don't wait for full readiness. Returns a tiny JSON blob
-    # so the host knows when it can stop nudging.
-    play_js = (
-        "(function(){"
-        "function go(v){if(!v)return null;v.muted=true;v.preload='auto';"
-        "var p=v.play();if(p&&p.catch){p.catch(function(){});}return v.paused;}"
-        "var topPaused=go(document.getElementById('bgVideo'));"
-        "var framePaused=null;"
-        "try{var f=document.getElementById('splashFrame');"
-        "if(f&&f.contentWindow&&f.contentWindow.document){"
-        "framePaused=go(f.contentWindow.document.getElementById('bgVideo'));}}catch(e){}"
-        "var splashGone=!document.getElementById('splashOverlay');"
-        "return JSON.stringify({top:topPaused,frame:framePaused,gone:splashGone});"
-        "})();"
-    )
-    import json as _json
-    deadline = time.time() + 25
-    while time.time() < deadline:
-        try:
-            raw = win.evaluate_js(play_js)
-            state = _json.loads(raw) if raw else {}
-            # Stop once the main video is playing AND the splash is gone (so the
-            # iframe video no longer needs nudging). While the splash is up we
-            # keep looping so its video keeps playing too.
-            if state.get("top") is False and state.get("gone"):
-                return
-        except Exception:
-            pass
-        time.sleep(0.05)
-
-
-# Soft off-white used to tint the native title bar on BOTH macOS and Windows
-# (instead of the stark default white chrome). Change this single hex to adjust
-# the shade on both platforms.
-#   warmer/creamier → #E4DECB   |   cooler/greyer → #EAEAE8   |   subtler → #F0EEE6
-TITLEBAR_COLOR = "#EAE4D6"
+# Soft off-white with a hint of grey (light greige), used to tint the native
+# title bar on BOTH macOS and Windows. KEEP IN SYNC with the app/splash
+# background in frontend (style.css `body` + `.splash-overlay`, and the two
+# *_animation.html bodies) so the bar and content read as one unified surface.
+#   greyer → #CAC9C3  |  warmer → #D6D5CF  |  flatter neutral grey → #D2D2CF
+TITLEBAR_COLOR = "#D0CFC9"
 
 
 def _style_macos_titlebar():
@@ -1495,18 +1441,6 @@ def main():
             atexit.register(close_all_banners)  # backstop for teardown paths that skip `closing`
         except Exception:
             debug_exception("banner_close_hook")
-
-    # macOS WKWebView blocks the page's own video autoplay (NotAllowedError),
-    # so the background video stays frozen. Kick it off from the host. We start
-    # polling immediately (NOT on the `loaded` event, which only fires after the
-    # whole page + video finish downloading — that's the multi-second delay) so
-    # the video starts the instant it has a frame buffered. Windows autoplay
-    # works natively, so this is macOS-only.
-    if IS_MAC:
-        try:
-            threading.Thread(target=_drive_bg_video, daemon=True).start()
-        except Exception:
-            debug_exception("bg_video_autoplay_hook")
 
     # Recolor the native titlebar from stark white to a soft off-white. Done on
     # `shown` (once the native window/handle exists). macOS marshals its AppKit
