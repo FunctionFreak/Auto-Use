@@ -86,6 +86,7 @@ sandbox_log.txt
 /Auto_Use/windows_use/scratchpad/cli_todo
 /Auto_Use/windows_use/scratchpad/cli_milestone
 _embedded_resources.py
+_build_stamp.py
 /raw_reasoning
 *.mp4
 !frontend/background.mp4
@@ -109,6 +110,8 @@ certs/
 # Binary build scripts
 windows_binary_build.py
 mac_binary_build.py
+# Private packaging (uninstaller, signing helpers) — never pushed
+packaging/
 *.icns
 screen_record.py
 /Auto_Use/macOS_use/scratchpad
