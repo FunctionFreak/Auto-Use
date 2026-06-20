@@ -1406,7 +1406,9 @@ def main():
     # Create webview window
     global webview_window
 
-    win_w, win_h = 900, 700
+    # 1140 = ~900 of content area + the 240px left bar (see --left-bar-w in
+    # frontend/css/style.css) so the sidebar doesn't cramp the main content.
+    win_w, win_h = 1140, 700
 
     # Don't pass x/y: pywebview's Edge backend multiplies them by the DPI scale
     # factor (winforms.py), but a manual center computed in physical pixels is

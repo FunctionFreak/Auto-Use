@@ -20,10 +20,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    const llmWrapper = document.getElementById('llmWrapper');
-    const currentSelection = llmWrapper.querySelector('.current-selection');
-    const selectionText = currentSelection.querySelector('.selection-text');
-    const dropdownOptions = document.getElementById('dropdownOptions');
+    // Provider/model selection moved out of the floating button into
+    // Settings → Model Selection (two dropdowns). See the selection logic below.
 
     // API Key Management - existence flags only (true/null), never actual keys
     const apiKeys = {
@@ -35,266 +33,203 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
 
-    // 1. Click to toggle the dropdown list
-    llmWrapper.addEventListener('click', () => {
-        if (llmWrapper.classList.contains('expanded')) {
-            // Collapse: Reset height to initial (let CSS transition handle it)
-            llmWrapper.style.height = '';
-            llmWrapper.classList.remove('expanded');
-            dropdownOptions.querySelectorAll('.active-provider').forEach(el => el.classList.remove('active-provider'));
-        } else {
-            // Expand: measure the wrapper's children directly so the height
-            // adapts to whatever the current header looks like (including the
-            // taller "selected model + brain icon" state after the first
-            // selection). Using offsetHeight of the two children skips the
-            // wrapper's own padding, which `box-sizing: content-box` adds back
-            // on top of any inline `height` we set — that mismatch was the
-            // empty-space bug on the second open.
-            llmWrapper.classList.add('expanded');
-            const headerEl = llmWrapper.querySelector('.glass-button-content');
-            const headerH  = headerEl ? headerEl.offsetHeight : 0;
-            const optionsH = dropdownOptions.offsetHeight;
-            llmWrapper.style.height = `${headerH + optionsH}px`;
-        }
-    });
-
-    // 2. Close dropdown when clicking outside
-    document.addEventListener('click', (e) => {
-        if (!llmWrapper.contains(e.target) && llmWrapper.classList.contains('expanded')) {
-            llmWrapper.style.height = '';
-            llmWrapper.classList.remove('expanded');
-            dropdownOptions.querySelectorAll('.active-provider').forEach(el => el.classList.remove('active-provider'));
-        }
-    });
-
-    // Store selected provider and model
+    // ============================================
+    // PROVIDER / MODEL SELECTION (Settings → Model Selection)
+    // Two dropdowns: pick a provider, then a model. The chosen pair is stored
+    // in selectedProvider/selectedModel and drives /api/start-agent.
+    // ============================================
     let selectedProvider = null;
     let selectedModel = null;
+    let providersData = [];   // [{ id, name, models: [{ id, display_name, reasoning_support }] }]
 
-    // Function to complete model selection (after API key is confirmed)
-    const completeModelSelection = (option, providerName, modelId) => {
-        // Get the model name (text content without the icon)
-        const modelName = option.cloneNode(true);
-        const iconSvg = modelName.querySelector('.model-icon');
-        
-        // Extract just the text
-        let modelText = modelName.textContent.trim();
-        
-        // Store the selection
+    // Query the chat input on demand (it's declared later in this closure).
+    const getChatInput = () => document.querySelector('.chat-input');
+
+    // Apply a (provider, model) choice: store it, then gate the chat input on
+    // API key / Vertex config, opening the relevant settings view if missing.
+    const applyModelSelection = (providerName, modelId) => {
         selectedProvider = providerName;
         selectedModel = modelId;
-        
-        // Clear current selection and add new content
-        currentSelection.innerHTML = '';
-        
-        // Add the model name text
-        const textSpan = document.createElement('span');
-        textSpan.className = 'selection-text';
-        textSpan.textContent = modelText;
-        currentSelection.appendChild(textSpan);
-        
-        // If the original option had an icon, add it to the selection
-        if (iconSvg) {
-            const iconClone = iconSvg.cloneNode(true);
-            iconClone.classList.add('selection-icon');
-            currentSelection.appendChild(iconClone);
-        }
+        if (!providerName || !modelId) return;
+        const chatInput = getChatInput();
 
-        // Input stays locked — handleModelSelection controls unlock based on key status
-        // (do not enable here)
-
-        // Close the dropdown
-        llmWrapper.style.height = '';
-        llmWrapper.classList.remove('expanded');
-        
-        console.log(`Selected: ${selectedProvider} / ${selectedModel}`);
-    };
-
-    // Function to handle model selection (checks for API key first)
-    const handleModelSelection = (option, providerName) => {
-        const modelId = option.dataset.modelId;
-        
-        // Always complete model selection (update UI, store selection)
-        completeModelSelection(option, providerName, modelId);
-        
-        // Vertex models — check vertex config instead of API key
-        const isVertex = modelId && modelId.includes('vertex');
+        const isVertex = modelId.includes('vertex');
         if (isVertex) {
             fetch('/api/vertex/status')
                 .then(res => res.json())
                 .then(data => {
                     if (data.project_id) {
-                        chatInput.disabled = false;
-                        chatInput.placeholder = 'Type your task...';
+                        if (chatInput) { chatInput.disabled = false; chatInput.placeholder = 'Type your task...'; }
                     } else {
-                        chatInput.disabled = true;
-                        chatInput.placeholder = 'Configure GCP Vertex in Settings first...';
-                        if (settingsOverlay) {
-                            loadKeyStatus();
-                            showSettingsView('apikeys');
-                            settingsOverlay.classList.add('active');
-                        }
+                        if (chatInput) { chatInput.disabled = true; chatInput.placeholder = 'Configure GCP Vertex in Settings first...'; }
+                        loadKeyStatus();
+                        showSettingsView('apikeys');
                     }
                 })
                 .catch(err => console.error('Failed to check vertex status:', err));
             return;
         }
-        
-        // Then check if key exists
+
         fetch('/api/keys/status')
             .then(res => res.json())
             .then(status => {
                 if (status[providerName]) {
-                    // Key exists — unlock input
-                    chatInput.disabled = false;
-                    chatInput.placeholder = 'Type your task...';
+                    if (chatInput) { chatInput.disabled = false; chatInput.placeholder = 'Type your task...'; }
                 } else {
-                    // No key — keep input locked, open settings
-                    chatInput.disabled = true;
-                    chatInput.placeholder = 'Add API key in Settings first...';
-                    if (settingsOverlay) {
-                        loadKeyStatus();
-                        showSettingsView('apikeys');
-                        settingsOverlay.classList.add('active');
-                    }
+                    if (chatInput) { chatInput.disabled = true; chatInput.placeholder = 'Add API key in Settings first...'; }
+                    loadKeyStatus();
+                    showSettingsView('apikeys');
                 }
             })
-            .catch(err => {
-                console.error('Failed to check key status:', err);
-            });
+            .catch(err => console.error('Failed to check key status:', err));
     };
 
-    // Function to render providers and models
-    const renderProviders = (providers) => {
-        dropdownOptions.innerHTML = '';
+    // Build the brain SVG icon (same #icon-brain symbol the old dropdown used)
+    // for models that support reasoning. Native <select> can't hold SVG — which
+    // is why these are custom dropdowns.
+    const brainIcon = () => {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.classList.add('model-icon');
+        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+        use.setAttribute('href', '#icon-brain');
+        svg.appendChild(use);
+        return svg;
+    };
 
-        if (!providers || providers.length === 0) {
-            const errorDiv = document.createElement('div');
-            errorDiv.className = 'provider-item';
-            errorDiv.innerHTML = '<span>No providers found</span>';
-            dropdownOptions.appendChild(errorDiv);
-            return;
-        }
+    // Lightweight custom dropdown. items: [{ value, label, reasoning }].
+    const makeDropdown = (rootId, onChange) => {
+        const root = document.getElementById(rootId);
+        if (!root) return null;
+        const trigger = root.querySelector('.model-dropdown-trigger');
+        const valueEl = root.querySelector('.model-dropdown-value');
+        const menu = root.querySelector('.model-dropdown-menu');
+        let value = '';
 
-        providers.forEach(provider => {
-            const providerItem = document.createElement('div');
-            providerItem.className = 'provider-item';
-
-            const providerNameSpan = document.createElement('span');
-            providerNameSpan.textContent = provider.name;
-            providerItem.appendChild(providerNameSpan);
-
-            // Show sub-menu on hover, keep last hovered one visible
-            providerItem.addEventListener('mouseenter', () => {
-                dropdownOptions.querySelectorAll('.provider-item.active-provider').forEach(el => {
-                    el.classList.remove('active-provider');
-                });
-                providerItem.classList.add('active-provider');
-            });
-
-            const subMenu = document.createElement('div');
-            subMenu.className = 'sub-menu';
-
-            const subMenuCard = document.createElement('div');
-            subMenuCard.className = 'sub-menu-card';
-
-            // Add glass effects
-            subMenuCard.innerHTML = `
-                <div class="liquidGlass-effect-btn"></div>
-                <div class="liquidGlass-tint-btn"></div>
-                <div class="liquidGlass-shine-btn"></div>
-            `;
-
-            const subMenuContent = document.createElement('div');
-            subMenuContent.className = 'sub-menu-content';
-
-            provider.models.forEach(model => {
-                const modelOption = document.createElement('div');
-                modelOption.className = 'model-option';
-                modelOption.dataset.modelId = model.id; // Store ID for backend use
-
-                const modelNameText = document.createTextNode(model.display_name);
-                modelOption.appendChild(modelNameText);
-
-                if (model.reasoning_support) {
-                    const svgIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-                    svgIcon.classList.add('model-icon');
-                    const useElement = document.createElementNS("http://www.w3.org/2000/svg", "use");
-                    useElement.setAttribute('href', '#icon-brain');
-                    svgIcon.appendChild(useElement);
-                    modelOption.appendChild(svgIcon);
-                }
-
-                // Add click listener
-                modelOption.addEventListener('click', (e) => {
-                    e.stopPropagation(); // Prevent wrapper toggle
-                    handleModelSelection(modelOption, provider.id);
-                });
-
-                subMenuContent.appendChild(modelOption);
-            });
-
-            subMenuCard.appendChild(subMenuContent);
-            subMenu.appendChild(subMenuCard);
-            providerItem.appendChild(subMenu);
-            dropdownOptions.appendChild(providerItem);
+        trigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (root.classList.contains('disabled')) return;
+            const willOpen = !root.classList.contains('open');
+            document.querySelectorAll('.model-dropdown.open').forEach(d => d.classList.remove('open'));
+            if (willOpen) root.classList.add('open');
         });
+
+        const api = {
+            get value() { return value; },
+            setDisabled(d) { root.classList.toggle('disabled', !!d); },
+            setPlaceholder(text) {
+                value = '';
+                valueEl.innerHTML = '';
+                valueEl.textContent = text;
+                valueEl.classList.add('placeholder');
+            },
+            setItems(items) {
+                menu.innerHTML = '';
+                if (!items.length) {
+                    const empty = document.createElement('div');
+                    empty.className = 'model-dropdown-empty';
+                    empty.textContent = 'None';
+                    menu.appendChild(empty);
+                    return;
+                }
+                items.forEach(it => {
+                    const opt = document.createElement('div');
+                    opt.className = 'model-dropdown-option';
+                    opt.dataset.value = it.value;
+                    const label = document.createElement('span');
+                    label.className = 'model-dropdown-option-label';
+                    label.textContent = it.label;
+                    opt.appendChild(label);
+                    if (it.reasoning) opt.appendChild(brainIcon());
+                    opt.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        api.select(it.value);
+                        root.classList.remove('open');
+                        if (onChange) onChange(it.value);
+                    });
+                    menu.appendChild(opt);
+                });
+            },
+            select(v) {
+                value = v || '';
+                let chosen = null;
+                menu.querySelectorAll('.model-dropdown-option').forEach(o => {
+                    const match = o.dataset.value === String(v);
+                    o.classList.toggle('selected', match);
+                    if (match) chosen = o;
+                });
+                if (chosen) {
+                    valueEl.innerHTML = '';
+                    const label = document.createElement('span');
+                    label.textContent = chosen.querySelector('.model-dropdown-option-label').textContent;
+                    valueEl.appendChild(label);
+                    const icon = chosen.querySelector('.model-icon');
+                    if (icon) valueEl.appendChild(icon.cloneNode(true));
+                    valueEl.classList.remove('placeholder');
+                }
+            },
+        };
+        return api;
     };
 
-    // Initialize fetching data
+    const providerDropdown = makeDropdown('providerDropdown', (providerId) => {
+        // Provider chosen → refill models; not applied until a model is picked.
+        populateModelSelect(providerId);
+    });
+    const modelDropdown = makeDropdown('modelDropdown', (modelId) => {
+        const providerId = providerDropdown ? providerDropdown.value : selectedProvider;
+        if (providerId && modelId) applyModelSelection(providerId, modelId);
+    });
+
+    // Close any open dropdown when clicking elsewhere.
+    document.addEventListener('click', () => {
+        document.querySelectorAll('.model-dropdown.open').forEach(d => d.classList.remove('open'));
+    });
+
+    // Populate the Model dropdown for a given provider id.
+    const populateModelSelect = (providerId) => {
+        if (!modelDropdown) return;
+        const provider = providersData.find(p => p.id === providerId);
+        const models = (provider && provider.models) || [];
+        modelDropdown.setItems(models.map(m => ({
+            value: m.id, label: m.display_name, reasoning: m.reasoning_support
+        })));
+        modelDropdown.setDisabled(!providerId || !models.length);
+        if (providerId && selectedModel && models.some(m => m.id === selectedModel)) {
+            modelDropdown.select(selectedModel);
+        } else {
+            modelDropdown.setPlaceholder(
+                providerId ? (models.length ? 'Select a model…' : 'No models') : 'Select a provider first…'
+            );
+        }
+    };
+
+    // Populate the Provider dropdown from providersData, restoring any current
+    // selection so reopening Settings shows the active choice.
+    const populateProviderSelect = () => {
+        if (!providerDropdown) return;
+        providerDropdown.setItems(providersData.map(p => ({ value: p.id, label: p.name, reasoning: false })));
+        if (selectedProvider) providerDropdown.select(selectedProvider);
+        else providerDropdown.setPlaceholder(providersData.length ? 'Select a provider…' : 'No providers found');
+        populateModelSelect(selectedProvider || '');
+    };
+
+    // Fetch providers and populate the dropdowns.
     const loadData = () => {
         fetch('/api/providers')
             .then(response => response.json())
             .then(providers => {
-                renderProviders(providers);
+                providersData = Array.isArray(providers) ? providers : [];
+                populateProviderSelect();
             })
             .catch(err => {
-                console.error("Failed to load providers:", err);
-                renderProviders([]);
+                console.error('Failed to load providers:', err);
+                providersData = [];
+                populateProviderSelect();
             });
     };
 
-    // Position settings button dynamically next to LLM button
-    const settingsBtnEl = document.getElementById('settingsBtn');
-    const positionSettingsBtn = () => {
-        if (!settingsBtnEl || !llmWrapper) return;
-        const rect = llmWrapper.getBoundingClientRect();
-        settingsBtnEl.style.left = (rect.right + 10) + 'px';
-    };
-
-    // Reposition on load, resize, and after any selection change
-    positionSettingsBtn();
-    window.addEventListener('resize', positionSettingsBtn);
-
-    // Observe LLM button size/position changes (e.g. after model selection or layout switch)
-    const resizeObserver = new ResizeObserver(positionSettingsBtn);
-    resizeObserver.observe(llmWrapper);
-
-    // While the LLM wrapper's `left` is animating (chat box slide-in/out),
-    // re-read its position every frame so the settings cog tracks it
-    // smoothly. Without this rAF loop the cog only moves on transitionend
-    // and visibly snaps at the end of the 0.5s slide.
-    let _settingsTrackRAF = 0;
-    const trackSettingsBtnPosition = () => {
-        const tick = () => {
-            positionSettingsBtn();
-            _settingsTrackRAF = requestAnimationFrame(tick);
-        };
-        if (!_settingsTrackRAF) _settingsTrackRAF = requestAnimationFrame(tick);
-    };
-    const stopTrackingSettingsBtn = () => {
-        if (_settingsTrackRAF) {
-            cancelAnimationFrame(_settingsTrackRAF);
-            _settingsTrackRAF = 0;
-        }
-        positionSettingsBtn();
-    };
-
-    const isLeftTransition = (e) => e.propertyName === 'left' && e.target === llmWrapper;
-    llmWrapper.addEventListener('transitionrun',    (e) => { if (isLeftTransition(e)) trackSettingsBtnPosition();   });
-    llmWrapper.addEventListener('transitionstart',  (e) => { if (isLeftTransition(e)) trackSettingsBtnPosition();   });
-    llmWrapper.addEventListener('transitionend',    (e) => { if (isLeftTransition(e)) stopTrackingSettingsBtn();    });
-    llmWrapper.addEventListener('transitioncancel', (e) => { if (isLeftTransition(e)) stopTrackingSettingsBtn();    });
+    // The settings button now lives in the left bar footer (settings/ component),
+    // so it no longer needs JS positioning next to the LLM button.
 
     // Load immediately
     loadData();
@@ -312,10 +247,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // ============================================
     // SETTINGS PANEL - Open / Close
     // ============================================
-    const settingsBtn = document.getElementById('settingsBtn');
     const settingsOverlay = document.getElementById('settingsOverlay');
     const settingsSaveBtn = document.getElementById('settingsSaveBtn');
     const settingsMenuView = document.getElementById('settingsMenuView');
+    const settingsModelView = document.getElementById('settingsModelView');
     const settingsApikeysView = document.getElementById('settingsApikeysView');
     const settingsRemoteView = document.getElementById('settingsRemoteView');
 
@@ -394,15 +329,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (provider === selectedProvider) {
                     chatInput.disabled = true;
                     chatInput.value = '';
-                    chatInput.placeholder = 'Select a model to start...';
+                    chatInput.placeholder = 'Select a model in Settings to start...';
                     selectedProvider = null;
                     selectedModel = null;
-                    // Reset LLM button to default
-                    currentSelection.innerHTML = '';
-                    const defaultSpan = document.createElement('span');
-                    defaultSpan.className = 'selection-text';
-                    defaultSpan.textContent = 'LLM Provider';
-                    currentSelection.appendChild(defaultSpan);
+                    // Reset the Model Selection dropdowns to their default state.
+                    populateProviderSelect();
                 }
             })
             .catch(err => console.error('Failed to delete key:', err));
@@ -502,39 +433,40 @@ document.addEventListener('DOMContentLoaded', () => {
         .catch(() => {});
 
     // Helper: switch settings view
-    const showSettingsView = (viewName) => {
-        settingsMenuView.classList.remove('active');
-        settingsApikeysView.classList.remove('active');
-        settingsRemoteView.classList.remove('active');
-        if (viewName === 'apikeys') settingsApikeysView.classList.add('active');
-        else if (viewName === 'remote') settingsRemoteView.classList.add('active');
-        else settingsMenuView.classList.add('active');
-    };
+    // Flat layout: all sections are always visible, so view-switching is a no-op.
+    // (Kept as a function so existing callers don't need changing.)
+    const showSettingsView = () => {};
 
     // Helper: reset to menu view when closing
     const resetSettingsToMenu = () => {
         settingsOverlay.classList.remove('active');
+        document.body.classList.remove('settings-open');  // restores the chat text box
         // Reset to menu after transition completes
         setTimeout(() => showSettingsView('menu'), 300);
     };
 
-    if (settingsBtn && settingsOverlay) {
-        settingsBtn.addEventListener('click', () => {
+    if (settingsOverlay) {
+        // The settings button now lives in the left bar (settings/ component);
+        // it emits 'open-settings'. The overlay + its data loaders stay here.
+        document.addEventListener('open-settings', () => {
+            // Flat layout: populate every section up front (no menu/nesting).
             loadKeyStatus();
-            showSettingsView('menu');
+            populateProviderSelect();
+            loadRemoteStatus();
             settingsOverlay.classList.add('active');
+            document.body.classList.add('settings-open');  // hides the chat text box
         });
 
-        // Close button on menu view
-        document.getElementById('settingsCloseBtn').addEventListener('click', () => {
-            resetSettingsToMenu();
-        });
+        // (No ✕ close button — the footer Cancel closes the panel.)
 
         // Menu item navigation
         document.querySelectorAll('.settings-menu-item').forEach(item => {
             item.addEventListener('click', () => {
                 const view = item.dataset.view;
-                if (view === 'apikeys') {
+                if (view === 'modelselect') {
+                    showSettingsView('modelselect');
+                    populateProviderSelect();
+                } else if (view === 'apikeys') {
                     loadKeyStatus();
                     showSettingsView('apikeys');
                 } else if (view === 'remote') {
@@ -605,58 +537,45 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
         });
 
+        // Right-side panel footer: Cancel closes; Save commits the current view
+        // (saves API keys when on that view) then closes.
+        const settingsCancelBtn = document.getElementById('settingsCancelBtn');
+        const settingsSaveBarBtn = document.getElementById('settingsSaveBarBtn');
+        if (settingsCancelBtn) {
+            settingsCancelBtn.addEventListener('click', () => resetSettingsToMenu());
+        }
+        if (settingsSaveBarBtn) {
+            settingsSaveBarBtn.addEventListener('click', () => {
+                // Flat layout: API-key inputs are always present, so just commit
+                // any entered keys; the save handler closes via resetSettingsToMenu.
+                settingsSaveBtn.click();
+            });
+        }
+
         // Remote Connection — guided Telegram pairing
         const remoteSetup = document.getElementById('remoteSetup');
-        const remoteConnected = document.getElementById('remoteConnected');
-        const remoteBotName = document.getElementById('remoteBotName');
-        const remoteDisconnectBtn = document.getElementById('remoteDisconnectBtn');
-        const remoteTelegramBtn = document.getElementById('remoteTelegramBtn');
-        const remoteTelegramForm = document.getElementById('remoteTelegramForm');
-        const remoteConnectBtn = document.getElementById('remoteConnectBtn');
-        const remoteDeleteTokenBtn = document.getElementById('remoteDeleteTokenBtn');
+        const remoteToggleBtn = document.getElementById('remoteToggleBtn');
         const remoteInstructions = document.getElementById('remoteInstructions');
         const telegramPromptOverlay = document.getElementById('telegramPromptOverlay');
         const telegramPromptOk = document.getElementById('telegramPromptOk');
+        let telegramConnected = false;
 
-        function loadRemoteStatus() {
-            fetch('/api/telegram/status')
-                .then(res => res.json())
-                .then(data => {
-                    // Always keep the Telegram service button visible and
-                    // expandable. When already paired, just grey out the
-                    // Connect button inside the form rather than swapping
-                    // to a different panel.
-                    remoteSetup.style.display = 'flex';
-                    if (remoteConnected) remoteConnected.style.display = 'none';
-
-                    if (data.connected) {
-                        if (remoteConnectBtn) {
-                            remoteConnectBtn.disabled = true;
-                            remoteConnectBtn.textContent = data.bot_username
-                                ? '✓ Already paired (@' + data.bot_username + ')'
-                                : '✓ Already paired';
-                        }
-                        if (remoteDeleteTokenBtn) remoteDeleteTokenBtn.style.display = 'inline-block';
-                        if (remoteInstructions) remoteInstructions.style.display = 'none';
-                    } else {
-                        if (remoteConnectBtn) {
-                            remoteConnectBtn.disabled = false;
-                            remoteConnectBtn.textContent = 'Connect';
-                        }
-                        if (remoteDeleteTokenBtn) remoteDeleteTokenBtn.style.display = 'none';
-                        if (remoteTelegramForm) remoteTelegramForm.style.display = 'none';
-                        if (remoteInstructions) remoteInstructions.style.display = 'none';
-                    }
-                })
-                .catch(() => {});
+        // One button that transforms: "Connect" when not paired, "Disconnect"
+        // (red) when paired.
+        function updateRemoteToggle() {
+            if (!remoteToggleBtn) return;
+            remoteToggleBtn.disabled = false;
+            remoteToggleBtn.textContent = telegramConnected ? 'Disconnect' : 'Connect';
+            remoteToggleBtn.classList.toggle('disconnect', telegramConnected);
         }
 
-        if (remoteTelegramBtn) {
-            remoteTelegramBtn.addEventListener('click', () => {
-                if (!remoteTelegramForm) return;
-                const isHidden = remoteTelegramForm.style.display === 'none' || !remoteTelegramForm.style.display;
-                remoteTelegramForm.style.display = isHidden ? 'flex' : 'none';
-            });
+        function loadRemoteStatus() {
+            if (remoteSetup) remoteSetup.style.display = 'flex';
+            if (remoteInstructions) remoteInstructions.style.display = 'none';
+            fetch('/api/telegram/status')
+                .then(res => res.json())
+                .then(data => { telegramConnected = !!data.connected; updateRemoteToggle(); })
+                .catch(() => { telegramConnected = false; updateRemoteToggle(); });
         }
 
         // 3-2-1 countdown shown in the "AutoUse helper" popup while the helper
@@ -704,17 +623,27 @@ document.addEventListener('DOMContentLoaded', () => {
             if (telegramPromptPopup) telegramPromptPopup.classList.remove('counting');
         }
 
-        if (remoteConnectBtn) {
-            remoteConnectBtn.addEventListener('click', () => {
-                remoteConnectBtn.disabled = true;
-                if (telegramPromptOverlay) telegramPromptOverlay.classList.add('active');
-                startTelegramCountdown();
-                fetch('/api/telegram/connect', { method: 'POST' })
-                    .catch(() => {})
-                    .finally(() => {
-                        remoteConnectBtn.disabled = false;
-                        if (remoteInstructions) remoteInstructions.style.display = 'block';
-                    });
+        if (remoteToggleBtn) {
+            remoteToggleBtn.addEventListener('click', () => {
+                if (telegramConnected) {
+                    // Acts as Disconnect — remove the token.
+                    remoteToggleBtn.disabled = true;
+                    fetch('/api/telegram/disconnect', { method: 'POST' })
+                        .then(() => loadRemoteStatus())
+                        .catch(() => {})
+                        .finally(() => { remoteToggleBtn.disabled = false; });
+                } else {
+                    // Acts as Connect — start the pairing flow.
+                    remoteToggleBtn.disabled = true;
+                    if (telegramPromptOverlay) telegramPromptOverlay.classList.add('active');
+                    startTelegramCountdown();
+                    fetch('/api/telegram/connect', { method: 'POST' })
+                        .catch(() => {})
+                        .finally(() => {
+                            remoteToggleBtn.disabled = false;
+                            if (remoteInstructions) remoteInstructions.style.display = 'block';
+                        });
+                }
             });
         }
 
@@ -728,24 +657,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     telegramPromptOverlay.classList.remove('active');
                     stopTelegramCountdown();
                 }
-            });
-        }
-
-        if (remoteDisconnectBtn) {
-            remoteDisconnectBtn.addEventListener('click', () => {
-                fetch('/api/telegram/disconnect', { method: 'POST' })
-                    .then(() => loadRemoteStatus())
-                    .catch(() => {});
-            });
-        }
-
-        if (remoteDeleteTokenBtn) {
-            remoteDeleteTokenBtn.addEventListener('click', () => {
-                remoteDeleteTokenBtn.disabled = true;
-                fetch('/api/telegram/disconnect', { method: 'POST' })
-                    .then(() => loadRemoteStatus())
-                    .catch(() => {})
-                    .finally(() => { remoteDeleteTokenBtn.disabled = false; });
             });
         }
 
@@ -930,7 +841,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         // Switch to split layout
                         document.getElementById('imageStreamContainer').classList.add('agent-visible');
                         document.getElementById('chatWrapper').classList.add('split-layout');
-                        document.getElementById('llmWrapper').classList.add('split-layout');
 
                         // Hide eyes only, keep glow
                         const welcomeEl = document.getElementById('welcomeOverlay');
@@ -1018,7 +928,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Revert to centered layout
                     document.getElementById('imageStreamContainer').classList.remove('agent-visible');
                     document.getElementById('chatWrapper').classList.remove('split-layout');
-                    document.getElementById('llmWrapper').classList.remove('split-layout');
 
                     chatInput.disabled = false;
                     chatInput.classList.remove('agent-active');
@@ -1056,7 +965,6 @@ document.addEventListener('DOMContentLoaded', () => {
         // Revert to centered layout
         document.getElementById('imageStreamContainer').classList.remove('agent-visible');
         document.getElementById('chatWrapper').classList.remove('split-layout');
-        document.getElementById('llmWrapper').classList.remove('split-layout');
 
         // Enable Input
         if (chatInput) {
@@ -2083,9 +1991,8 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const chatWrapper = document.getElementById('chatWrapper');
-    // llmWrapper is already declared higher up (line ~23) — reuse that.
 
-    // Whether split-layout was on the chat/llm wrappers when cli-await began,
+    // Whether split-layout was on the chat wrapper when cli-await began,
     // so cliAwaitEnd can restore them to that state cleanly.
     let _cliPrevSplit = false;
 
@@ -2101,8 +2008,7 @@ document.addEventListener('DOMContentLoaded', () => {
             chatWrapper.classList.remove('split-layout');
             chatWrapper.classList.add('cli-mode');
         }
-        if (llmWrapper) llmWrapper.classList.remove('split-layout');
-        document.body.classList.add('cli-mode');  // hides LLM dropdown + settings cog
+        document.body.classList.add('cli-mode');  // hides settings cog
     };
 
     window.cliAwaitEnd = () => {
@@ -2111,7 +2017,6 @@ document.addEventListener('DOMContentLoaded', () => {
             chatWrapper.classList.remove('cli-mode');
             if (_cliPrevSplit) chatWrapper.classList.add('split-layout');
         }
-        if (llmWrapper && _cliPrevSplit) llmWrapper.classList.add('split-layout');
         document.body.classList.remove('cli-mode');
         // Restore the screenshot panel.
         if (imageStreamContainer) imageStreamContainer.classList.add('agent-visible');

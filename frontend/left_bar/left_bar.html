@@ -1,0 +1,20 @@
+<!-- Left Bar — persistent task-history panel (shell only for now).
+     Injected into the top document by left_bar/left_bar.js. Uses the same
+     liquid-glass layer structure as the other cards (effect / tint / shine /
+     content). Contents intentionally empty for now — the New-task button,
+     history list and settings footer come in a later step. -->
+<aside class="left-bar" id="leftBar" aria-label="Sidebar">
+    <div class="liquidGlass-effect"></div>
+    <div class="liquidGlass-tint"></div>
+    <div class="liquidGlass-shine"></div>
+    <div class="liquidGlass-content left-bar-content">
+        <!-- Header: Auto Use logo (top-left). -->
+        <div class="left-bar-header" id="leftBarHeader">
+            <img class="left-bar-logo" src="/logo.png" alt="Auto Use" draggable="false">
+        </div>
+        <!-- Body: New chat button (chat/ component) + future history list. -->
+        <div class="left-bar-body"></div>
+        <!-- Footer: the settings cog (settings/ component) mounts here, bottom-left. -->
+        <div class="left-bar-footer" id="leftBarFooter"></div>
+    </div>
+</aside>
