@@ -1207,6 +1207,115 @@ def _drive_bg_video():
         time.sleep(0.05)
 
 
+# Soft off-white used to tint the native title bar on BOTH macOS and Windows
+# (instead of the stark default white chrome). Change this single hex to adjust
+# the shade on both platforms.
+#   warmer/creamier → #E4DECB   |   cooler/greyer → #EAEAE8   |   subtler → #F0EEE6
+TITLEBAR_COLOR = "#EAE4D6"
+
+
+def _style_macos_titlebar():
+    """Tint the native macOS window titlebar off-white instead of stark white.
+
+    There is no HTML header — the bright bar at the top of the window is the
+    native NSWindow titlebar. pywebview exposes that NSWindow as
+    `webview_window.native`. We make the titlebar transparent so the window's
+    own background color shows through the titlebar strip, and set that color to
+    a soft off-white. The opaque WKWebView still fills the content area below, so
+    only the titlebar picks up the tint; the title text and traffic-light
+    buttons are left untouched. macOS-only (Windows has its own chrome).
+    """
+    win = globals().get('webview_window')
+    nswindow = getattr(win, 'native', None) if win is not None else None
+    if nswindow is None:
+        return
+    try:
+        from AppKit import NSColor, NSAppearance, NSAppearanceNameAqua
+        from PyObjCTools import AppHelper
+    except Exception:
+        debug_exception("titlebar_color_import")
+        return
+
+    def apply():
+        try:
+            h = TITLEBAR_COLOR.lstrip('#')
+            r, g, b = (int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+            color = NSColor.colorWithSRGBRed_green_blue_alpha_(r, g, b, 1.0)
+            nswindow.setBackgroundColor_(color)
+            nswindow.setTitlebarAppearsTransparent_(True)
+            # Pin the titlebar to the light (Aqua) appearance so the title text
+            # and traffic lights stay dark/contrasty on the off-white bar even
+            # when the system is in Dark Mode.
+            nswindow.setAppearance_(
+                NSAppearance.appearanceNamed_(NSAppearanceNameAqua)
+            )
+            # pywebview pins the titlebar's own background view to the system
+            # windowBackgroundColor (white) at window creation, which paints over
+            # the window background color in the titlebar region. Recolor that
+            # exact view (NSTitlebarContainerView) to our off-white.
+            try:
+                titlebar_view = nswindow.contentView().superview().subviews().lastObject()
+                titlebar_view.setBackgroundColor_(color)
+            except Exception:
+                debug_exception("titlebar_view_color")
+        except Exception:
+            debug_exception("titlebar_color_apply")
+
+    # The `shown` event fires on a pywebview worker thread, but AppKit mutations
+    # must happen on the main thread — marshal the work over.
+    AppHelper.callAfter(apply)
+
+
+def _style_windows_titlebar():
+    """Tint the native Windows title bar (caption) to the same off-white as macOS.
+
+    There is no HTML header — the bar is the native window caption drawn by the
+    Desktop Window Manager. Windows 11 (build 22000+) exposes DWM attributes to
+    set the caption background and title-text colors; on Windows 10 these are
+    unsupported and the calls simply no-op (the bar stays default). Mirrors
+    `_style_macos_titlebar` for cross-platform parity. DWM calls are not
+    thread-affine, so running from the `shown` worker thread is fine.
+    """
+    win = globals().get('webview_window')
+    native = getattr(win, 'native', None) if win is not None else None
+    try:
+        hwnd = int(native.Handle.ToInt32()) if native is not None else 0
+    except Exception:
+        debug_exception("titlebar_color_hwnd")
+        return
+    if not hwnd:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        def _colorref(hex_str):
+            h = hex_str.lstrip('#')
+            r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+            return (b << 16) | (g << 8) | r  # COLORREF is 0x00BBGGRR
+
+        dwm = ctypes.windll.dwmapi
+        dwm.DwmSetWindowAttribute.argtypes = [
+            wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD
+        ]
+        DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+        DWMWA_CAPTION_COLOR = 35
+        DWMWA_TEXT_COLOR = 36
+
+        def _set(attr, value):
+            v = wintypes.DWORD(value)
+            dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(v), ctypes.sizeof(v))
+
+        # Force the light-mode caption (dark button glyphs) so they stay readable
+        # on the off-white bar even when Windows is in Dark Mode, then set the
+        # caption (bar) background and the title-text color.
+        _set(DWMWA_USE_IMMERSIVE_DARK_MODE, 0)
+        _set(DWMWA_CAPTION_COLOR, _colorref(TITLEBAR_COLOR))
+        _set(DWMWA_TEXT_COLOR, _colorref("#2A2A2A"))
+    except Exception:
+        debug_exception("titlebar_color_apply_win")
+
+
 def _compute_window_center(win_w, win_h):
     """Return (x, y) to center a (win_w, win_h) window on the main display.
     Falls back to a sensible default if the native APIs are unavailable."""
@@ -1398,6 +1507,21 @@ def main():
             threading.Thread(target=_drive_bg_video, daemon=True).start()
         except Exception:
             debug_exception("bg_video_autoplay_hook")
+
+    # Recolor the native titlebar from stark white to a soft off-white. Done on
+    # `shown` (once the native window/handle exists). macOS marshals its AppKit
+    # calls onto the main thread; Windows uses DWM (Win11+) which is fine on the
+    # worker thread.
+    if IS_MAC:
+        try:
+            webview_window.events.shown += _style_macos_titlebar
+        except Exception:
+            debug_exception("titlebar_color_hook")
+    elif IS_WINDOWS:
+        try:
+            webview_window.events.shown += _style_windows_titlebar
+        except Exception:
+            debug_exception("titlebar_color_hook_win")
 
     # macOS needs pynput keyboard pre-initialized on the main thread
     # because Carbon APIs require the main dispatch queue.
