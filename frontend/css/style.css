@@ -60,26 +60,12 @@ body {
     overflow: hidden;
 }
 
-/* Image Stream Container - Fully Responsive with Liquid Glass */
-.image-stream-container {
-    position: fixed;
-    left: calc(var(--left-bar-w) + clamp(10px, 2vw, 30px));
-    top: 50%;
-    transform: translateY(-50%) scale(0.95);
-    width: clamp(300px, 45vw, min(800px, 45vw));
-    aspect-ratio: 16 / 9;
-    border-radius: clamp(12px, 2vw, 20px);
-    box-shadow: 0 clamp(4px, 1vw, 8px) clamp(16px, 3vw, 32px) rgba(0, 0, 0, 0.1);
-    z-index: 10;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
-    overflow: hidden;
-    opacity: 0;
-    pointer-events: none;
-    padding: clamp(8px, 1.2vw, 16px);
-}
+/* Screenshot / globe / shell now live in the T-grid container components
+   (frontend/container/{top_left,top_right}/). Their old floating fixed-position
+   styles were removed here. The shared .liquidGlass-* layers below stay — the
+   CLI pills use them. The shell terminal CARD visuals (.shell-terminal-card /
+   .shell-term-* / .shell-progress) are kept further down and apply in-place via
+   shared classes (the top-right container reuses those class names). */
 
 /* Liquid Glass Layers */
 .liquidGlass-effect {
@@ -123,111 +109,16 @@ body {
     justify-content: center;
 }
 
-.image-stream-container.agent-visible {
-    opacity: 1;
-    pointer-events: auto;
-    transform: translateY(-50%) scale(1);
-}
-
-.image-stream-container:hover {
-    box-shadow: 0 clamp(6px, 1.5vw, 12px) clamp(20px, 4vw, 40px) rgba(0, 0, 0, 0.15);
-}
-
-/* Stream Image - Responsive Fit */
-.stream-image {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    object-position: center;
-    border-radius: clamp(8px, 1.5vw, 14px);
-    box-shadow: 0 clamp(2px, 0.5vw, 4px) clamp(8px, 1.5vw, 16px) rgba(0, 0, 0, 0.15);
-}
-
-/* Globe Container - Positioned OUTSIDE and ABOVE image container */
-.main-globe-container {
-    position: fixed;
-    /* Same left and width as image container - globe centers via flexbox */
-    left: calc(var(--left-bar-w) + clamp(10px, 2vw, 30px));
-    width: clamp(300px, 45vw, min(800px, 45vw));
-    
-    /* Globe height - bigger to fill space */
-    height: clamp(180px, 25vw, 320px);
-    
-    /* TOP edge aligns with LLM button TOP edge (same calculation as button) */
-    top: calc(clamp(30px, 4vw, 60px) + clamp(16px, 2vw, 24px));
-    
-    z-index: 15;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    
-    /* Initially hidden */
-    opacity: 0;
-    transform: translateY(20px) scale(0.9);
-    pointer-events: none;
-    
-    /* Smooth transitions */
-    transition: opacity 0.6s cubic-bezier(0.25, 0.8, 0.25, 1),
-                transform 0.6s cubic-bezier(0.25, 0.8, 0.25, 1);
-}
-
-.main-globe-container.visible {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    pointer-events: auto;
-}
-
-/* Ensure Three.js canvas is transparent */
-.main-globe-container canvas {
-    background: transparent !important;
-}
-
-/* Image container shift animation - entire container moves down */
-.image-stream-container {
-    transition: transform 0.6s cubic-bezier(0.25, 0.8, 0.25, 1);
-}
-
-.image-stream-container.agent-visible.web-active {
-    /* Shift down to sit just below the globe with small gap */
-    transform: translateY(calc(-50% + clamp(120px, 16vw, 220px)));
-}
-
-.image-stream-container.agent-visible.shell-active {
-    /* Shift down to sit just below the shell terminal card */
-    transform: translateY(calc(-50% + clamp(120px, 16vw, 220px)));
-}
-
-/* ── Shell Terminal Container ── */
-.shell-terminal-container {
-    position: fixed;
-    left: calc(var(--left-bar-w) + clamp(10px, 2vw, 30px));
-    width: clamp(300px, 45vw, min(800px, 45vw));
-    height: clamp(180px, 25vw, 320px);
-    top: calc(clamp(30px, 4vw, 60px) + clamp(16px, 2vw, 24px));
-    z-index: 15;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0;
-    transform: translateY(20px) scale(0.9);
-    pointer-events: none;
-    transition: opacity 0.6s cubic-bezier(0.25, 0.8, 0.25, 1),
-                transform 0.6s cubic-bezier(0.25, 0.8, 0.25, 1);
-}
-
-.shell-terminal-container.visible {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    pointer-events: auto;
-}
-
 /* Terminal card */
 .shell-terminal-card {
     width: clamp(280px, 80%, 380px);
     border-radius: 18px;
     border: 1px solid rgba(0, 0, 0, 0.08);
     background: rgba(0, 0, 0, 0.03);
-    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.55);
+    /* Softened for the light grid cell — matches the screenshot cell + todo card
+       elevation (was 0 28px 80px rgba(0,0,0,0.55), tuned for the old dark
+       floating overlay). */
+    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.10);
     overflow: hidden;
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
@@ -764,16 +655,17 @@ body {
     pointer-events: auto;
 }
 
-/* While a Telegram task occupies the machine: fade the app's UI components away
-   but keep the background video. The orb + message live in the transparent
-   overlay above. (id-based selector wins over the components' own .active /
-   .agent-visible show states.) */
+/* While a Telegram task occupies the machine: fade the app's UI components away.
+   The orb + message live in the transparent overlay above. We fade the whole
+   T-grid CELLS (#zoneTopLeft / #zoneTopRight / #zoneBottom) rather than the
+   inner cards — the cell carries the frosted-glass chrome, and the right cell's
+   idle TODO card must fade too (not just the globe/shell). */
 body.tg-occupied #chatWrapper,
 body.tg-occupied #llmWrapper,
 body.tg-occupied #settingsBtn,
-body.tg-occupied #imageStreamContainer,
-body.tg-occupied #mainGlobeContainer,
-body.tg-occupied #shellTerminalContainer {
+body.tg-occupied #zoneTopLeft,
+body.tg-occupied #zoneTopRight,
+body.tg-occupied #zoneBottom {
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.4s ease;
@@ -1513,9 +1405,10 @@ body.settings-open #chatWrapper {
 
 /* Chat Container - Big vertical rectangle with equal gaps */
 /* =====================================================================
-   Main content T-grid — three component zones (screenshot / globe-shell /
-   tool-response) fill the area to the right of the left bar. The zones are
-   injected by the screen_shot/, card/, tool_response/ components.
+   Main content T-grid — three component zones (top-left screenshot /
+   top-right todo·web·shell / full-width bottom) fill the area to the right of
+   the left bar. The zones are injected by the container/top_left,
+   container/top_right and container/bottom components.
    ===================================================================== */
 .main-grid {
     position: fixed;
@@ -1523,7 +1416,9 @@ body.settings-open #chatWrapper {
     right: clamp(10px, 2vw, 30px);
     top: clamp(30px, 4vw, 60px);
     /* Leave room at the bottom for the chat input (the agent-start text box). */
-    bottom: clamp(108px, 11vw, 140px);
+    /* Raised so the bottom container clears the "Agent activated" strip that
+       sits just above the chat input. */
+    bottom: clamp(160px, 15vw, 196px);
     z-index: 13;
     display: grid;
     grid-template-columns: 1fr 1fr;

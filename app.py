@@ -345,6 +345,17 @@ def clean_scratchpad():
     except Exception:
         debug_exception("clean_scratchpad")
 
+def _reset_todo_file():
+    """Delete <platform>_use/scratchpad/todo/todo.md so a new agent run starts
+    with an empty top-right todo card (the previous run's plan would otherwise
+    linger until the agent writes a fresh one)."""
+    try:
+        todo_file = get_platform_use_path() / "scratchpad" / "todo" / "todo.md"
+        if todo_file.exists():
+            todo_file.unlink()
+    except Exception:
+        debug_exception("_reset_todo_file")
+
 def set_frontend_flag():
     """Override the FRONTEND flag in Auto_Use.<platform>_use.tree.element to True"""
     try:
@@ -878,6 +889,52 @@ def send_milestone_to_frontend(text):
         except Exception:
             debug_exception("send_milestone_to_frontend")
 
+def _parse_todo_md(content):
+    """Parse the agent's todo.md into {objective, tasks:[{text, done}]}.
+
+    Format written by TaskTrackerService:
+        Objective: <goal>
+        #1. - [ ] task one
+        #2. - [x] task two
+    The "#N." auto-numbering prefix is stripped; "- [x]" => done, "- [ ]" =>
+    pending. The first non-task / "Objective:" line becomes the objective.
+    """
+    objective = ""
+    tasks = []
+    for raw in (content or "").split('\n'):
+        line = raw.strip()
+        if not line:
+            continue
+        # Strip an optional "#N." numbering prefix ("#3. - [ ] ..." -> "- [ ] ...").
+        if line.startswith('#'):
+            dot = line.find('. ')
+            if dot != -1 and line[1:dot].isdigit():
+                line = line[dot + 2:].strip()
+        low = line.lower()
+        if low.startswith('- [x]'):
+            tasks.append({"text": line[5:].strip(), "done": True})
+        elif low.startswith('- [ ]'):
+            tasks.append({"text": line[5:].strip(), "done": False})
+        elif low.startswith('objective:'):
+            objective = line.split(':', 1)[1].strip()
+        elif not tasks and not objective:
+            # A stray leading line with no "Objective:" prefix — treat as the goal.
+            objective = line
+    return {"objective": objective, "tasks": tasks}
+
+def send_todo_to_frontend(payload):
+    """Push the main agent's parsed todo list to the top-right card."""
+    global webview_window
+    if not webview_window:
+        return
+    try:
+        escaped = _js_escape(json.dumps(payload))
+        webview_window.evaluate_js(
+            f"window.updateTodoList && window.updateTodoList('{escaped}')"
+        )
+    except Exception:
+        debug_exception("send_todo_to_frontend")
+
 def send_web_status_to_frontend(status):
     global webview_window
     if webview_window:
@@ -1023,6 +1080,12 @@ def start_agent():
         def run_agent():
             stop_event = active_agent_stop_event
 
+            # Clear any stale todo from a previous run in this session and blank
+            # the top-right card immediately; the watcher below repopulates it as
+            # soon as the agent writes its plan.
+            _reset_todo_file()
+            send_todo_to_frontend({"objective": "", "tasks": []})
+
             def monitor_milestones():
                 milestone_path = get_platform_use_path() / "scratchpad" / "milestone" / "milestone.md"
                 last_pos = 0
@@ -1060,6 +1123,30 @@ def start_agent():
                     except Exception:
                         debug_exception("monitor_milestones final read")
 
+            def monitor_todo():
+                # todo.md is REWRITTEN on every update (not appended), so we
+                # re-read the whole file and push it whenever the content changes.
+                todo_path = get_platform_use_path() / "scratchpad" / "todo" / "todo.md"
+                last_content = None
+                while not stop_event.is_set():
+                    try:
+                        if todo_path.exists():
+                            content = todo_path.read_text(encoding='utf-8')
+                            if content != last_content:
+                                last_content = content
+                                send_todo_to_frontend(_parse_todo_md(content))
+                    except Exception:
+                        debug_exception("monitor_todo")
+                    time.sleep(0.3)
+                # Final read so the terminal state (e.g. all tasks complete) shows.
+                try:
+                    if todo_path.exists():
+                        content = todo_path.read_text(encoding='utf-8')
+                        if content != last_content:
+                            send_todo_to_frontend(_parse_todo_md(content))
+                except Exception:
+                    debug_exception("monitor_todo final read")
+
             # Outcome reported back to the web UI. Defaults to success; the
             # process_request return value or an exception overrides it so the
             # UI shows the real result instead of always signaling completion.
@@ -1085,6 +1172,10 @@ def start_agent():
                 monitor_thread = threading.Thread(target=monitor_milestones)
                 monitor_thread.daemon = True
                 monitor_thread.start()
+
+                todo_thread = threading.Thread(target=monitor_todo)
+                todo_thread.daemon = True
+                todo_thread.start()
 
                 run_outcome = agent.process_request(task)
                 if not isinstance(run_outcome, dict):

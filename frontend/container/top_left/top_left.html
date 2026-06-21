@@ -1,0 +1,12 @@
+<!-- Top-left container — the live agent screenshot. Injected into #mainGrid
+     (column 1, row 1) by top_left.js. Keeps id="imageStreamContainer" and the
+     .stream-image <img> so the existing window.updateAgentImage() hook in
+     script.js keeps working unchanged. -->
+<div class="container-zone screenshot-zone" id="zoneTopLeft" aria-label="Screenshot">
+    <div class="screenshot-frame" id="imageStreamContainer">
+        <img class="stream-image" src="" alt="Agent screen" style="display: none;">
+        <div class="screenshot-idle" aria-hidden="true">
+            <span class="screenshot-idle-label">screen</span>
+        </div>
+    </div>
+</div>

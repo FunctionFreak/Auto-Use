@@ -8,10 +8,10 @@
     <link rel="stylesheet" href="settings/settings.css">
     <!-- New Chat button component (markup injected into the left bar body) -->
     <link rel="stylesheet" href="chat/chat.css">
-    <!-- Main content T-grid zone components -->
-    <link rel="stylesheet" href="screen_shot/screen_shot.css">
-    <link rel="stylesheet" href="card/card.css">
-    <link rel="stylesheet" href="tool_response/tool_response.css">
+    <!-- Main content T-grid zone components (container/ holds all three) -->
+    <link rel="stylesheet" href="container/top_left/top_left.css">
+    <link rel="stylesheet" href="container/top_right/top_right.css">
+    <link rel="stylesheet" href="container/bottom/bottom.css">
     <!-- Three.js for Globe Animation -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
@@ -28,39 +28,12 @@
         </symbol>
     </svg>
 
-    <!-- Globe Container for Web Search Animation (outside image container) -->
-    <div class="main-globe-container" id="mainGlobeContainer"></div>
-
-    <!-- Shell Terminal Container for Shell Command Animation (outside image container) -->
-    <div class="shell-terminal-container" id="shellTerminalContainer">
-        <div class="shell-terminal-card">
-            <div class="shell-term-bar">
-                <div class="shell-term-title" id="shellTermTitle">Shell</div>
-            </div>
-            <div class="shell-term-body" id="shellTermBody">
-                <div class="line visible"><b>$</b> <span id="shellCmdText"></span></div>
-                <div class="line" id="shellStreamLine"><span class="muted">› </span><span id="shellStreamText"></span></div>
-                <div class="line" id="shellStatusLine">
-                    <span class="tag run" id="shellStatusTag">●</span>
-                    <span id="shellStatusText">running</span>
-                    <span class="cursor" id="shellCursor" aria-hidden="true"></span>
-                </div>
-                <div class="shell-progress" id="shellProgress">
-                    <span class="fill"></span>
-                    <span class="glint" aria-hidden="true"></span>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="image-stream-container" id="imageStreamContainer">
-        <div class="liquidGlass-effect"></div>
-        <div class="liquidGlass-tint"></div>
-        <div class="liquidGlass-shine"></div>
-        <div class="liquidGlass-content">
-            <img src="" alt="Screenshot Preview" class="stream-image" style="display: none;">
-        </div>
-    </div>
+    <!-- The agent screenshot (#imageStreamContainer), the web-search globe
+         (#mainGlobeContainer) and the shell terminal (#shellTerminalContainer)
+         now live INSIDE the T-grid container components:
+           • container/top_left/  → screenshot   (col 1, row 1)
+           • container/top_right/ → todo ⇄ web ⇄ shell (col 2, row 1)
+         They keep the same ids/classes so the script.js engine code is unchanged. -->
 
     <!-- Template cloned by script.js for each CLI subprocess pill -->
     <template id="cliPillTemplate">
@@ -198,9 +171,9 @@
 
     <!-- Right side is intentionally transparent now: the glass card layers were
          removed so only the text box shows over the greige background. -->
-    <!-- Main content T-grid: screenshot (top-left, glass) | globe/shell (top-right)
-         / tool response (full-width bottom). Zones are injected by their
-         components (screen_shot/, card/, tool_response/). -->
+    <!-- Main content T-grid: screenshot (top-left, glass) | todo/web/shell
+         (top-right) / bottom (full-width). Zones are injected by their
+         components (container/top_left, container/top_right, container/bottom). -->
     <div class="main-grid" id="mainGrid"></div>
 
     <div class="chat-container-wrapper" id="chatWrapper">
@@ -424,9 +397,9 @@
     <!-- New Chat button component (mounts into the left bar body) -->
     <script src="chat/chat.js"></script>
     <!-- Main content T-grid zone components (mount into #mainGrid) -->
-    <script src="screen_shot/screen_shot.js"></script>
-    <script src="card/card.js"></script>
-    <script src="tool_response/tool_response.js"></script>
+    <script src="container/top_left/top_left.js"></script>
+    <script src="container/top_right/top_right.js"></script>
+    <script src="container/bottom/bottom.js"></script>
     <script src="script.js"></script>
 </body>
 </html>

@@ -1,0 +1,173 @@
+/* =====================================================================
+   Top-right container — cross-fades between the agent's TODO list (idle), the
+   web-search globe (web tool running) and the shell terminal (shell running).
+   Driven by script.js setWorkState(). Injected into #mainGrid (col 2, row 1).
+
+   The TODO list is TRANSPARENT: no card, no background, no glow, no progress
+   bar — just the task rows (check / spinner + text) rendered straight onto the
+   cell. Only the cell's own border marks where it renders, and the cell stays
+   blank until window.updateTodoList populates it.
+
+   The shell terminal CARD visuals (.shell-terminal-card / .shell-term-* /
+   .shell-progress) still live in css/style.css and apply here via shared classes.
+   ===================================================================== */
+.work-zone {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    min-height: 0;
+    position: relative;
+    /* The container border that marks where the cell renders (matches the other
+       T-grid cells). The todo content inside is transparent. */
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: var(--glass-radius);
+    overflow: hidden;
+}
+
+/* Each state stacks in the same box and cross-fades via opacity. Using opacity
+   (not display:none) keeps the globe's container measurable for sizing even
+   while it's the hidden state. */
+.work-zone .work-state {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+.work-zone .work-state.is-active {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Globe fills the cell; the Three.js canvas centres itself and stays transparent
+   (alpha renderer + this belt-and-suspenders rule). */
+.work-zone .zone-globe {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.work-zone .zone-globe canvas {
+    background: transparent !important;
+}
+
+/* =====================================================================
+   TODO list — transparent task rows rendered by window.updateTodoList
+   (top_right.js). Blank until populated. check / spinner adapted from
+   coder_animation.html; classes prefixed todo-*, keyframes prefixed tw-*.
+   ===================================================================== */
+/* The TODO list is a compact block that FILLS the cell (~8 compact rows fit),
+   anchored near the top with a little padding. Beyond what fits it scrolls
+   (top_right.js: "no scroll until 3 done, then up one per completion"). */
+.work-zone .work-state.todo-state {
+    align-items: flex-start;        /* anchor to the top — little space above */
+    justify-content: center;
+    padding: clamp(12px, 1.5vw, 16px) clamp(16px, 1.8vw, 22px);
+    box-sizing: border-box;
+}
+.todo-list {
+    width: 100%;
+    max-height: 100%;              /* fill the cell — ~8 compact rows; scrolls beyond */
+    overflow-y: auto;
+    overflow-x: hidden;
+    scroll-behavior: smooth;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.4;
+}
+.todo-list::-webkit-scrollbar { display: none; }
+
+.todo-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    min-height: 28px;
+    flex: 0 0 auto;            /* keep row size so the list scrolls, not squishes */
+    color: rgba(0, 0, 0, 0.6);
+}
+
+.todo-check {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    border-radius: 4px;
+    border: 1.5px solid rgba(0, 0, 0, 0.3);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.todo-check.done {
+    background: transparent;
+    border-color: transparent;
+}
+.todo-check.done::after {
+    content: "";
+    width: 4.5px;
+    height: 8.5px;
+    border: solid #8b5cf6;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg) translate(-0.5px, -1px);
+    animation: tw-tickGlow 3s ease-in-out infinite;
+}
+@keyframes tw-tickGlow {
+    0%, 100% { filter: drop-shadow(0 0 2px rgba(139, 92, 246, 0.6)); }
+    50% { filter: drop-shadow(0 0 5px rgba(139, 92, 246, 1)); }
+}
+
+/* The rotating dial shown on the current (first not-done) task. */
+.todo-spinner {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    border: 2px solid rgba(139, 92, 246, 0.3);
+    border-top-color: #8b5cf6;
+    animation: tw-spin 1s linear infinite;
+    display: inline-block;
+    box-sizing: border-box;
+}
+@keyframes tw-spin {
+    to { transform: rotate(360deg); }
+}
+
+.todo-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* Completed: just the tick + a subtle dim. No strikethrough. */
+.todo-text.is-done {
+    color: rgba(0, 0, 0, 0.4);
+}
+
+/* Interrupted (Stop pressed) — a still-pending task is marked cancelled with a
+   darker ✕ and darker text, instead of a frozen spinner. */
+.todo-cross {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(25, 25, 25, 0.85);
+    font-weight: 800;
+    font-size: 15px;
+    line-height: 1;
+}
+.todo-cross::after { content: "✕"; }
+.todo-text.is-cancelled {
+    color: rgba(25, 25, 25, 0.8);
+}

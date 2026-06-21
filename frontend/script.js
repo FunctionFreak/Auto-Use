@@ -838,9 +838,10 @@ document.addEventListener('DOMContentLoaded', () => {
                             stopBtnFrame.contentWindow.postMessage('pcbtn:show', '*');
                         }
 
-                        // Switch to split layout
-                        document.getElementById('imageStreamContainer').classList.add('agent-visible');
-                        document.getElementById('chatWrapper').classList.add('split-layout');
+                        // Layout note: the screenshot/web/shell now live in the
+                        // persistent T-grid (container/ components), so there's no
+                        // floating panel to reveal and no split-layout to switch to —
+                        // the chat box stays centered at the bottom.
 
                         // Hide eyes only, keep glow
                         const welcomeEl = document.getElementById('welcomeOverlay');
@@ -851,6 +852,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (milestoneStream) {
                             milestoneStream.innerHTML = '';
                         }
+
+                        // Reset the live todo card and make sure it's the visible
+                        // top-right state — a new run starts with no plan until the
+                        // agent writes one (backend also clears todo.md).
+                        if (window.updateTodoList) window.updateTodoList({ objective: '', tasks: [] });
+                        setWorkState('todo');
                     }
                     
                     // Send request to start agent
@@ -918,16 +925,17 @@ document.addEventListener('DOMContentLoaded', () => {
             if (window.webSearchEnd) window.webSearchEnd();
             if (window.shellEnd) window.shellEnd();
 
+            // Interrupted by the user: freeze the todo and mark any still-pending
+            // tasks with a ✕ (so a spinner doesn't rotate forever). Stop-only —
+            // normal completion leaves the ticks alone.
+            if (window.markTodoInterrupted) window.markTodoInterrupted();
+
             fetch('/api/stop-agent', { method: 'POST' })
                 .then(res => res.json())
                 .then(data => {
                     console.log('Agent stop requested:', data);
                     const agentStrip = document.getElementById('agentResponseStrip');
                     if (agentStrip) agentStrip.classList.remove('active');
-
-                    // Revert to centered layout
-                    document.getElementById('imageStreamContainer').classList.remove('agent-visible');
-                    document.getElementById('chatWrapper').classList.remove('split-layout');
 
                     chatInput.disabled = false;
                     chatInput.classList.remove('agent-active');
@@ -962,10 +970,6 @@ document.addEventListener('DOMContentLoaded', () => {
         // Hide Strip
         if (agentStrip) agentStrip.classList.remove('active');
 
-        // Revert to centered layout
-        document.getElementById('imageStreamContainer').classList.remove('agent-visible');
-        document.getElementById('chatWrapper').classList.remove('split-layout');
-
         // Enable Input
         if (chatInput) {
             chatInput.disabled = false;
@@ -997,15 +1001,31 @@ document.addEventListener('DOMContentLoaded', () => {
     // GLOBE ANIMATION FOR WEB SEARCH
     // ============================================
     
-    const mainGlobeContainer = document.getElementById('mainGlobeContainer');
-    const imageStreamContainer = document.getElementById('imageStreamContainer');
-    
+    // Resolved lazily — the top-right container is fetch-injected, so the globe
+    // mount may not exist yet when this closure first runs.
+    let mainGlobeContainer = null;
+
+    // Cross-fade the top-right T-grid cell between its three states:
+    //   'todo'  (idle)  → the coder TODO list
+    //   'web'   (busy)  → the search globe
+    //   'shell' (busy)  → the shell terminal
+    // Toggling .is-active on the matching .work-state drives the CSS opacity
+    // transition; the others fade out.
+    const setWorkState = (state) => {
+        const map = { todo: 'todoState', web: 'webState', shell: 'shellState' };
+        Object.keys(map).forEach((k) => {
+            const el = document.getElementById(map[k]);
+            if (el) el.classList.toggle('is-active', k === state);
+        });
+    };
+
     let globeInitialized = false;
     let globeScene, globeCamera, globeRenderer, globeEarth, globeNetworkGroup;
     let globeParticles, globeLineMesh, globeActivePackets;
     let globeAnimationId = null;
     
     const initMainGlobe = () => {
+        if (!mainGlobeContainer) mainGlobeContainer = document.getElementById('mainGlobeContainer');
         if (globeInitialized || !mainGlobeContainer) return;
         globeInitialized = true;
         
@@ -1286,15 +1306,15 @@ document.addEventListener('DOMContentLoaded', () => {
         window.addEventListener('resize', handleGlobeResize);
     };
     
-    // Web search animation - show globe, slide entire container down
+    // Web search animation — the globe takes over the top-right cell; the TODO
+    // list fades out (setWorkState handles the cross-fade).
     window.webSearchStart = () => {
-        if (!mainGlobeContainer || !imageStreamContainer) return;
-        
         initMainGlobe();
-        mainGlobeContainer.classList.add('visible');
-        imageStreamContainer.classList.add('web-active');
-        
-        // Trigger resize check after visibility transition
+        if (!mainGlobeContainer) return;
+
+        setWorkState('web');
+
+        // Resize the renderer to the cell once the fade-in starts.
         setTimeout(() => {
             if (globeRenderer && globeCamera && mainGlobeContainer) {
                 const containerRect = mainGlobeContainer.getBoundingClientRect();
@@ -1304,13 +1324,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }, 100);
     };
-    
-    // End web search animation - fade globe, slide container back up
+
+    // End web search animation — globe fades out, the TODO list returns.
     window.webSearchEnd = () => {
-        if (!mainGlobeContainer || !imageStreamContainer) return;
-        
-        mainGlobeContainer.classList.remove('visible');
-        imageStreamContainer.classList.remove('web-active');
+        setWorkState('todo');
     };
 
     // ============================================
@@ -1331,17 +1348,33 @@ document.addEventListener('DOMContentLoaded', () => {
     // SHELL TERMINAL ANIMATION
     // ============================================
     
-    const shellTerminalContainer = document.getElementById('shellTerminalContainer');
-    const shellCmdText = document.getElementById('shellCmdText');
-    const shellStreamLine = document.getElementById('shellStreamLine');
-    const shellStreamText = document.getElementById('shellStreamText');
-    const shellStatusLine = document.getElementById('shellStatusLine');
-    const shellStatusTag = document.getElementById('shellStatusTag');
-    const shellStatusText = document.getElementById('shellStatusText');
-    const shellTermTitle = document.getElementById('shellTermTitle');
-    const shellCursor = document.getElementById('shellCursor');
-    const shellProgress = document.getElementById('shellProgress');
-    
+    // Shell terminal elements live inside the fetch-injected top-right container,
+    // so resolve them lazily (re-query on each shell event) instead of capturing
+    // once at closure-init when they may not exist yet.
+    let shellTerminalContainer = null;
+    let shellCmdText = null;
+    let shellStreamLine = null;
+    let shellStreamText = null;
+    let shellStatusLine = null;
+    let shellStatusTag = null;
+    let shellStatusText = null;
+    let shellTermTitle = null;
+    let shellCursor = null;
+    let shellProgress = null;
+
+    const resolveShellEls = () => {
+        shellTerminalContainer = document.getElementById('shellTerminalContainer');
+        shellCmdText = document.getElementById('shellCmdText');
+        shellStreamLine = document.getElementById('shellStreamLine');
+        shellStreamText = document.getElementById('shellStreamText');
+        shellStatusLine = document.getElementById('shellStatusLine');
+        shellStatusTag = document.getElementById('shellStatusTag');
+        shellStatusText = document.getElementById('shellStatusText');
+        shellTermTitle = document.getElementById('shellTermTitle');
+        shellCursor = document.getElementById('shellCursor');
+        shellProgress = document.getElementById('shellProgress');
+    };
+
     let shellStreamTimeout = null;
     let shellTextInterval = null;
     let shellResultInterval = null;
@@ -1364,6 +1397,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const resetShellTerminal = () => {
+        resolveShellEls();
         // Reset all lines to hidden
         if (shellStreamLine) { shellStreamLine.classList.remove('visible'); }
         if (shellStatusLine) { shellStatusLine.classList.remove('visible'); }
@@ -1399,22 +1433,20 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
     
-    // Shell start: terminal card appears, screenshot slides down
+    // Shell start: the terminal takes over the top-right cell; the TODO list
+    // fades out (setWorkState handles the cross-fade).
     window.shellStart = (command, label) => {
-        if (!shellTerminalContainer || !imageStreamContainer) return;
-
         resetShellTerminal();
+        if (!shellTerminalContainer) return;
 
         // Set the terminal title (Shell or AppleScript)
         if (shellTermTitle) shellTermTitle.textContent = label || 'Shell';
 
         // Set the command text
         if (shellCmdText) shellCmdText.textContent = 'autouse.';
-        
-        // Show container + push screenshot down
-        shellTerminalContainer.classList.add('visible');
-        imageStreamContainer.classList.add('shell-active');
-        
+
+        setWorkState('shell');
+
         // Animate stream line after short delay — stream text progressively
         setTimeout(() => {
             if (shellStreamLine) {
@@ -1435,8 +1467,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Shell result: show success or failure
     window.shellResult = (status, output) => {
+        resolveShellEls();
         if (!shellTerminalContainer) return;
-        
+
         // Hide cursor and progress bar
         if (shellCursor) shellCursor.style.display = 'none';
         if (shellProgress) shellProgress.style.display = 'none';
@@ -1472,12 +1505,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
     
-    // Shell end: terminal card fades out, screenshot slides back up
+    // Shell end: terminal fades out, the TODO list returns.
     window.shellEnd = () => {
-        if (!shellTerminalContainer || !imageStreamContainer) return;
-
-        shellTerminalContainer.classList.remove('visible');
-        imageStreamContainer.classList.remove('shell-active');
+        resolveShellEls();
+        setWorkState('todo');
 
         // Reset color after fade out completes
         setTimeout(() => {
@@ -1998,8 +2029,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.cliAwaitStart = (reason) => {
         console.log('[cli] await_start', reason);
-        // Slide out the screenshot panel.
-        if (imageStreamContainer) imageStreamContainer.classList.remove('agent-visible');
         // Drop split-layout so the chat box snaps back to its initial big
         // centered state (the base .chat-container-wrapper rule wins). This
         // is what the user wants: full-width chat box during cli_await.
@@ -2018,8 +2047,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (_cliPrevSplit) chatWrapper.classList.add('split-layout');
         }
         document.body.classList.remove('cli-mode');
-        // Restore the screenshot panel.
-        if (imageStreamContainer) imageStreamContainer.classList.add('agent-visible');
         // Clear pills after the fade-out finishes (matches the 0.4s transition).
         setTimeout(() => {
             if (!cliStreamList) return;
