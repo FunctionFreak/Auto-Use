@@ -17,9 +17,7 @@
     min-width: 0;
     min-height: 0;
     position: relative;
-    /* The container border that marks where the cell renders (matches the other
-       T-grid cells). The todo content inside is transparent. */
-    border: 1px solid rgba(0, 0, 0, 0.12);
+    /* Borderless — content (todo / globe / shell) renders transparently. */
     border-radius: var(--glass-radius);
     overflow: hidden;
 }

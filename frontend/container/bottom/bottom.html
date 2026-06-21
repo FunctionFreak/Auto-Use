@@ -1,5 +1,12 @@
-<!-- Bottom container — full-width row of the main T-grid. Reserved; content TBD
-     (left intentionally as a placeholder for now). Injected by bottom.js. -->
-<div class="container-zone bottom-zone" id="zoneBottom" aria-label="Bottom panel">
-    <span class="zone-placeholder">Tool response</span>
+<!-- Bottom container — full-width row of the main T-grid. Top-left caption +
+     the tool-response flow. The flow steps (logos + labels + line) are BUILT
+     FROM CONFIG in bottom.js (STEPS / SHAPES), so the backend can map its tool
+     events to steps later. Injected by bottom.js. -->
+<div class="container-zone bottom-zone" id="zoneBottom" aria-label="Tool response">
+    <div class="tool-response-label">Tool response: <span class="tool-used-count" id="toolUsedCount">0</span> tools used</div>
+
+    <div class="tool-flow" aria-hidden="true">
+        <!-- bottom.js builds one .tool-flow-item per STEP into here -->
+        <div class="tool-flow-tree" id="toolFlowTree"></div>
+    </div>
 </div>

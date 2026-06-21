@@ -1,16 +1,105 @@
 /* =====================================================================
-   Bottom container — bottom row of the main T-grid, spanning both columns.
-   Reserved placeholder for now (content wired in later). Replaces the old
-   tool_response/ zone.
+   Bottom container — "Tool response" flow. Caption top-left; below it a vertical
+   line down the left with the branch logos on it. The steps are BUILT FROM
+   CONFIG in bottom.js; the animation is STATE-DRIVEN: bottom.js adds .line-in
+   (draw the segment) and .icon-in (reveal the logo) per step, types the label,
+   and morphs the loader to a tick on the canvas. No fixed @keyframes timeline.
    ===================================================================== */
 .bottom-zone {
     grid-column: 1 / 3;
     grid-row: 2;
     min-width: 0;
     min-height: 0;
+    position: relative;
     border: 1px solid rgba(0, 0, 0, 0.12);   /* temp outline to show the shape */
     border-radius: var(--glass-radius);
+    padding: clamp(8px, 1vw, 12px) clamp(12px, 1.4vw, 16px);
+    box-sizing: border-box;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Small slanted label, tucked top-left. */
+.tool-response-label {
+    flex: 0 0 auto;
+    font-family: Georgia, 'Times New Roman', 'Iowan Old Style', serif;
+    font-style: italic;
+    font-size: clamp(9.5px, 0.95vw, 11.5px);
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    color: rgba(60, 60, 60, 0.8);
+    user-select: none;
+}
+.tool-used-count {
+    font-weight: 600;
+    color: rgba(40, 40, 40, 0.9);
+}
+
+/* Flow area. Opacity is toggled by the JS test loop for a clean reset. */
+.tool-flow {
+    flex: 1 1 auto;
+    position: relative;
+    min-height: 0;
+    --tf-line: rgba(0, 0, 0, 0.22);
+    opacity: 1;
+    transition: opacity 0.45s ease;
+}
+
+/* The column of logos; a line segment connects each logo to the one above
+   (and the first to the label). The logos cut the line between segments. */
+.tool-flow-tree {
+    position: absolute;
+    left: 2px;
+    top: 2px;
+    --tf-gap: clamp(10px, 1.9vh, 13px);  /* line-segment length / space between logos (fits 5 on short windows) */
+    display: flex;
+    flex-direction: column;
+    padding-top: var(--tf-gap);         /* room for the first segment (label -> logo 1) */
+    gap: var(--tf-gap);
+}
+
+.tool-flow-item {
+    position: relative;
+    height: 16px;
     display: flex;
     align-items: center;
-    justify-content: center;
+    gap: 8px;                  /* logo -> text */
+}
+/* vertical line SEGMENT above each logo (centred on the 16px icon). Drawn when
+   bottom.js adds .line-in (smooth scaleY transition = the line "coming down"). */
+.tool-flow-item::before {
+    content: "";
+    position: absolute;
+    left: 7.5px;
+    top: calc(-1 * var(--tf-gap));
+    height: var(--tf-gap);
+    width: 1px;
+    background: var(--tf-line);
+    transform: scaleY(0);
+    transform-origin: top;
+    transition: transform 0.45s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+.tool-flow-item.line-in::before { transform: scaleY(1); }
+
+/* logo (canvas) — size matches the JS engine (16px). Revealed when its segment
+   has reached it (.icon-in). */
+.tf-icon {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+.tool-flow-item.icon-in .tf-icon { opacity: 1; }
+
+/* label — typed char-by-char by bottom.js (blazing). */
+.tool-flow-word {
+    flex: 0 0 auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", "Courier New", monospace;
+    font-size: clamp(11px, 1.1vw, 12.5px);
+    color: rgba(60, 60, 60, 0.85);
+    white-space: nowrap;
+    overflow: hidden;
 }

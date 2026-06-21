@@ -12,15 +12,8 @@
     position: relative;
     border-radius: var(--glass-radius);
     overflow: hidden;
-    border: 1px solid rgba(0, 0, 0, 0.10);
-
-    /* Frosted glass: subtle grey tint + backdrop blur + inset white shine. */
-    background: rgba(200, 200, 200, 0.18);
-    -webkit-backdrop-filter: blur(8px) saturate(150%);
-    backdrop-filter: blur(8px) saturate(150%);
-    box-shadow: inset 1px 1px 1px rgba(255, 255, 255, 0.5),
-                inset -1px -1px 1px rgba(255, 255, 255, 0.4),
-                0 clamp(4px, 1vw, 8px) clamp(16px, 3vw, 28px) rgba(0, 0, 0, 0.08);
+    /* Fully transparent — nothing shows until the screenshot streams or the
+       Agent Notes appear (no frosted bg, no shadow, no border). */
 }
 
 .screenshot-frame {
@@ -39,19 +32,80 @@
     object-position: center;
 }
 
-/* Idle hint behind the image, covered once a frame paints. */
-.screenshot-idle {
+/* =====================================================================
+   Agent Notes — the scratchpad, shown in this cell (image hidden) once a run
+   ends. 13px to match the todo list; header "Agent Notes" + pen icon on top.
+   Toggled by .notes-active (set by window.showAgentNotes in top_left.js).
+   ===================================================================== */
+.agent-notes {
     position: absolute;
     inset: 0;
+    display: none;
+    flex-direction: column;
+    padding: clamp(12px, 1.5vw, 16px) clamp(14px, 1.6vw, 18px);
+    box-sizing: border-box;
+}
+.screenshot-zone.notes-active .agent-notes { display: flex; }
+.screenshot-zone.notes-active .screenshot-frame { display: none; }
+
+.agent-notes-header {
     display: flex;
     align-items: center;
-    justify-content: center;
-    pointer-events: none;
-}
-.screenshot-idle-label {
+    gap: 8px;
+    flex: 0 0 auto;
+    margin-bottom: clamp(8px, 1vw, 12px);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    font-size: clamp(12px, 1.3vw, 15px);
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    color: rgba(90, 90, 90, 0.32);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: rgba(55, 55, 55, 0.95);
+}
+.agent-notes-pen {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 auto;
+    color: #8b5cf6;
+}
+
+.agent-notes-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(4px, 0.6vw, 7px);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.45;
+    color: rgba(0, 0, 0, 0.62);
+}
+.agent-notes-list::-webkit-scrollbar { display: none; }
+
+.agent-note {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+}
+.agent-note-num {
+    flex: 0 0 auto;
+    min-width: 1.4em;
+    text-align: right;
+    color: #8b5cf6;
+    font-weight: 700;
+}
+.agent-note-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: normal;            /* notes wrap (full content), unlike todo rows */
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+/* Shown when the run ends with an empty scratchpad — the image is still gone. */
+.agent-note-empty {
+    color: rgba(0, 0, 0, 0.35);
+    font-style: italic;
 }

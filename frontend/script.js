@@ -858,6 +858,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         // agent writes one (backend also clears todo.md).
                         if (window.updateTodoList) window.updateTodoList({ objective: '', tasks: [] });
                         setWorkState('todo');
+
+                        // Drop the previous run's "Agent Notes" so the screenshot
+                        // area is live again for this run (notes reappear on finish).
+                        if (window.hideAgentNotes) window.hideAgentNotes();
                     }
                     
                     // Send request to start agent

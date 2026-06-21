@@ -356,6 +356,17 @@ def _reset_todo_file():
     except Exception:
         debug_exception("_reset_todo_file")
 
+def _reset_scratchpad_file():
+    """Delete <platform>_use/scratchpad/milestone/milestone.md so a new run starts
+    with an empty scratchpad — otherwise the end-of-run "Agent Notes" view would
+    show the previous run's entries accumulated on top of the new ones."""
+    try:
+        notes_file = get_platform_use_path() / "scratchpad" / "milestone" / "milestone.md"
+        if notes_file.exists():
+            notes_file.unlink()
+    except Exception:
+        debug_exception("_reset_scratchpad_file")
+
 def set_frontend_flag():
     """Override the FRONTEND flag in Auto_Use.<platform>_use.tree.element to True"""
     try:
@@ -935,6 +946,37 @@ def send_todo_to_frontend(payload):
     except Exception:
         debug_exception("send_todo_to_frontend")
 
+def _parse_scratchpad_md(content):
+    """Parse milestone.md (the agent scratchpad: '1. note\\n2. note\\n…') into a
+    list of entry strings, with the leading 'N.' numbering stripped (the frontend
+    re-numbers them)."""
+    entries = []
+    for raw in (content or "").split('\n'):
+        line = raw.strip()
+        if not line:
+            continue
+        dot = line.find('. ')
+        if dot != -1 and line[:dot].isdigit():
+            line = line[dot + 2:].strip()
+        if line:
+            entries.append(line)
+    return entries
+
+def send_agent_notes(content):
+    """Show the agent's scratchpad as 'Agent Notes' in the top-left container
+    (called when a run ends — completed or stopped)."""
+    global webview_window
+    if not webview_window:
+        return
+    try:
+        entries = _parse_scratchpad_md(content)
+        escaped = _js_escape(json.dumps(entries))
+        webview_window.evaluate_js(
+            f"window.showAgentNotes && window.showAgentNotes('{escaped}')"
+        )
+    except Exception:
+        debug_exception("send_agent_notes")
+
 def send_web_status_to_frontend(status):
     global webview_window
     if webview_window:
@@ -1082,8 +1124,10 @@ def start_agent():
 
             # Clear any stale todo from a previous run in this session and blank
             # the top-right card immediately; the watcher below repopulates it as
-            # soon as the agent writes its plan.
+            # soon as the agent writes its plan. Also clear the scratchpad so the
+            # end-of-run "Agent Notes" view only shows this run's entries.
             _reset_todo_file()
+            _reset_scratchpad_file()
             send_todo_to_frontend({"objective": "", "tasks": []})
 
             def monitor_milestones():
@@ -1202,6 +1246,17 @@ def start_agent():
                             )
                     except Exception:
                         debug_exception("signaling agent completion")
+
+                    # Replace the screenshot with the "Agent Notes" view now the
+                    # run has ended (completed OR stopped) — ALWAYS, even if the
+                    # scratchpad is empty (empty content still shows the notes view,
+                    # the image is gone).
+                    try:
+                        notes_path = get_platform_use_path() / "scratchpad" / "milestone" / "milestone.md"
+                        content = notes_path.read_text(encoding='utf-8') if notes_path.exists() else ""
+                        send_agent_notes(content)
+                    except Exception:
+                        debug_exception("send agent notes on finish")
 
         thread = threading.Thread(target=run_agent)
         thread.daemon = True
