@@ -1623,6 +1623,18 @@ body.cli-mode .glass-button-wrapper {
 .model-dropdown-option .model-icon { width: 20px; height: 20px; fill: currentColor; flex-shrink: 0; opacity: 0.9; }
 .model-dropdown-empty { padding: 8px 10px; color: rgba(90, 90, 90, 0.6); font-size: 13px; }
 
+/* Disabled option — a provider with no API key. Greyed and non-selectable; clicking it
+   toasts a disclaimer (handled in makeDropdown). The hint on the right says why. */
+.model-dropdown-option--disabled { cursor: not-allowed; color: rgba(90, 90, 90, 0.45); }
+.model-dropdown-option--disabled:hover { background-color: transparent; color: rgba(90, 90, 90, 0.45); }
+.model-dropdown-option-hint {
+    font-size: 0.8em;
+    font-style: italic;
+    color: rgba(170, 95, 95, 0.8);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
 /* ============================================================
    AutoUse helper info popup
    Shown once when the user clicks Connect under Remote Connection →

@@ -155,21 +155,39 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (window.showToast) window.showToast('Please set the provider in Settings');
                 return;
             }
-            selectedProvider = sel.provider;
-            if (providerDropdown) providerDropdown.select(sel.provider);
-            const models = known.models || [];
-            if (sel.model && models.some(m => m.id === sel.model)) selectedModel = sel.model;
-            refreshChatDropdown();
             fetch('/api/keys/status').then(r => r.json()).then(status => {
-                if (!status[sel.provider]) {
-                    gateInput(false, 'Add the API key in Settings first...');
-                    if (window.showToast) window.showToast('Please set the provider in Settings');
-                } else if (selectedModel) {
-                    gateOnConfig(sel.provider, selectedModel);
+                // Apply the saved selection ONLY if the provider still has a key (or, for
+                // google, Vertex is configured). A keyless provider can't be selected, so a
+                // saved-but-now-keyless one reverts to "select model" + a disabled input.
+                const finalize = (available) => {
+                    if (!available) {
+                        selectedProvider = null;
+                        selectedModel = null;
+                        if (providerDropdown) providerDropdown.setPlaceholder('Select a provider…');
+                        refreshChatDropdown();
+                        gateInput(false, 'Add the API key in Settings first...');
+                        if (window.showToast) window.showToast('Add the ' + (known.name || sel.provider) + ' API key in Settings');
+                        return;
+                    }
+                    selectedProvider = sel.provider;
+                    if (providerDropdown) providerDropdown.select(sel.provider);
+                    const models = known.models || [];
+                    if (sel.model && models.some(m => m.id === sel.model)) selectedModel = sel.model;
+                    refreshChatDropdown();
+                    if (selectedModel) gateOnConfig(sel.provider, selectedModel);
+                    else gateInput(false, 'Select a model…');
+                };
+
+                if (status[sel.provider]) {
+                    finalize(true);
+                } else if (sel.provider === 'google') {
+                    // Google can also be enabled via Vertex (no direct API key).
+                    fetch('/api/vertex/status').then(r => r.json())
+                        .then(d => finalize(!!d.project_id)).catch(() => finalize(false));
                 } else {
-                    gateInput(false, 'Select a model…');
+                    finalize(false);
                 }
-            }).catch(() => {});
+            }).catch(() => { refreshChatDropdown(); });
         }).catch(() => { refreshChatDropdown(); });
     };
 
@@ -241,15 +259,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 items.forEach(it => {
                     const opt = document.createElement('div');
-                    opt.className = 'model-dropdown-option';
+                    opt.className = 'model-dropdown-option' + (it.disabled ? ' model-dropdown-option--disabled' : '');
                     opt.dataset.value = it.value;
                     const label = document.createElement('span');
                     label.className = 'model-dropdown-option-label';
                     label.textContent = it.label;
                     opt.appendChild(label);
-                    if (it.reasoning) opt.appendChild(brainIcon());
+                    if (it.disabled) {
+                        // Show why it can't be picked (e.g. no API key).
+                        const hint = document.createElement('span');
+                        hint.className = 'model-dropdown-option-hint';
+                        hint.textContent = it.hint || 'unavailable';
+                        opt.appendChild(hint);
+                    } else if (it.reasoning) {
+                        opt.appendChild(brainIcon());
+                    }
                     opt.addEventListener('click', (e) => {
                         e.stopPropagation();
+                        // A disabled option (no key) can't be selected — toast the disclaimer
+                        // and keep the menu open so the rest stay visible.
+                        if (it.disabled) {
+                            if (window.showToast && it.disabledMsg) window.showToast(it.disabledMsg);
+                            return;
+                        }
                         api.select(it.value);
                         root.classList.remove('open');
                         if (onChange) onChange(it.value);
@@ -289,10 +321,20 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Populate the Provider dropdown from providersData, restoring any current
-    // selection so reopening Settings shows the active choice.
+    // selection so reopening Settings shows the active choice. Providers with NO API
+    // key are shown greyed + non-selectable (clicking one toasts a disclaimer) so the
+    // user can't pick a model — and thus can't start the agent — without a key. Kept in
+    // sync with apiKeys, which loadKeyStatus / save / delete refresh.
     const populateProviderSelect = () => {
         if (!providerDropdown) return;
-        providerDropdown.setItems(providersData.map(p => ({ value: p.id, label: p.name, reasoning: false })));
+        providerDropdown.setItems(providersData.map(p => ({
+            value: p.id,
+            label: p.name,
+            reasoning: false,
+            disabled: !apiKeys[p.id],
+            hint: 'API key needed',
+            disabledMsg: 'Add the ' + p.name + ' API key in Settings first',
+        })));
         if (selectedProvider) providerDropdown.select(selectedProvider);
         else providerDropdown.setPlaceholder(providersData.length ? 'Select a provider…' : 'No providers found');
     };
@@ -327,6 +369,7 @@ document.addEventListener('DOMContentLoaded', () => {
             Object.keys(status).forEach(provider => {
                 apiKeys[provider] = status[provider] ? true : null;
             });
+            populateProviderSelect();   // re-gate the provider dropdown now keys are known
         })
         .catch(err => console.error('Failed to load key status:', err));
 
@@ -391,6 +434,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         unsealProviderRow(row);
                     }
                 });
+                // Mirror into apiKeys so the provider dropdown gates correctly, then re-gate.
+                document.querySelectorAll('.settings-provider-row').forEach(row => {
+                    const provider = row.dataset.provider;
+                    apiKeys[provider] = status[provider] ? true : null;
+                });
+                populateProviderSelect();
                 // If Google has no API key, check if Vertex is configured instead
                 if (!status['google']) {
                     fetch('/api/vertex/status')
@@ -403,6 +452,9 @@ document.addEventListener('DOMContentLoaded', () => {
                                     const input = googleRow.querySelector('.settings-provider-input');
                                     if (input) input.placeholder = 'Vertex AI configured';
                                 }
+                                // Vertex counts as "google available" for provider gating.
+                                apiKeys['google'] = true;
+                                populateProviderSelect();
                             }
                         })
                         .catch(() => {});
@@ -427,16 +479,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 unsealProviderRow(row);
                 // Clear in-memory flag
                 apiKeys[provider] = null;
-                // Lock input and reset if deleted key belongs to the active provider
+                // Lock input and reset if deleted key belongs to the active provider —
+                // the chat box reverts to "select model" and the agent can't start.
                 if (provider === selectedProvider) {
                     selectedProvider = null;
                     selectedModel = null;
                     persistSelection({ provider: null, model: null });
                     gateInput(false, 'Select a model in Settings to start...');
                     const ci = getChatInput(); if (ci) ci.value = '';
-                    populateProviderSelect();   // reset the Settings provider dropdown
                     refreshChatDropdown();      // chat drop-up back to "select model"
                 }
+                // Always re-gate the provider dropdown so the now-keyless provider greys out.
+                populateProviderSelect();
             })
             .catch(err => console.error('Failed to delete key:', err));
         });
@@ -527,8 +581,11 @@ document.addEventListener('DOMContentLoaded', () => {
     fetch('/api/vertex/status')
         .then(res => res.json())
         .then(data => {
-            if (data.project_id && gcpVertexBtn) {
-                gcpVertexBtn.classList.add('configured');
+            if (data.project_id) {
+                if (gcpVertexBtn) gcpVertexBtn.classList.add('configured');
+                // Vertex configured counts as "google available" for provider gating.
+                apiKeys['google'] = true;
+                populateProviderSelect();
             }
         })
         .catch(() => {});
@@ -610,6 +667,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
             Promise.all(savePromises)
                 .then(() => {
+                    // Newly-keyed providers are now selectable — re-gate the dropdown.
+                    populateProviderSelect();
                     resetSettingsToMenu();
                     if (selectedProvider && selectedModel) {
                         const isVertex = selectedModel.includes('vertex');
