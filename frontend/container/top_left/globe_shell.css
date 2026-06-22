@@ -25,11 +25,11 @@
 .work-overlay.is-active { opacity: 1; }
 
 /* globe — fills the cell; globe_shell.js sizes the WebGL canvas to the cell.
-   Nudged a little left of centre. */
+   Nudged well left of centre. */
 #mainGlobeContainer {
     width: 100%; height: 100%;
     display: flex; align-items: center; justify-content: center;
-    transform: translateX(-9%);
+    transform: translateX(-18%);
 }
 
 /* =====================================================================
