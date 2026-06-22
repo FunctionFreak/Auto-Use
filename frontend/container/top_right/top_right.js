@@ -1,144 +1,122 @@
-// Top-right container loader — injects the todo/web/shell cell into #mainGrid
-// (column 2, row 1). State cross-fade (todo ⇄ web ⇄ shell) is driven from
-// script.js via setWorkState(); this file mounts the markup AND owns the live
-// TODO render hook (window.updateTodoList), fed by app.py's todo.md watcher.
+// =====================================================================
+// Top-right container — LIVE "tracking progress" stream. Mounts top_right.html,
+// then exposes window.trackingProgress { push, start, end }. While the agent runs,
+// each scratchpad entry (fed from window.streamMilestone in script.js) streams in
+// as a circle-bullet line on a connecting line, conveyor-scrolling up as it fills;
+// the content fades out when the run ends. Chain mechanics mirror bottom_left.js.
+// =====================================================================
 (function () {
     'use strict';
 
-    // --- live todo state (per run) ---
-    var ROW_PITCH = 30;          // fallback row pitch (~28px row + 2px gap); measured live when possible
-    var _lastTodo = null;        // last tasks array we rendered (for interrupt re-render)
-    var _interrupted = false;    // true after Stop pressed — freezes the list (✕ shown)
+    var TYPE_MS = 5;            // delay between typewriter ticks
+    var CHARS_PER_TICK = 2;     // chars revealed per tick (TYPE_MS/CHARS_PER_TICK ≈ per-char speed)
 
-    // Build the rows. stopped=true => every not-done task is marked cancelled (✕).
-    function renderTodo(tasks, stopped) {
-        var listEl = document.getElementById('todoList');
-        if (!listEl) return;
+    var zoneEl = null, flowEl = null, treeEl = null, frontier = -1;
 
-        var firstUndone = -1;
-        for (var k = 0; k < tasks.length; k++) {
-            if (!tasks[k].done) { firstUndone = k; break; }
-        }
-
-        // Update rows IN PLACE when the task count is unchanged (the common case:
-        // a task just got checked). Rebuilding innerHTML every update would reset
-        // scrollTop to 0, so the "move up" would snap-then-glide instead of gliding
-        // smoothly by one row. Only a changed count (first populate / the agent
-        // expanded the list) rebuilds.
-        var reuse = listEl.children.length === tasks.length;
-        if (!reuse) listEl.innerHTML = '';
-
-        tasks.forEach(function (t, i) {
-            var item, mark, label;
-            if (reuse) {
-                item = listEl.children[i];
-                mark = item.children[0];
-                label = item.children[1];
-            } else {
-                item = document.createElement('div');
-                item.className = 'todo-item';
-                mark = document.createElement('span');
-                label = document.createElement('span');
-                item.appendChild(mark);
-                item.appendChild(label);
-                listEl.appendChild(item);
-            }
-
-            label.className = 'todo-text';
-            if (t.done) {
-                mark.className = 'todo-check done';
-                label.classList.add('is-done');
-            } else if (stopped) {
-                mark.className = 'todo-cross';            // ✕ — interrupted, was pending
-                label.classList.add('is-cancelled');
-            } else if (i === firstUndone) {
-                mark.className = 'todo-spinner';          // rotating dial — in progress
-            } else {
-                mark.className = 'todo-check';            // empty box — pending
-            }
-
-            var text = t.text || ('task ' + (i + 1));
-            if (label.textContent !== text) label.textContent = text;
-        });
-
-        // Scroll behaviour (skip entirely once interrupted — keep the ✕ frozen).
-        if (stopped) return;
-        requestAnimationFrame(function () {
-            var doneCount = 0;
-            for (var j = 0; j < tasks.length; j++) { if (tasks[j].done) doneCount++; }
-
-            // Stay put until 3 tasks are checked; from the 3rd onward, move up
-            // exactly one row per completion (smooth, one at a time). Clamped to
-            // the scrollable range, so a list that already fits never moves.
-            var rowsUp = Math.max(0, doneCount - 2);
-
-            var pitch = ROW_PITCH;
-            if (listEl.children.length >= 2) {
-                var measured = listEl.children[1].offsetTop - listEl.children[0].offsetTop;
-                if (measured > 0) pitch = measured;
-            }
-
-            var maxScroll = listEl.scrollHeight - listEl.clientHeight;
-            var target = Math.min(Math.max(0, rowsUp * pitch), Math.max(0, maxScroll));
-            listEl.scrollTo({ top: target, behavior: 'smooth' });
-        });
+    /* ---------------- blazing-fast typewriter (from bottom_left) ---------------- */
+    function typeText(el, text, onTick) {
+        if (!el) return;
+        clearTimeout(el._typeTimer);
+        el.textContent = '';
+        var i = 0;
+        (function tick() {
+            i = Math.min(i + CHARS_PER_TICK, text.length);
+            el.textContent = text.slice(0, i);
+            if (onTick) onTick();                         // text may wrap -> height grew, re-pin scroll
+            if (i >= text.length) return;
+            el._typeTimer = setTimeout(tick, TYPE_MS);
+        })();
     }
 
-    // Render the main agent's real todo list into #todoState. Defined up front
-    // (queries the DOM lazily) so it exists before the backend ever calls it,
-    // even though the markup is fetch-injected below. Payload (string or object):
-    //   { objective: "<goal>", tasks: [ { text: "...", done: true|false }, ... ] }
-    // An empty payload is a RESET (new run / cleared): blanks the card and clears
-    // the interrupt state.
-    window.updateTodoList = function (payload) {
-        var data = payload;
-        if (typeof payload === 'string') {
-            try { data = JSON.parse(payload); } catch (e) { return; }
+    /* ---------------- conveyor scroll ----------------
+       Entries wrap to as many lines as they need, so heights vary — we measure the
+       real layout and pin the BOTTOM of the stream to the bottom of the box. Once
+       the content overflows, older entries slide up past the top mask and dissolve. */
+    function scrollToFrontier() {
+        if (!treeEl || !flowEl) return;
+        var overflow = Math.max(0, treeEl.offsetHeight - flowEl.clientHeight);
+        treeEl.style.transform = 'translateY(' + (-overflow) + 'px)';
+    }
+
+    /* ---------------- one scratchpad entry: dot bullet + typed text ---------------- */
+    function addEntry(text) {
+        if (!treeEl) return;
+        var item = document.createElement('div');
+        item.className = 'br-item';
+        var dot = document.createElement('span');
+        dot.className = 'br-circle';
+        var word = document.createElement('span');
+        word.className = 'br-word';
+        item.appendChild(dot);
+        item.appendChild(word);
+        treeEl.appendChild(item);
+
+        frontier += 1;
+        scrollToFrontier();                               // slide up if it overflows
+        item.classList.add('line-in');                    // draw the connecting line
+        setTimeout(function () {
+            item.classList.add('icon-in');                // reveal the dot
+            typeText(word, text, scrollToFrontier);       // type the entry; re-pin as it wraps
+        }, 320);                                          // dot/text land as the line reaches them
+    }
+
+    // Strip a leading "N. " numbering — the circle bullet replaces it.
+    function stripNum(text) {
+        var s = String(text == null ? '' : text).trim();
+        var dot = s.indexOf('. ');
+        if (dot > 0 && /^\d+$/.test(s.slice(0, dot))) return s.slice(dot + 2);
+        return s;
+    }
+
+    function clearTree() {
+        if (treeEl) {
+            var words = treeEl.querySelectorAll('.br-word');
+            for (var i = 0; i < words.length; i++) clearTimeout(words[i]._typeTimer);
+            treeEl.innerHTML = '';
+            treeEl.style.transition = 'none';             // snap back to top, no animation
+            treeEl.style.transform = 'translateY(0)';
+            void treeEl.offsetHeight;
+            treeEl.style.transition = '';
         }
-        if (!data || typeof data !== 'object') return;
+        frontier = -1;
+    }
 
-        var listEl = document.getElementById('todoList');
-        if (!listEl) return;   // markup not injected yet — backend retries on next change
-
-        var tasks = Array.isArray(data.tasks) ? data.tasks : [];
-
-        if (!tasks.length) {
-            // Reset for a fresh run: blank, and clear interrupt state.
-            _interrupted = false;
-            _lastTodo = null;
-            listEl.innerHTML = '';
-            return;
-        }
-
-        // Frozen after a manual Stop until the next run sends an empty reset —
-        // don't let the backend's final read overwrite the ✕ marks.
-        if (_interrupted) return;
-
-        _lastTodo = tasks.slice();
-        renderTodo(tasks, false);
-    };
-
-    // Called from script.js when the user presses Stop: freeze the list and mark
-    // every still-pending task with a ✕ (so a spinner doesn't rotate forever).
-    window.markTodoInterrupted = function () {
-        if (_interrupted || !_lastTodo || !_lastTodo.length) return;
-        var anyPending = _lastTodo.some(function (t) { return !t.done; });
-        if (!anyPending) return;   // nothing pending — leave the ticks as-is
-        _interrupted = true;
-        renderTodo(_lastTodo, true);
+    // Public API — driven by script.js (streamMilestone -> push; start/end on run lifecycle).
+    window.trackingProgress = {
+        push: function (text) {                           // one scratchpad entry arrived
+            if (!treeEl) return;
+            var t = stripNum(text);
+            if (!t) return;
+            // reveal (label + stream) only when there's actually something written
+            if (zoneEl && frontier < 0) zoneEl.classList.add('br-active');
+            addEntry(t);
+        },
+        start: function () {                              // new run: reset; stay hidden until 1st entry
+            if (zoneEl) zoneEl.classList.remove('br-active');
+            clearTree();
+        },
+        end: function () {                               // run done/stopped: fade content out
+            if (zoneEl) zoneEl.classList.remove('br-active');
+        },
     };
 
     function mount() {
         var grid = document.getElementById('mainGrid');
-        if (!grid || grid.querySelector('.work-zone')) return;
+        if (!grid || grid.querySelector('.top-right-zone')) return;
         fetch('container/top_right/top_right.html')
             .then(function (r) { return r.text(); })
             .then(function (html) {
-                if (grid.querySelector('.work-zone')) return; // guard race
+                if (grid.querySelector('.top-right-zone')) return; // guard race
                 var holder = document.createElement('div');
                 holder.innerHTML = html.trim();
-                var zone = holder.querySelector('.work-zone');
-                if (zone) grid.appendChild(zone);
+                var zone = holder.querySelector('.top-right-zone');
+                if (!zone) return;
+                grid.appendChild(zone);
+                zoneEl = zone;
+                flowEl = zone.querySelector('.br-flow');
+                treeEl = zone.querySelector('.br-tree');
+                // re-pin when the window resizes (wrapping changes with width)
+                window.addEventListener('resize', function () { scrollToFrontier(); });
             })
             .catch(function () { /* non-fatal */ });
     }

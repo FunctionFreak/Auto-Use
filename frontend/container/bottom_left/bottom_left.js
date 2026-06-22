@@ -660,6 +660,7 @@
     var demoOn = false, demoTimer = null;
     var thinkingStep = null, receivedEarly = false, openingDone = true;
     var openTimers = [], toolQ = [], toolTimer = null;
+    var todoCreateCount = 0;   // # of create-todo (todo_list) calls this run — 2nd+ shows "overwrote todo"
 
     function clearArr(a) { for (var i = 0; i < a.length; i++) clearTimeout(a[i]); a.length = 0; }
 
@@ -686,6 +687,7 @@
             if (s._item && s._item.parentNode) s._item.parentNode.removeChild(s._item);
         }
         STEPS.length = 0; frontier = -1; thinkingStep = null; receivedEarly = false; openingDone = true; shimmerWord = null;
+        todoCreateCount = 0;
         if (treeEl) {                                        // snap the conveyor back to top, no animation
             treeEl.style.transition = 'none';
             treeEl.style.transform = 'translateY(0)';
@@ -764,6 +766,8 @@
     function toolSpec(p) {
         var name = p.name || '';
         if (name === 'left_click') { var c = p.clicks || 1; name = c >= 3 ? 'left_click_3' : (c === 2 ? 'left_click_2' : 'left_click_1'); }
+        // A second (or later) create-todo in the same run overrides the first — same logo, different word.
+        if (name === 'todo_list' && ++todoCreateCount > 1) return { shape: 'todo', label: 'overwrote todo' };
         return TOOL_MAP[name] || { shape: 'loader', label: (p.name || 'tool') };
     }
     // A terminal "!" drop — agent interrupted (stop) or a backend/LLM error. Not a tool,

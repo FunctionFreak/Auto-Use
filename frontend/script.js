@@ -682,40 +682,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
     
-    // Milestone streaming — letter by letter, stacking vertically. Each
-    // char gets its own opacity-fade-in span so the line types out
-    // smoothly (matching the Telegram banner's typewriter feel).
+    // Scratchpad/milestone streaming — the backend calls this once per entry
+    // (~every 1s). It feeds the LIVE "tracking progress" stream in the top-right
+    // cell (container/top_right), which types each entry on a circle-bullet line
+    // and fades away when the run ends. (The old #milestoneStream node was
+    // orphaned/hidden; this is the visible home now.)
     window.streamMilestone = (text) => {
-        const milestoneStream = document.getElementById('milestoneStream');
-        if (!milestoneStream) return;
-
-        const milestoneLine = document.createElement('div');
-        milestoneLine.className = 'milestone-line';
-        milestoneStream.appendChild(milestoneLine);
-
-        // Array.from splits by code point so emoji (🧠 / 🎯 / ✅) stay intact.
-        const chars = Array.from(text);
-        let i = 0;
-        const CHAR_DELAY_MS = 5;
-        const FADE_MS = 60;
-
-        const streamChar = () => {
-            if (i >= chars.length) return;
-            const span = document.createElement('span');
-            span.textContent = chars[i];
-            span.style.opacity = '0';
-            span.style.transition = 'opacity ' + FADE_MS + 'ms ease-out';
-            milestoneLine.appendChild(span);
-            requestAnimationFrame(() => { span.style.opacity = '1'; });
-
-            // Auto-scroll keeps the newest line pinned to the bottom.
-            milestoneStream.parentElement.scrollTop = milestoneStream.parentElement.scrollHeight;
-
-            i++;
-            setTimeout(streamChar, CHAR_DELAY_MS);
-        };
-
-        streamChar();
+        if (window.trackingProgress) window.trackingProgress.push(text);
     };
 
     // Letter-by-letter streaming for agent text in the response strip.
@@ -844,14 +817,16 @@ document.addEventListener('DOMContentLoaded', () => {
                         const welcomeEl = document.getElementById('welcomeOverlay');
                         if (welcomeEl) welcomeEl.classList.add('eyes-hidden');
 
-                        // Clear milestone stream for fresh start
+                        // Start the live tracking-progress stream (top-right): reset
+                        // any prior run's entries and fade the content in.
+                        if (window.trackingProgress) window.trackingProgress.start();
                         const milestoneStream = document.getElementById('milestoneStream');
                         if (milestoneStream) {
                             milestoneStream.innerHTML = '';
                         }
 
-                        // Reset the live todo card and make sure it's the visible
-                        // top-right state — a new run starts with no plan until the
+                        // Reset the live todo card (bottom-right) and make sure it's
+                        // the visible state — a new run starts with no plan until the
                         // agent writes one (backend also clears todo.md).
                         if (window.updateTodoList) window.updateTodoList({ objective: '', tasks: [] });
                         setWorkState('todo');
@@ -925,6 +900,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Force-close any active tool animations immediately
             if (window.webSearchEnd) window.webSearchEnd();
             if (window.shellEnd) window.shellEnd();
+            if (window.trackingProgress) window.trackingProgress.end();   // fade the tracking-progress stream out
 
             // Interrupted by the user: freeze the todo and mark any still-pending
             // tasks with a ✕ (so a spinner doesn't rotate forever). Stop-only —
@@ -967,6 +943,16 @@ document.addEventListener('DOMContentLoaded', () => {
         // Force-close any active tool animations immediately
         if (window.webSearchEnd) window.webSearchEnd();
         if (window.shellEnd) window.shellEnd();
+        if (window.trackingProgress) window.trackingProgress.end();   // fade the tracking-progress stream out
+
+        // Agent finished. If it called `done` but left a task still spinning (it
+        // never marked it complete), freeze the list and ✕ those tasks so the
+        // spinner doesn't rotate forever. Delayed briefly so the run's FINAL todo
+        // update (an all-done state pushed right as it ends) can land first — if
+        // every task ends up done, markTodoInterrupted no-ops.
+        setTimeout(function () {
+            if (window.markTodoInterrupted) window.markTodoInterrupted();
+        }, 500);
 
         // Hide Strip
         if (agentStrip) agentStrip.classList.remove('active');
@@ -999,9 +985,10 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     // ============================================
-    // TOP-RIGHT WORK STATE — todo only. (Web globe removed; shell relocated to
-    // the bottom tool-response box, see #shellPanel.) setWorkState keeps the todo
-    // list as the single state of this cell; it's still used on run reset.
+    // BOTTOM-RIGHT WORK STATE — todo only. (The old web globe / shell states were
+    // removed; the globe + shell now live in container/top_left/globe_shell.*.)
+    // setWorkState keeps the todo list as the single state of this cell; it's still
+    // used on run reset.
     // ============================================
     const setWorkState = (state) => {
         const map = { todo: 'todoState' };

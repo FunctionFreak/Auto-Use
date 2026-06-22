@@ -1243,10 +1243,10 @@ body.settings-open #chatWrapper {
 
 /* Chat Container - Big vertical rectangle with equal gaps */
 /* =====================================================================
-   Main content T-grid — three component zones (top-left screenshot /
-   top-right todo·web·shell / full-width bottom) fill the area to the right of
-   the left bar. The zones are injected by the container/top_left,
-   container/top_right and container/bottom_left components.
+   Main content 2x2 grid — four component zones (top-left screenshot /
+   top-right tracking-progress / bottom-left tool-response / bottom-right todo)
+   fill the area to the right of the left bar. The zones are injected by the
+   container/top_left, top_right, bottom_left and bottom_right components.
    ===================================================================== */
 .main-grid {
     position: fixed;

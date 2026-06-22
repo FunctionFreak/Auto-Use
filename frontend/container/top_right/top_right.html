@@ -1,20 +1,14 @@
-<!-- Top-right container — the coder TODO list (look adapted from coder_animation.html).
-     This cell is todo-only now: the web globe was removed and the shell terminal
-     was relocated to the bottom tool-response box (#shellPanel), so the TODO list
-     stays put and never swaps. Injected into #mainGrid (column 2, row 1) by
-     top_right.js; populated by window.updateTodoList. -->
-<div class="container-zone work-zone" id="zoneTopRight" aria-label="Tasks, web and shell">
+<!-- Top-right container — LIVE "tracking progress" stream. While the agent runs,
+     each scratchpad entry streams in as a circle-bullet line on a connecting line
+     (same conveyor as the tool-response chain); the content fades out when the run
+     ends (the final scratchpad then shows in the top-left Agent Notes). The taller
+     top row gives the stream room to grow. Injected into #mainGrid (column 2, row 1)
+     by top_right.js; fed by window.trackingProgress (← window.streamMilestone). -->
+<div class="container-zone top-right-zone" id="zoneTopRight" aria-label="Tracking progress">
+    <div class="scratchpad-label">tracking progress</div>
 
-    <!-- IDLE: the main agent's live TODO list — transparent, BLANK until populated.
-         Only the task rows (check / spinner + text) render here; the cell's own
-         border marks where. Populated by window.updateTodoList (top_right.js),
-         fed by app.py's todo.md watcher. -->
-    <div class="work-state todo-state is-active" id="todoState">
-        <div class="todo-list" id="todoList" role="list" aria-label="Agent tasks"></div>
+    <div class="br-flow" aria-hidden="true">
+        <!-- top_right.js appends one .br-item per scratchpad entry into here -->
+        <div class="br-tree" id="brTree"></div>
     </div>
-
-    <!-- Web globe + shell terminal live in the top-left container now (they swap
-         over the screenshot — see container/top_left/globe_shell.*). This cell is
-         todo-only now. -->
-
 </div>
