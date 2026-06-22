@@ -45,6 +45,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Query the chat input on demand (it's declared later in this closure).
     const getChatInput = () => document.querySelector('.chat-input');
 
+    // Expose the live (provider, model) selection so the chat-input wiring — now
+    // in chat_input/chat_input.js — can read it without owning it. applyModelSelection()
+    // below stays the single writer of selectedProvider/selectedModel.
+    window.getModelSelection = () => ({ provider: selectedProvider, model: selectedModel });
+
     // Apply a (provider, model) choice: store it, then gate the chat input on
     // API key / Vertex config, opening the relevant settings view if missing.
     const applyModelSelection = (providerName, modelId) => {
@@ -698,6 +703,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Telegram banner's pager behavior, just inside a single-line strip
     // instead of a pill).
     let streamingTimeout = null;
+    // Lets the chat-input stop handler (chat_input/chat_input.js) cancel an in-flight
+    // agent-text stream without owning the timer (script.js stays the single owner).
+    window.stopStreaming = () => {
+        if (streamingTimeout) { clearTimeout(streamingTimeout); streamingTimeout = null; }
+    };
     window.streamAgentText = (text) => {
         const agentText = document.getElementById('agentText');
         const agentStrip = document.getElementById('agentResponseStrip');
@@ -759,169 +769,6 @@ document.addEventListener('DOMContentLoaded', () => {
         streamChar();
     };
 
-
-    // 4. Auto-resize Chat Input
-    const chatInput = document.querySelector('.chat-input');
-    
-    if (chatInput) {
-        // Function to adjust height
-        const adjustHeight = () => {
-            // Reset height to auto to get the correct scrollHeight
-            chatInput.style.height = 'auto';
-            
-            // Calculate new height (clamped by CSS max-height)
-            const newHeight = Math.min(chatInput.scrollHeight, 150); // 150px matches CSS max-height
-            
-            // Apply new height, respecting minimum
-            chatInput.style.height = `${Math.max(newHeight, 44)}px`; // 44px matches CSS min-height base
-        };
-
-        // Event listeners for auto-resize
-        chatInput.addEventListener('input', adjustHeight);
-        
-        // Initial adjustment
-        adjustHeight();
-
-        // 5. Handle Enter key to start agent
-        chatInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault(); // Prevent default newline
-                
-                const message = chatInput.value.trim();
-                if (message && selectedProvider && selectedModel) {
-                    // Show Agent Response Strip
-                    const agentStrip = document.getElementById('agentResponseStrip');
-                    const agentText = document.getElementById('agentText');
-                    // Stop-agent orb is embedded from pc_button.html (iframe)
-                    const stopBtnFrame = document.getElementById('stopBtnFrame');
-                    
-                    if (agentStrip) {
-                        agentStrip.classList.add('active');
-                        // Disable input
-                        chatInput.disabled = true;
-                        chatInput.classList.add('agent-active');
-                        agentText.textContent = 'Starting agent...';
-
-                        // Show Stop Button (tell the embedded orb to appear)
-                        if (stopBtnFrame) {
-                            stopBtnFrame.classList.add('active');
-                            stopBtnFrame.contentWindow.postMessage('pcbtn:show', '*');
-                        }
-
-                        // Layout note: the screenshot/web/shell now live in the
-                        // persistent T-grid (container/ components), so there's no
-                        // floating panel to reveal and no split-layout to switch to —
-                        // the chat box stays centered at the bottom.
-
-                        // Hide eyes only, keep glow
-                        const welcomeEl = document.getElementById('welcomeOverlay');
-                        if (welcomeEl) welcomeEl.classList.add('eyes-hidden');
-
-                        // Start the live tracking-progress stream (top-right): reset
-                        // any prior run's entries and fade the content in.
-                        if (window.trackingProgress) window.trackingProgress.start();
-                        const milestoneStream = document.getElementById('milestoneStream');
-                        if (milestoneStream) {
-                            milestoneStream.innerHTML = '';
-                        }
-
-                        // Reset the live todo card (bottom-right) and make sure it's
-                        // the visible state — a new run starts with no plan until the
-                        // agent writes one (backend also clears todo.md).
-                        if (window.updateTodoList) window.updateTodoList({ objective: '', tasks: [] });
-                        setWorkState('todo');
-
-                        // Drop the previous run's "Agent Notes" so the screenshot
-                        // area is live again for this run (notes reappear on finish).
-                        if (window.hideAgentNotes) window.hideAgentNotes();
-                    }
-                    
-                    // Send request to start agent
-                    fetch('/api/start-agent', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            provider: selectedProvider,
-                            model: selectedModel,
-                            task: message
-                        })
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.status === 'started') {
-                            agentText.textContent = 'Agent running...';
-                            // Clear input after successful start
-                            chatInput.value = '';
-                            adjustHeight();
-                        } else if (data.error) {
-                            agentText.textContent = `Error: ${data.error}`;
-                            // Re-enable input on error
-                            chatInput.disabled = false;
-                            if (stopBtnFrame) {
-                                stopBtnFrame.classList.remove('active');
-                                stopBtnFrame.contentWindow.postMessage('pcbtn:hide', '*');
-                            }
-                        }
-                    })
-                    .catch(err => {
-                        console.error('Failed to start agent:', err);
-                        agentText.textContent = 'Failed to start agent';
-                        // Re-enable input on error
-                        chatInput.disabled = false;
-                        if (stopBtnFrame) {
-                            stopBtnFrame.classList.remove('active');
-                            stopBtnFrame.contentWindow.postMessage('pcbtn:hide', '*');
-                        }
-                    });
-                }
-            }
-        });
-        
-        // 6. Handle Stop Button Click — the orb lives in the pc_button.html iframe and
-        //    posts 'pcbtn:clicked' back to us (and plays its own pop-vanish animation).
-        const stopBtnFrame = document.getElementById('stopBtnFrame');
-        window.addEventListener('message', (e) => {
-            if (e.data !== 'pcbtn:clicked') return;
-
-            // Stop streaming immediately
-            if (streamingTimeout) {
-                clearTimeout(streamingTimeout);
-                streamingTimeout = null;
-            }
-
-            const agentText = document.getElementById('agentText');
-            if (agentText) agentText.textContent = 'Stopping agent...';
-
-            // The orb iframe already plays the pop-vanish; just drop its pointer-events.
-            if (stopBtnFrame) stopBtnFrame.classList.remove('active');
-
-            // Force-close any active tool animations immediately
-            if (window.webSearchEnd) window.webSearchEnd();
-            if (window.shellEnd) window.shellEnd();
-            if (window.trackingProgress) window.trackingProgress.end();   // fade the tracking-progress stream out
-
-            // Interrupted by the user: freeze the todo and mark any still-pending
-            // tasks with a ✕ (so a spinner doesn't rotate forever). Stop-only —
-            // normal completion leaves the ticks alone.
-            if (window.markTodoInterrupted) window.markTodoInterrupted();
-
-            fetch('/api/stop-agent', { method: 'POST' })
-                .then(res => res.json())
-                .then(data => {
-                    console.log('Agent stop requested:', data);
-                    const agentStrip = document.getElementById('agentResponseStrip');
-                    if (agentStrip) agentStrip.classList.remove('active');
-
-                    chatInput.disabled = false;
-                    chatInput.classList.remove('agent-active');
-                    chatInput.focus();
-                })
-                .catch(err => console.error('Error stopping agent:', err));
-        });
-    }
-    
     // Agent completion handler (called from Python when agent finishes naturally)
     window.agentComplete = () => {
         const stopBtnFrame = document.getElementById('stopBtnFrame');
@@ -997,6 +844,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (el) el.classList.toggle('is-active', k === state);
         });
     };
+    // Exposed so the chat-input wiring (chat_input/chat_input.js) can reset this
+    // cell to 'todo' when a run starts.
+    window.setWorkState = setWorkState;
 
     // Web globe + shell terminal now live in container/top_left/globe_shell.js —
     // they swap in over the screenshot while their tool runs. The backend hooks

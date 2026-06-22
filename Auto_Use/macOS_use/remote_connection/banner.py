@@ -175,7 +175,7 @@ body { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
 </style></head>
 <body>
 <div class="orb-wrap">
-  <iframe id="orbFrame" class="orb-frame" src="http://127.0.0.1:5000/pc_button.html"
+  <iframe id="orbFrame" class="orb-frame" src="http://127.0.0.1:5000/chat_input/pc_button.html"
           scrolling="no" frameborder="0"></iframe>
 </div>
 <span class="msg" id="msg">Starting…</span>
