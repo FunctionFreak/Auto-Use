@@ -222,7 +222,7 @@
     max-height: 150px;
     
     border: none;
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(216, 215, 210, 0.96);
     outline: none;
     
     /* COMPACT padding: the right reserve clears the model pill at the extreme right
@@ -244,10 +244,13 @@
     font-size: clamp(13px, 1.3vw, 15px);
     color: rgba(60, 60, 60, 0.95);
     font-weight: 500;
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
+    /* No backdrop-filter: in WebView2/Chromium a backdrop-filter element flickers
+       (black tiles / dots near the task bar) while a continuous animation runs
+       elsewhere on the page — here the top-left web globe / shell terminal. The
+       input sits over the flat app background, so an opaque greige fill (above)
+       looks the same as the old frosted blur but never flickers. */
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-    
+
     /* Textarea specific styles */
     resize: none; 
     overflow-y: auto; 
@@ -464,10 +467,10 @@
     padding: 0;
     margin-bottom: 0;
     
-    /* Whitish-Grey background */
-    background: rgba(220, 220, 220, 0.35); 
-    backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
+    /* Whitish-Grey background — solid fill (no backdrop-filter; the blur flickered
+       in WebView2 while the top-left animation ran). Opaque enough to read as the
+       same frosted strip without the blur. */
+    background: rgba(218, 218, 214, 0.9);
     
     /* Rounded corners all around */
     border-radius: 16px;
