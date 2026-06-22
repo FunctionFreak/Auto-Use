@@ -7,6 +7,33 @@
         <img class="stream-image" src="" alt="Agent screen" style="display: none;">
     </div>
 
+    <!-- Web globe + shell terminal — swap in over the screenshot while a web /
+         shell command runs (globe_shell.js fades the screenshot out, these in).
+         Ids preserved so the backend hooks drive them unchanged. -->
+    <div class="work-overlay" id="globePanel" aria-hidden="true">
+        <div id="mainGlobeContainer"></div>
+    </div>
+    <div class="work-overlay" id="shellPanel" aria-hidden="true">
+        <div class="shell-terminal-card" id="shellTerminalContainer">
+            <div class="shell-term-bar">
+                <div class="shell-term-title" id="shellTermTitle">Shell</div>
+            </div>
+            <div class="shell-term-body" id="shellTermBody">
+                <div class="line visible"><b>$</b> <span id="shellCmdText"></span></div>
+                <div class="line" id="shellStreamLine"><span class="muted">› </span><span id="shellStreamText"></span></div>
+                <div class="line" id="shellStatusLine">
+                    <span class="tag run" id="shellStatusTag">●</span>
+                    <span id="shellStatusText">running</span>
+                    <span class="cursor" id="shellCursor" aria-hidden="true"></span>
+                </div>
+                <div class="shell-progress" id="shellProgress">
+                    <span class="fill"></span>
+                    <span class="glint" aria-hidden="true"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Agent Notes — the scratchpad, shown here (image hidden) once a run ends
          (completed or stopped). Populated by window.showAgentNotes (top_left.js),
          fed by app.py reading scratchpad/milestone/milestone.md on finish. -->

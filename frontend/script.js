@@ -740,8 +740,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // Array.from preserves emoji as single tokens.
         const chars = Array.from(text);
         let i = 0;
-        const CHAR_DELAY_MS = 4;
-        const FADE_MS = 60;
+        const CHAR_DELAY_MS = 0;       // near-instant tick (browser clamps the minimum)
+        const CHARS_PER_TICK = 6;      // append several chars per tick → very fast typing
+        const FADE_MS = 45;
 
         // Start with a clean strip — previous step's text would otherwise
         // be measured into the new overflow check.
@@ -757,33 +758,29 @@ document.addEventListener('DOMContentLoaded', () => {
             return span;
         };
 
+        // Pump a batch of chars per tick (fast), checking overflow per char so
+        // the strip still wraps to a fresh line at its right edge.
         const streamChar = () => {
-            if (i >= chars.length) return;
+            let n = 0;
+            while (n < CHARS_PER_TICK && i < chars.length) {
+                appendCharFade(chars[i]);
 
-            const span = appendCharFade(chars[i]);
-
-            // Sync layout read forces reflow → we see whether this char
-            // pushed past the strip's right edge. If yes (and it isn't
-            // the only char), clear the strip and re-place this char at
-            // the left edge of a fresh line.
-            if (agentText.scrollWidth > agentText.clientWidth + 0.5) {
-                if (agentText.childElementCount === 1) {
-                    // Single char wider than the strip — accept and move on
-                    // so we don't loop forever.
-                    i++;
-                    streamingTimeout = setTimeout(streamChar, CHAR_DELAY_MS);
-                    return;
+                // Sync layout read forces reflow → did this char push past the
+                // strip's right edge? If so (and it isn't the only char), clear
+                // the strip and re-place this char at the left of a fresh line.
+                if (agentText.scrollWidth > agentText.clientWidth + 0.5) {
+                    if (agentText.childElementCount === 1) {
+                        i++; n++;                 // single oversized char — accept and move on
+                        continue;
+                    }
+                    agentText.textContent = '';
+                    while (i < chars.length && /\s/.test(chars[i])) i++;  // skip leading whitespace
+                    continue;                     // re-process chars[i] on the fresh line
                 }
-                agentText.textContent = '';
-                // Skip leading whitespace so the new line doesn't open
-                // with a hanging space.
-                while (i < chars.length && /\s/.test(chars[i])) i++;
-                streamChar();
-                return;
-            }
 
-            i++;
-            streamingTimeout = setTimeout(streamChar, CHAR_DELAY_MS);
+                i++; n++;
+            }
+            if (i < chars.length) streamingTimeout = setTimeout(streamChar, CHAR_DELAY_MS);
         };
 
         streamChar();
@@ -1002,337 +999,21 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     // ============================================
-    // GLOBE ANIMATION FOR WEB SEARCH
+    // TOP-RIGHT WORK STATE — todo only. (Web globe removed; shell relocated to
+    // the bottom tool-response box, see #shellPanel.) setWorkState keeps the todo
+    // list as the single state of this cell; it's still used on run reset.
     // ============================================
-    
-    // Resolved lazily — the top-right container is fetch-injected, so the globe
-    // mount may not exist yet when this closure first runs.
-    let mainGlobeContainer = null;
-
-    // Cross-fade the top-right T-grid cell between its three states:
-    //   'todo'  (idle)  → the coder TODO list
-    //   'web'   (busy)  → the search globe
-    //   'shell' (busy)  → the shell terminal
-    // Toggling .is-active on the matching .work-state drives the CSS opacity
-    // transition; the others fade out.
     const setWorkState = (state) => {
-        const map = { todo: 'todoState', web: 'webState', shell: 'shellState' };
+        const map = { todo: 'todoState' };
         Object.keys(map).forEach((k) => {
             const el = document.getElementById(map[k]);
             if (el) el.classList.toggle('is-active', k === state);
         });
     };
 
-    let globeInitialized = false;
-    let globeScene, globeCamera, globeRenderer, globeEarth, globeNetworkGroup;
-    let globeParticles, globeLineMesh, globeActivePackets;
-    let globeAnimationId = null;
-    
-    const initMainGlobe = () => {
-        if (!mainGlobeContainer) mainGlobeContainer = document.getElementById('mainGlobeContainer');
-        if (globeInitialized || !mainGlobeContainer) return;
-        globeInitialized = true;
-        
-        // Get container dimensions for responsive sizing
-        const containerRect = mainGlobeContainer.getBoundingClientRect();
-        const size = Math.min(containerRect.width, containerRect.height) * 0.9;
-        
-        // Scene setup - transparent background
-        globeScene = new THREE.Scene();
-        
-        globeCamera = new THREE.PerspectiveCamera(45, 1, 1, 1000);
-        globeCamera.position.z = 12;
-        
-        globeRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        globeRenderer.setClearColor(0x000000, 0);
-        globeRenderer.setSize(size, size);
-        globeRenderer.setPixelRatio(window.devicePixelRatio);
-        mainGlobeContainer.appendChild(globeRenderer.domElement);
-        
-        // Texture generation helpers
-        const getX = (lon) => (lon + 180) * (4096 / 360);
-        const getY = (lat) => ((-lat) + 90) * (2048 / 180);
-        
-        const drawContinentsPath = (ctx) => {
-            ctx.beginPath();
-            const drawPoly = (coords) => {
-                ctx.moveTo(getX(coords[0][0]), getY(coords[0][1]));
-                for (let i = 1; i < coords.length; i++) {
-                    ctx.lineTo(getX(coords[i][0]), getY(coords[i][1]));
-                }
-            };
-            drawPoly([[-77, 8], [-75, 11], [-60, 10], [-50, 5], [-35, -5], [-35, -10], [-39, -20], [-40, -30], [-55, -55], [-70, -55], [-75, -50], [-73, -40], [-71, -30], [-75, -20], [-81, -5], [-77, 8]]);
-            drawPoly([[-165, 65], [-120, 70], [-90, 75], [-70, 70], [-60, 60], [-55, 52], [-75, 35], [-80, 25], [-82, 9], [-95, 18], [-105, 20], [-125, 35], [-125, 45], [-130, 50], [-165, 65]]);
-            drawPoly([[-50, 60], [-40, 65], [-30, 80], [-60, 80], [-50, 60]]);
-            drawPoly([[-15, 35], [10, 37], [30, 31], [40, 15], [51, 11], [45, -10], [40, -15], [35, -30], [20, -35], [10, -5], [5, 5], [-10, 5], [-17, 15], [-15, 35]]);
-            drawPoly([[43, -25], [50, -15], [49, -12], [44, -22]]);
-            drawPoly([[-10, 36], [-9, 43], [0, 50], [10, 55], [25, 70], [40, 65], [35, 45], [25, 35], [15, 40], [10, 45], [5, 42], [-10, 36]]);
-            drawPoly([[-5, 50], [2, 51], [0, 58], [-6, 56]]);
-            drawPoly([[40, 65], [60, 75], [100, 75], [170, 70], [140, 50], [130, 40], [120, 30], [120, 20], [110, 10], [100, 15], [90, 22], [80, 5], [70, 10], [60, 25], [50, 30], [40, 45], [40, 65]]);
-            drawPoly([[130, 32], [138, 36], [142, 40], [140, 45], [135, 35]]);
-            drawPoly([[100, 0], [110, -5], [140, -5], [150, -10], [130, 0]]);
-            drawPoly([[113, -25], [130, -12], [145, -10], [153, -25], [150, -38], [135, -35], [115, -35], [113, -25]]);
-            drawPoly([[166, -45], [174, -35], [178, -38], [168, -47]]);
-            ctx.closePath();
-        };
-        
-        // Color texture
-        const createColorTexture = () => {
-            const canvas = document.createElement('canvas');
-            canvas.width = 4096; canvas.height = 2048;
-            const ctx = canvas.getContext('2d');
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, 4096, 2048);
-            ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
-            ctx.shadowBlur = 30;
-            ctx.fillStyle = '#dcdcdc';
-            ctx.strokeStyle = '#555555';
-            ctx.lineWidth = 4;
-            ctx.lineJoin = 'round';
-            drawContinentsPath(ctx);
-            ctx.fill();
-            ctx.stroke();
-            ctx.globalCompositeOperation = 'source-atop';
-            for (let i = 0; i < 2000; i++) {
-                const x = Math.random() * 4096;
-                const y = Math.random() * 2048;
-                const r = 5 + Math.random() * 20;
-                ctx.fillStyle = 'rgba(200, 200, 200, 0.1)';
-                ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
-            }
-            ctx.shadowColor = 'transparent';
-            ctx.strokeStyle = '#cccccc';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            for(let x = 0; x < 4096; x += 60) { ctx.moveTo(x, 0); ctx.lineTo(x, 2048); }
-            for(let y = 0; y < 2048; y += 60) { ctx.moveTo(0, y); ctx.lineTo(4096, y); }
-            ctx.stroke();
-            return new THREE.CanvasTexture(canvas);
-        };
-        
-        // Height texture
-        const createHeightTexture = () => {
-            const canvas = document.createElement('canvas');
-            canvas.width = 4096; canvas.height = 2048;
-            const ctx = canvas.getContext('2d');
-            ctx.fillStyle = '#000000';
-            ctx.fillRect(0, 0, 4096, 2048);
-            ctx.save();
-            drawContinentsPath(ctx);
-            ctx.clip();
-            ctx.fillStyle = '#808080';
-            ctx.fillRect(0, 0, 4096, 2048);
-            for (let i = 0; i < 10000; i++) {
-                const x = Math.random() * 4096;
-                const y = Math.random() * 2048;
-                const radius = 5 + Math.random() * 30;
-                const shade = Math.floor(100 + Math.random() * 155);
-                const grad = ctx.createRadialGradient(x, y, 0, x, y, radius);
-                grad.addColorStop(0, `rgba(${shade}, ${shade}, ${shade}, 0.5)`);
-                grad.addColorStop(1, `rgba(${shade}, ${shade}, ${shade}, 0)`);
-                ctx.fillStyle = grad;
-                ctx.beginPath();
-                ctx.arc(x, y, radius, 0, Math.PI*2);
-                ctx.fill();
-            }
-            ctx.strokeStyle = '#e0e0e0';
-            ctx.lineWidth = 2;
-            drawContinentsPath(ctx);
-            ctx.stroke();
-            ctx.restore();
-            return new THREE.CanvasTexture(canvas);
-        };
-        
-        // Earth
-        const earthGeo = new THREE.SphereGeometry(4, 128, 128);
-        const earthMat = new THREE.MeshPhongMaterial({
-            map: createColorTexture(),
-            displacementMap: createHeightTexture(),
-            displacementScale: 0.5,
-            displacementBias: 0,
-            color: 0xffffff,
-            specular: 0x333333,
-            shininess: 8
-        });
-        globeEarth = new THREE.Mesh(earthGeo, earthMat);
-        globeScene.add(globeEarth);
-        
-        // Atmosphere
-        const atmGeo = new THREE.SphereGeometry(4.2, 64, 64);
-        const atmMat = new THREE.MeshBasicMaterial({
-            color: 0x888888,
-            transparent: true,
-            opacity: 0.05,
-            side: THREE.BackSide
-        });
-        const atmosphere = new THREE.Mesh(atmGeo, atmMat);
-        globeScene.add(atmosphere);
-        
-        // Network
-        const particlesCount = 100;
-        const connectionDistance = 2.5;
-        const sphereRadius = 4.4;
-        
-        globeNetworkGroup = new THREE.Group();
-        globeScene.add(globeNetworkGroup);
-        
-        const packetColors = [0x222222, 0x333333, 0x111111];
-        const particleGeo = new THREE.SphereGeometry(0.04, 8, 8);
-        globeParticles = [];
-        
-        for (let i = 0; i < particlesCount; i++) {
-            const phi = Math.acos(-1 + (2 * i) / particlesCount);
-            const theta = Math.sqrt(particlesCount * Math.PI) * phi;
-            const greyVal = 0.5 + Math.random() * 0.3;
-            const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(greyVal, greyVal, greyVal) });
-            const mesh = new THREE.Mesh(particleGeo, mat);
-            mesh.position.setFromSphericalCoords(sphereRadius, phi, theta);
-            mesh.position.x += (Math.random() - 0.5) * 0.2;
-            mesh.position.y += (Math.random() - 0.5) * 0.2;
-            mesh.position.z += (Math.random() - 0.5) * 0.2;
-            mesh.userData = {
-                velocity: new THREE.Vector3((Math.random() - 0.5) * 0.005, (Math.random() - 0.5) * 0.005, (Math.random() - 0.5) * 0.005),
-                packetColor: packetColors[Math.floor(Math.random() * packetColors.length)]
-            };
-            globeNetworkGroup.add(mesh);
-            globeParticles.push(mesh);
-        }
-        
-        const lineMaterial = new THREE.LineBasicMaterial({ color: 0x999999, transparent: true, opacity: 0.2 });
-        globeLineMesh = new THREE.LineSegments(new THREE.BufferGeometry(), lineMaterial);
-        globeNetworkGroup.add(globeLineMesh);
-        
-        // Packets
-        const packetGeo = new THREE.BufferGeometry();
-        const packetMat = new THREE.PointsMaterial({
-            size: 0.16,
-            vertexColors: true,
-            transparent: true,
-            opacity: 0.9,
-            map: (() => {
-                const canvas = document.createElement('canvas');
-                canvas.width = 32; canvas.height = 32;
-                const ctx = canvas.getContext('2d');
-                ctx.beginPath();
-                ctx.arc(16, 16, 14, 0, Math.PI * 2);
-                ctx.fillStyle = 'white';
-                ctx.fill();
-                return new THREE.CanvasTexture(canvas);
-            })()
-        });
-        const packetSystem = new THREE.Points(packetGeo, packetMat);
-        globeNetworkGroup.add(packetSystem);
-        globeActivePackets = [];
-        
-        // Lighting
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
-        globeScene.add(ambientLight);
-        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        dirLight.position.set(20, 10, 20);
-        globeScene.add(dirLight);
-        const rimLight = new THREE.DirectionalLight(0xeeeeee, 0.3);
-        rimLight.position.set(-10, 10, -20);
-        globeScene.add(rimLight);
-        
-        // Animation loop
-        const animateGlobe = () => {
-            globeAnimationId = requestAnimationFrame(animateGlobe);
-            
-            globeEarth.rotation.y += 0.003;
-            globeNetworkGroup.rotation.y += 0.0032;
-            
-            const linePositions = [];
-            const connections = [];
-            
-            globeParticles.forEach((p) => {
-                p.position.add(p.userData.velocity);
-                p.position.normalize().multiplyScalar(sphereRadius);
-            });
-            
-            for (let i = 0; i < globeParticles.length; i++) {
-                for (let j = i + 1; j < globeParticles.length; j++) {
-                    const dist = globeParticles[i].position.distanceTo(globeParticles[j].position);
-                    if (dist < connectionDistance) {
-                        linePositions.push(
-                            globeParticles[i].position.x, globeParticles[i].position.y, globeParticles[i].position.z,
-                            globeParticles[j].position.x, globeParticles[j].position.y, globeParticles[j].position.z
-                        );
-                        connections.push({ start: globeParticles[i].position, end: globeParticles[j].position, color: globeParticles[i].userData.packetColor });
-                    }
-                }
-            }
-            
-            globeLineMesh.geometry.dispose();
-            const lineGeo = new THREE.BufferGeometry();
-            lineGeo.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
-            globeLineMesh.geometry = lineGeo;
-            
-            for (let k = 0; k < 5; k++) {
-                if (Math.random() > 0.5 && connections.length > 0) {
-                    const route = connections[Math.floor(Math.random() * connections.length)];
-                    globeActivePackets.push({ start: route.start, end: route.end, progress: 0, speed: 0.01 + Math.random() * 0.02, color: new THREE.Color(route.color) });
-                }
-            }
-            
-            const packetPositions = [];
-            const packetColorsArr = [];
-            
-            for (let i = globeActivePackets.length - 1; i >= 0; i--) {
-                const pkt = globeActivePackets[i];
-                pkt.progress += pkt.speed;
-                if (pkt.progress >= 1) { globeActivePackets.splice(i, 1); continue; }
-                const x = THREE.MathUtils.lerp(pkt.start.x, pkt.end.x, pkt.progress);
-                const y = THREE.MathUtils.lerp(pkt.start.y, pkt.end.y, pkt.progress);
-                const z = THREE.MathUtils.lerp(pkt.start.z, pkt.end.z, pkt.progress);
-                packetPositions.push(x, y, z);
-                packetColorsArr.push(pkt.color.r, pkt.color.g, pkt.color.b);
-            }
-            
-            packetGeo.setAttribute('position', new THREE.Float32BufferAttribute(packetPositions, 3));
-            packetGeo.setAttribute('color', new THREE.Float32BufferAttribute(packetColorsArr, 3));
-            
-            globeRenderer.render(globeScene, globeCamera);
-        };
-        
-        animateGlobe();
-        
-        // Resize handler for responsive globe
-        const handleGlobeResize = () => {
-            if (!globeRenderer || !globeCamera || !mainGlobeContainer) return;
-            
-            const containerRect = mainGlobeContainer.getBoundingClientRect();
-            const newSize = Math.min(containerRect.width, containerRect.height) * 0.9;
-            
-            globeRenderer.setSize(newSize, newSize);
-            globeCamera.updateProjectionMatrix();
-        };
-        
-        window.addEventListener('resize', handleGlobeResize);
-    };
-    
-    // Web search animation — the globe takes over the top-right cell; the TODO
-    // list fades out (setWorkState handles the cross-fade).
-    window.webSearchStart = () => {
-        initMainGlobe();
-        if (!mainGlobeContainer) return;
-
-        setWorkState('web');
-
-        // Resize the renderer to the cell once the fade-in starts.
-        setTimeout(() => {
-            if (globeRenderer && globeCamera && mainGlobeContainer) {
-                const containerRect = mainGlobeContainer.getBoundingClientRect();
-                const newSize = Math.min(containerRect.width, containerRect.height) * 0.9;
-                globeRenderer.setSize(newSize, newSize);
-                globeCamera.updateProjectionMatrix();
-            }
-        }, 100);
-    };
-
-    // End web search animation — globe fades out, the TODO list returns.
-    window.webSearchEnd = () => {
-        setWorkState('todo');
-    };
+    // Web globe + shell terminal now live in container/top_left/globe_shell.js —
+    // they swap in over the screenshot while their tool runs. The backend hooks
+    // window.webSearchStart/End and window.shellStart/Result/End are defined there.
 
     // ============================================
     // TELEGRAM "OCCUPIED" OVERLAY
@@ -1348,178 +1029,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (telegramTaskOverlay) telegramTaskOverlay.classList.remove('active');
     };
 
-    // ============================================
-    // SHELL TERMINAL ANIMATION
-    // ============================================
-    
-    // Shell terminal elements live inside the fetch-injected top-right container,
-    // so resolve them lazily (re-query on each shell event) instead of capturing
-    // once at closure-init when they may not exist yet.
-    let shellTerminalContainer = null;
-    let shellCmdText = null;
-    let shellStreamLine = null;
-    let shellStreamText = null;
-    let shellStatusLine = null;
-    let shellStatusTag = null;
-    let shellStatusText = null;
-    let shellTermTitle = null;
-    let shellCursor = null;
-    let shellProgress = null;
-
-    const resolveShellEls = () => {
-        shellTerminalContainer = document.getElementById('shellTerminalContainer');
-        shellCmdText = document.getElementById('shellCmdText');
-        shellStreamLine = document.getElementById('shellStreamLine');
-        shellStreamText = document.getElementById('shellStreamText');
-        shellStatusLine = document.getElementById('shellStatusLine');
-        shellStatusTag = document.getElementById('shellStatusTag');
-        shellStatusText = document.getElementById('shellStatusText');
-        shellTermTitle = document.getElementById('shellTermTitle');
-        shellCursor = document.getElementById('shellCursor');
-        shellProgress = document.getElementById('shellProgress');
-    };
-
-    let shellStreamTimeout = null;
-    let shellTextInterval = null;
-    let shellResultInterval = null;
-
-    const streamTextInto = (element, text, scrollContainer, onDone) => {
-        element.textContent = '';
-        let idx = 0;
-        const step = Math.max(1, Math.floor(text.length / 60));
-        const id = setInterval(() => {
-            idx += step;
-            if (idx >= text.length) {
-                idx = text.length;
-                clearInterval(id);
-                if (onDone) onDone();
-            }
-            element.textContent = text.substring(0, idx);
-            if (scrollContainer) scrollContainer.scrollTop = scrollContainer.scrollHeight;
-        }, 25);
-        return id;
-    };
-
-    const resetShellTerminal = () => {
-        resolveShellEls();
-        // Reset all lines to hidden
-        if (shellStreamLine) { shellStreamLine.classList.remove('visible'); }
-        if (shellStatusLine) { shellStatusLine.classList.remove('visible'); }
-        
-        // Reset content
-        if (shellTermTitle) shellTermTitle.textContent = 'Shell';
-        if (shellCmdText) shellCmdText.textContent = 'autouse.';
-        if (shellStreamText) shellStreamText.textContent = '';
-        if (shellStatusText) shellStatusText.textContent = 'running';
-        
-        // Reset tag to running state
-        if (shellStatusTag) {
-            shellStatusTag.className = 'tag run';
-            shellStatusTag.textContent = '●';
-        }
-        
-        // Show cursor and progress
-        if (shellCursor) shellCursor.style.display = '';
-        if (shellProgress) shellProgress.style.display = '';
-        
-        // Clear any pending stream timeout / intervals
-        if (shellStreamTimeout) {
-            clearTimeout(shellStreamTimeout);
-            shellStreamTimeout = null;
-        }
-        if (shellTextInterval) {
-            clearInterval(shellTextInterval);
-            shellTextInterval = null;
-        }
-        if (shellResultInterval) {
-            clearInterval(shellResultInterval);
-            shellResultInterval = null;
-        }
-    };
-    
-    // Shell start: the terminal takes over the top-right cell; the TODO list
-    // fades out (setWorkState handles the cross-fade).
-    window.shellStart = (command, label) => {
-        resetShellTerminal();
-        if (!shellTerminalContainer) return;
-
-        // Set the terminal title (Shell or AppleScript)
-        if (shellTermTitle) shellTermTitle.textContent = label || 'Shell';
-
-        // Set the command text
-        if (shellCmdText) shellCmdText.textContent = 'autouse.';
-
-        setWorkState('shell');
-
-        // Animate stream line after short delay — stream text progressively
-        setTimeout(() => {
-            if (shellStreamLine) {
-                shellStreamLine.classList.add('visible');
-                shellTextInterval = streamTextInto(
-                    shellStreamText,
-                    command || 'executing...',
-                    shellStreamLine
-                );
-            }
-        }, 300);
-
-        // Show running status after short delay
-        setTimeout(() => {
-            if (shellStatusLine) shellStatusLine.classList.add('visible');
-        }, 600);
-    };
-    
-    // Shell result: show success or failure
-    window.shellResult = (status, output) => {
-        resolveShellEls();
-        if (!shellTerminalContainer) return;
-
-        // Hide cursor and progress bar
-        if (shellCursor) shellCursor.style.display = 'none';
-        if (shellProgress) shellProgress.style.display = 'none';
-        
-        // Truncate output for display (keep it short)
-        const displayOutput = output ? (output.length > 80 ? output.substring(0, 80) + '...' : output) : '';
-        
-        if (status === 'success') {
-            if (shellStatusTag) {
-                shellStatusTag.className = 'tag ok';
-                shellStatusTag.textContent = '✓';
-            }
-            if (shellStatusText) {
-                shellResultInterval = streamTextInto(
-                    shellStatusText,
-                    displayOutput || 'completed',
-                    shellStatusLine
-                );
-            }
-        } else {
-            if (shellStatusTag) {
-                shellStatusTag.className = 'tag fail';
-                shellStatusTag.textContent = '✗';
-            }
-            if (shellStatusText) {
-                shellStatusText.style.color = 'rgba(70, 70, 70, 0.95)';
-                shellResultInterval = streamTextInto(
-                    shellStatusText,
-                    displayOutput || 'failed',
-                    shellStatusLine
-                );
-            }
-        }
-    };
-    
-    // Shell end: terminal fades out, the TODO list returns.
-    window.shellEnd = () => {
-        resolveShellEls();
-        setWorkState('todo');
-
-        // Reset color after fade out completes
-        setTimeout(() => {
-            if (shellStatusText) shellStatusText.style.color = '';
-            resetShellTerminal();
-        }, 700);
-    };
+    // (shell terminal moved to container/top_left/globe_shell.js — swaps over the screenshot)
 
     // =====================================================================
     // CLI streaming UI — pills for parallel CLI subprocesses during cli_await.

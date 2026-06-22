@@ -1,12 +1,8 @@
-<!-- Top-right container — cross-fades between three states in the same cell:
-       • todo  (idle)  — the coder TODO list (look adapted from coder_animation.html)
-       • web   (busy)  — the Three.js web-search globe
-       • shell (busy)  — the shell terminal card
-     script.js's setWorkState('todo'|'web'|'shell') toggles .is-active; web/shell
-     fade in while running, then the TODO list fades back. Injected into
-     #mainGrid (column 2, row 1) by top_right.js. The globe + shell keep their
-     old ids (#mainGlobeContainer / #shellTerminalContainer + inner shell ids)
-     so the existing engine code in script.js drives them unchanged. -->
+<!-- Top-right container — the coder TODO list (look adapted from coder_animation.html).
+     This cell is todo-only now: the web globe was removed and the shell terminal
+     was relocated to the bottom tool-response box (#shellPanel), so the TODO list
+     stays put and never swaps. Injected into #mainGrid (column 2, row 1) by
+     top_right.js; populated by window.updateTodoList. -->
 <div class="container-zone work-zone" id="zoneTopRight" aria-label="Tasks, web and shell">
 
     <!-- IDLE: the main agent's live TODO list — transparent, BLANK until populated.
@@ -17,31 +13,7 @@
         <div class="todo-list" id="todoList" role="list" aria-label="Agent tasks"></div>
     </div>
 
-    <!-- WEB: Three.js search globe (rendered by initMainGlobe in script.js) -->
-    <div class="work-state web-state" id="webState">
-        <div class="zone-globe" id="mainGlobeContainer"></div>
-    </div>
-
-    <!-- SHELL: terminal card (driven by window.shellStart/shellResult/shellEnd) -->
-    <div class="work-state shell-state" id="shellState">
-        <div class="shell-terminal-card" id="shellTerminalContainer">
-            <div class="shell-term-bar">
-                <div class="shell-term-title" id="shellTermTitle">Shell</div>
-            </div>
-            <div class="shell-term-body" id="shellTermBody">
-                <div class="line visible"><b>$</b> <span id="shellCmdText"></span></div>
-                <div class="line" id="shellStreamLine"><span class="muted">› </span><span id="shellStreamText"></span></div>
-                <div class="line" id="shellStatusLine">
-                    <span class="tag run" id="shellStatusTag">●</span>
-                    <span id="shellStatusText">running</span>
-                    <span class="cursor" id="shellCursor" aria-hidden="true"></span>
-                </div>
-                <div class="shell-progress" id="shellProgress">
-                    <span class="fill"></span>
-                    <span class="glint" aria-hidden="true"></span>
-                </div>
-            </div>
-        </div>
-    </div>
+    <!-- Web globe removed; shell terminal moved to the bottom tool-response box
+         (#shellPanel in container/bottom/bottom.html). This cell is todo-only now. -->
 
 </div>

@@ -11,7 +11,7 @@
     min-width: 0;
     min-height: 0;
     position: relative;
-    border: 1px solid transparent;           /* no visible box — blends into the background */
+    border: 1px solid rgba(0, 0, 0, 0.12);   /* visible outline */
     border-radius: var(--glass-radius);
     padding: clamp(8px, 1vw, 12px) clamp(12px, 1.4vw, 16px);
     box-sizing: border-box;
@@ -136,3 +136,6 @@
     from { background-position: 125% 0; }
     to   { background-position: -25% 0; }
 }
+
+/* The web globe + shell terminal moved to the top-left container
+   (container/top_left/globe_shell.{js,css}) — they swap with the screenshot now. */
