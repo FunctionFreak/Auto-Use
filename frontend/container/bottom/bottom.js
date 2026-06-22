@@ -426,7 +426,7 @@
     // (soft red so it stands out against the grey chain).
     function drawBang(ctx, cx, cy, alpha) {
         var R = ICON / 2 - 1.5;
-        ctx.save(); ctx.translate(cx, cy); ctx.globalAlpha = alpha;
+        ctx.save(); ctx.translate(cx + 0.5, cy); ctx.globalAlpha = alpha;  // +0.5: sit the tip on the connector line
         var red = 'rgba(198, 92, 80, 0.95)';
         ctx.fillStyle = red; ctx.strokeStyle = red;
         ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.lineWidth = 2.2;
@@ -654,6 +654,7 @@
 
     /* ---------------- driver state ---------------- */
     var flowEl = null, treeEl = null, zoneEl = null, frontier = -1, uid = 0;
+    var shimmerWord = null;                              // the newest word (loading shine)
     // The chain stays EMPTY until a real agent run drives it. The demo is opt-in
     // only (window.toolFlow.startTest()) — it never auto-runs on app start.
     var demoOn = false, demoTimer = null;
@@ -668,6 +669,10 @@
         STEPS.push(step);
         buildItem(step, treeEl);
         activate(step);
+        // the newest item is the "current" one — move the loading shine onto it.
+        if (shimmerWord) shimmerWord.classList.remove('shimmer');
+        step._word.classList.add('shimmer');
+        shimmerWord = step._word;
         return step;
     }
 
@@ -680,7 +685,7 @@
             if (s._word) clearTimeout(s._word._typeTimer);
             if (s._item && s._item.parentNode) s._item.parentNode.removeChild(s._item);
         }
-        STEPS.length = 0; frontier = -1; thinkingStep = null; receivedEarly = false; openingDone = true;
+        STEPS.length = 0; frontier = -1; thinkingStep = null; receivedEarly = false; openingDone = true; shimmerWord = null;
         if (treeEl) {                                        // snap the conveyor back to top, no animation
             treeEl.style.transition = 'none';
             treeEl.style.transform = 'translateY(0)';
@@ -782,7 +787,9 @@
                 case 'turn':      startOpening(!!p.hasImage); break;
                 case 'received':  markReceived(p.tools); break;   // tick + play this turn's tools
                 case 'error':     showError(p.text); break;       // "!" drop (stop / backend error)
-                case 'run_end':   break;   // leave the final chain visible; next run_start clears it
+                case 'run_end':   // run finished: stop the shine on the final item; keep it visible
+                    if (shimmerWord) { shimmerWord.classList.remove('shimmer'); shimmerWord = null; }
+                    break;
             }
         },
         reset: clearChain,
