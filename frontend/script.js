@@ -899,6 +899,11 @@ document.addEventListener('DOMContentLoaded', () => {
             chatInput.classList.remove('agent-active');
             chatInput.focus();
         }
+
+        // Morph the composer back to idle: re-show the grey send orb and re-expand the
+        // box to its ~2-line height. Owned by chat_input.js (single, idempotent teardown
+        // shared with the manual-stop path); guarded in case it injects after this fires.
+        if (window.chatInputRestoreIdle) window.chatInputRestoreIdle();
     };
 
     // Agent failure handler (called from Python when the run ends in error or

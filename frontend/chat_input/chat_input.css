@@ -73,23 +73,53 @@
     justify-content: flex-end;
 }
 
-/* Wrapper for input to allow side-by-side button */
+/* The composer box. IDLE it shows two visual rows: the .chat-input textarea on top
+   (grows upward as you type) and the .input-toolbar (model picker + send/stop orb) in a
+   reserved row BELOW it — the box's padding-bottom holds that row open. The toolbar is
+   absolutely anchored to the box's bottom-right; the box bottom is viewport-pinned. ON
+   SEND (:has(.chat-input.agent-active)) the reserved padding-bottom collapses, so the
+   box shrinks to one slim row and the toolbar ends up beside the one-line text — the
+   model + orb "pushed up" into the text's line. overflow:visible lets the orb glow spill. */
 .input-area-wrapper {
     position: relative;
     width: 100%;
+    box-sizing: border-box;
+    --pad-y: clamp(7px, 0.8vw, 10px);
+    --pad-x: clamp(12px, 1.3vw, 16px);
+    --orb: clamp(34px, 3.4vw, 40px);
+    --tools-gap: clamp(4px, 0.5vw, 7px);
+    padding: var(--pad-y) var(--pad-x);
+    /* IDLE: reserve a row below the text for the model + orb. */
+    padding-bottom: calc(var(--pad-y) + var(--orb) + var(--tools-gap));
+    /* Opaque greige fill (no backdrop-filter: it flickers in WebView2/Chromium while
+       the top-left globe/shell animations run — same reasoning as the old .chat-input). */
+    background: rgba(216, 215, 210, 0.96);
+    border-radius: clamp(16px, 1.8vw, 22px);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+    overflow: visible;
+    transition: padding-bottom 0.34s cubic-bezier(0.25, 0.8, 0.25, 1),
+                border-radius 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+/* RUNNING: drop the reserved row → the box collapses to a single slim line and the
+   toolbar sits beside the one-line text. */
+.input-area-wrapper:has(.chat-input.agent-active) {
+    padding-bottom: var(--pad-y);
+}
+
+/* Tools group — absolutely anchored to the box's bottom-right (the model picker + orb).
+   The empty space to its left in the idle row is room for future tools. It needs no
+   vertical transition: it's pinned to the box bottom, so collapsing padding-bottom is
+   what brings the one-line text down beside it. */
+.input-toolbar {
+    position: absolute;
+    right: var(--pad-x);
+    bottom: var(--pad-y);
+    height: var(--orb);
     display: flex;
-    align-items: flex-end;
-    /* Chat-input padding modes — shared by .chat-input AND the hidden line-measuring
-       mirror so both wrap text at exactly the same width.
-         COMPACT (default, single line): reserve room on the right for the model pill
-           that sits at the extreme-right corner.
-         EXPANDED (.input-expanded — text grew past the pill): the pill drops to a
-           bottom-right strip, so the text runs FULL width and only the bottom is
-           reserved. Toggled by chat_input.js (adjustHeight). */
-    --chat-pad-y: clamp(12px, 1.2vw, 15px);
-    --chat-pad-left: clamp(16px, 2vw, 24px);
-    --chat-pad-right-compact: clamp(150px, 18vw, 178px);
-    --chat-pad-bottom-expanded: clamp(40px, 4.5vw, 48px);
+    align-items: center;
+    gap: clamp(6px, 0.8vw, 10px);
+    z-index: 6;
 }
 
 /* New Output Stream Area - Blurry container above input */
@@ -211,139 +241,87 @@
     font-weight: 600;
 }
 
-/* Chat Input Field Styling */
+/* Chat Input Field Styling — the textarea is now transparent (the wrapper is the box),
+   the top row of the composer. It starts at ONE line and auto-grows upward to max-height
+   as you type (driven by adjustHeight in chat_input.js). On run it collapses back (see
+   the :has(.agent-active) rule below). */
 .chat-input {
     position: relative; /* For z-index context */
-    z-index: 5; /* Stays on top of the agent strip */
+    z-index: 5;
     width: 100%;
-    /* Reset height to single line */
-    height: clamp(44px, 4vw, 54px);
-    min-height: clamp(44px, 4vw, 54px);
+    box-sizing: border-box;
+    /* Idle ONE-line height; grows up to the 150px cap as you type. */
+    min-height: clamp(30px, 2.9vw, 36px);
     max-height: 150px;
-    
-    border: none;
-    background: rgba(216, 215, 210, 0.96);
-    outline: none;
-    
-    /* COMPACT padding: the right reserve clears the model pill at the extreme right
-       so a single line of text stops before it. .input-expanded (below) swaps this
-       for full-width text + a reserved bottom strip. */
-    padding: var(--chat-pad-y) var(--chat-pad-right-compact) var(--chat-pad-y) var(--chat-pad-left);
-    box-sizing: border-box; /* Ensure padding is included in width */
 
-    /* Transition border radius only. The compact↔expanded padding swap is INSTANT
-       on purpose: animating the width makes the text stay wrapped to line 2 for a
-       moment and then snap back up (the caret glitch). Instant = the browser does one
-       layout pass, so the text never visibly wraps — only the pill animates (its own
-       transition), giving a smooth "drop down" without the line-2 flash. */
-    border-radius: clamp(12px, 1.5vw, 16px);
-    transition: border-radius 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+    border: none;
+    background: transparent;   /* the box look lives on .input-area-wrapper now */
+    outline: none;
+    padding: 4px 4px;          /* idle: full width (toolbar is in the row below) */
 
     pointer-events: auto;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     font-size: clamp(13px, 1.3vw, 15px);
     color: rgba(60, 60, 60, 0.95);
     font-weight: 500;
-    /* No backdrop-filter: in WebView2/Chromium a backdrop-filter element flickers
-       (black tiles / dots near the task bar) while a continuous animation runs
-       elsewhere on the page — here the top-left web globe / shell terminal. The
-       input sits over the flat app background, so an opaque greige fill (above)
-       looks the same as the old frosted blur but never flickers. */
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
 
-    /* Textarea specific styles */
-    resize: none; 
-    overflow-y: auto; 
+    /* Textarea specifics */
+    resize: none;
+    overflow-y: auto;
     line-height: 1.4;
     display: block;
-    
-    /* Word wrapping */
     white-space: pre-wrap;
     word-wrap: break-word;
-    
-    /* Hide Scrollbar */
+
+    /* Hide scrollbar */
     scrollbar-width: none; /* Firefox */
     -ms-overflow-style: none; /* IE/Edge */
+
+    /* Smooth collapse on send: max-height shrinks a multi-line draft back to one line,
+       and padding-right opens up to clear the toolbar as it moves up beside the text. */
+    transition: max-height 0.34s cubic-bezier(0.25, 0.8, 0.25, 1),
+                padding-right 0.34s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
-/* When agent strip is active, we keep the corners rounded now - Rules removed */
+/* RUNNING: keep ONE visible line (never collapse to nothing) and reserve room on the
+   right so the model + orb sit beside it. A multi-line draft animates down to one line
+   via max-height; the inline height from adjustHeight is clamped by it. */
+.input-area-wrapper:has(.chat-input.agent-active) .chat-input {
+    max-height: clamp(30px, 2.9vw, 36px);
+    padding-right: clamp(150px, 20vw, 210px);
+    pointer-events: none;
+}
 
 .chat-input::-webkit-scrollbar {
     display: none; /* Chrome/Safari/Opera */
 }
 
 /* =====================================================================
-   Chat-box MODEL drop-up — sits at the LEFT of the input pill (mirroring how the
-   stop orb sits at the right). Reuses the .model-dropdown* behavior + markup from
-   style.css; only position + the trigger pill look are overridden here, and the
-   menu opens UPWARD. Label = active provider until a model is picked, then model.
+   Chat-box MODEL drop-up — a static flex child at the RIGHT of the row, just left of
+   the send orb (no more floating/sliding). Reuses the .model-dropdown* behavior +
+   markup from style.css; only the trigger pill look + the upward menu are overridden
+   here. Kept a descendant of .input-area-wrapper so the :has(.open) z-index lift resolves.
    ===================================================================== */
 .chat-model-dropdown {
-    position: absolute;
-    /* IDLE: extreme-right corner — the stop-orb isn't shown yet, so use the full
-       corner. Two state overrides below move it: agent-running slides it LEFT to
-       clear the orb; .input-expanded drops it DOWN to the bottom strip. */
-    right: clamp(10px, 1.2vw, 16px);
-    left: auto;
-    bottom: 0;
-    height: clamp(44px, 4vw, 54px);
+    position: relative;
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
     z-index: 6;                       /* above the textarea (5), below the orb (20) */
-    /* Smooth shift-left when the agent starts + smooth drop when the text grows. */
-    transition: right 0.32s cubic-bezier(0.25, 0.8, 0.25, 1),
-                bottom 0.28s cubic-bezier(0.25, 0.8, 0.25, 1),
-                height 0.28s cubic-bezier(0.25, 0.8, 0.25, 1);
-    /* Shrink to fit the label (override base .model-dropdown { width: 100% }, which
-       would otherwise stretch this to max-width regardless of label length). The
-       max-width stays as a safety cap so a long selected model name can't crowd
-       the textarea. */
+    /* Shrink to fit the label (override base .model-dropdown { width: 100% }). The
+       max-width caps a long model name so it can't crowd out the tools/orb. */
     width: auto;
-    max-width: clamp(100px, 13vw, 155px);
+    max-width: clamp(120px, 16vw, 180px);
+    transition: opacity 0.25s ease;
 }
 
-/* AGENT RUNNING: the stop-orb claims the extreme-right corner, so slide the model
-   pill LEFT to clear it (same 70px floor the layout was verified against). */
+/* RUNNING: the picker stays visible but goes read-only (can't change model mid-run). */
 .input-area-wrapper:has(.chat-input.agent-active) .chat-model-dropdown {
-    right: clamp(70px, 5vw, 84px);
-}
-
-/* EXPANDED: the text grew past the pill, so the pill drops to a bottom-right strip
-   (below the text) and the textarea runs full width. .input-expanded is toggled by
-   chat_input.js (adjustHeight), which measures the COMPACT-width line count via the
-   hidden mirror so the decision can't oscillate when the textarea widens. */
-.input-area-wrapper.input-expanded .chat-input {
-    padding-right: var(--chat-pad-left);
-    padding-bottom: var(--chat-pad-bottom-expanded);
-}
-.input-area-wrapper.input-expanded .chat-model-dropdown {
-    height: auto;
-    bottom: clamp(7px, 0.9vw, 11px);
-}
-
-/* Hidden line-measuring mirror (created by chat_input.js, lives inside the wrapper so
-   the --chat-pad-* vars resolve). chat_input.js sizes it to the textarea's border-box
-   width and copies the font, so it wraps text identically at the COMPACT width; its
-   line count drives the compact/expanded decision. Zero vertical padding → its
-   scrollHeight is pure text height. Never visible. */
-.chat-input-mirror {
-    position: absolute;
-    top: 0;
-    left: 0;
-    visibility: hidden;
+    opacity: 0.45;
     pointer-events: none;
-    z-index: -1;
-    box-sizing: border-box;
-    margin: 0;
-    border: none;
-    padding: 0 var(--chat-pad-right-compact) 0 var(--chat-pad-left);
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    overflow-wrap: break-word;
-    overflow: hidden;
 }
 
-/* Transparent trigger so it BLENDS into the input pill (one tone, not a 2nd pill). */
+/* Transparent trigger so it BLENDS into the box (one tone, not a 2nd pill). */
 .chat-model-dropdown .model-dropdown-trigger {
     width: 100%;
     height: clamp(30px, 3vw, 36px);
@@ -390,8 +368,8 @@
 .chat-model-dropdown .model-dropdown-menu {
     top: auto;
     bottom: calc(100% + 8px);
-    /* Right-aligned to the trigger (which now sits on the right) so the list opens
-       up-and-leftward into the input, not off the right edge. */
+    /* Right-aligned to the trigger (which sits on the RIGHT, beside the orb) so the
+       list opens up-and-leftward into the box, not off the right edge. */
     right: 0;
     left: auto;
     min-width: clamp(190px, 22vw, 260px);
@@ -527,22 +505,44 @@
     color: rgba(90, 90, 90, 0.6);
 }
 
-/* Stop-agent orb: embedded from chat_input/pc_button.html (single source of truth).
-   The iframe is larger than the 42px orb so its glow and the 1.3x click-pop aren't
-   clipped; it's transparent and click-through until the orb is live. */
+/* Orb slot: holds the send orb (send_button.html) and the stop orb (pc_button.html)
+   overlaid at the SAME spot so they crossfade into one another — same-shape circles,
+   so fading grey→0 while glow→1 (and back) reads as one object morphing, not a swap.
+   The ~46px slot keeps the toolbar row compact; each iframe is 72px and centered with
+   overflow:visible so the orb glow + 1.3x click-pop aren't clipped. */
+.input-orb-slot {
+    position: relative;
+    flex: 0 0 auto;
+    width: clamp(34px, 3.4vw, 40px);
+    height: clamp(34px, 3.4vw, 40px);
+    overflow: visible;
+}
+
+.send-agent-frame,
 .stop-agent-frame {
     position: absolute;
     top: 50%;
-    right: -9px;            /* ~72px frame centred where the 42px orb sat (right:6px) */
+    left: 50%;
     width: 72px;
     height: 72px;
-    transform: translateY(-50%);
+    transform: translate(-50%, -50%);
     background: transparent;
     border: none;
     z-index: 20;
-    pointer-events: none;   /* let the input through until the orb is live */
+    transition: opacity 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
-.stop-agent-frame.active {
+
+/* IDLE: grey send orb shown + clickable; glowing stop orb hidden + click-through. */
+.send-agent-frame { opacity: 1; pointer-events: auto; }
+.stop-agent-frame { opacity: 0; pointer-events: none; }
+
+/* RUNNING: flip them — the crossfade is the morph. */
+.input-area-wrapper:has(.chat-input.agent-active) .send-agent-frame {
+    opacity: 0;
+    pointer-events: none;
+}
+.input-area-wrapper:has(.chat-input.agent-active) .stop-agent-frame {
+    opacity: 1;
     pointer-events: auto;
 }
 

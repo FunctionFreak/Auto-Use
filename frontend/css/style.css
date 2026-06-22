@@ -10,7 +10,7 @@
 
 /* WebKit click responsiveness — eliminates tap delay and ghost highlights */
 button, input, textarea, select, a, [role="button"],
-.glass-button-wrapper, .settings-btn, .stop-agent-frame,
+.glass-button-wrapper, .settings-btn, .stop-agent-frame, .send-agent-frame,
 .model-option, .provider-item, .settings-save-btn,
 .settings-delete-btn, .gcp-vertex-btn, .vertex-done-btn {
     -webkit-tap-highlight-color: transparent;
