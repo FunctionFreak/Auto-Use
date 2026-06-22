@@ -12,7 +12,8 @@
     <link rel="stylesheet" href="container/top_left/top_left.css">
     <link rel="stylesheet" href="container/top_left/globe_shell.css">
     <link rel="stylesheet" href="container/top_right/top_right.css">
-    <link rel="stylesheet" href="container/bottom/bottom.css">
+    <link rel="stylesheet" href="container/bottom_left/bottom_left.css">
+    <link rel="stylesheet" href="container/bottom_right/bottom_right.css">
     <!-- Three.js for Globe Animation -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
@@ -172,9 +173,9 @@
 
     <!-- Right side is intentionally transparent now: the glass card layers were
          removed so only the text box shows over the greige background. -->
-    <!-- Main content T-grid: screenshot (top-left, glass) | todo/web/shell
-         (top-right) / bottom (full-width). Zones are injected by their
-         components (container/top_left, container/top_right, container/bottom). -->
+    <!-- Main content 2x2 grid: screenshot (top-left) | todo (top-right) |
+         tool-response chain (bottom-left) | bottom-right (TBD). Zones are injected
+         by their components (container/top_left, top_right, bottom_left, bottom_right). -->
     <div class="main-grid" id="mainGrid"></div>
 
     <div class="chat-container-wrapper" id="chatWrapper">
@@ -402,7 +403,8 @@
     <!-- Top-left screen overlays: web globe + shell terminal swap over the screenshot -->
     <script src="container/top_left/globe_shell.js"></script>
     <script src="container/top_right/top_right.js"></script>
-    <script src="container/bottom/bottom.js"></script>
+    <script src="container/bottom_left/bottom_left.js"></script>
+    <script src="container/bottom_right/bottom_right.js"></script>
     <script src="script.js"></script>
 </body>
 </html>

@@ -1,0 +1,16 @@
+/* =====================================================================
+   Bottom-right container — the second bottom cell, mirroring the tool-response
+   box (bottom-left). Empty for now; content TBD. Same bordered box style as the
+   tool-response cell so the bottom row reads as two matching cells.
+   ===================================================================== */
+.bottom-right-zone {
+    grid-column: 2;
+    grid-row: 2;
+    min-width: 0;
+    min-height: 0;
+    position: relative;
+    border: 1px solid rgba(0, 0, 0, 0.12);   /* visible outline (matches tool-response) */
+    border-radius: var(--glass-radius);
+    box-sizing: border-box;
+    overflow: hidden;
+}

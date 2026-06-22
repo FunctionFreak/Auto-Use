@@ -333,7 +333,7 @@
     /* ============================================================
        SHELL TERMINAL  (faded, enlarged behind the chain)
        ============================================================ */
-    // Resolved lazily (bottom.html is fetch-injected) — re-query on each event.
+    // Resolved lazily (top_left.html is fetch-injected) — re-query on each event.
     let shellTerminalContainer = null;
     let shellCmdText = null;
     let shellStreamLine = null;

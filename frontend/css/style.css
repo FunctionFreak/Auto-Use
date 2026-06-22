@@ -494,15 +494,16 @@ body {
 
 /* While a Telegram task occupies the machine: fade the app's UI components away.
    The orb + message live in the transparent overlay above. We fade the whole
-   T-grid CELLS (#zoneTopLeft / #zoneTopRight / #zoneBottom) rather than the
-   inner cards — the cell carries the frosted-glass chrome, and the right cell's
-   idle TODO card must fade too (not just the globe/shell). */
+   T-grid CELLS (#zoneTopLeft / #zoneTopRight / #zoneBottomLeft / #zoneBottomRight)
+   rather than the inner cards — the cell carries the frosted-glass chrome, and the
+   right cell's idle TODO card must fade too (not just the globe/shell). */
 body.tg-occupied #chatWrapper,
 body.tg-occupied #llmWrapper,
 body.tg-occupied #settingsBtn,
 body.tg-occupied #zoneTopLeft,
 body.tg-occupied #zoneTopRight,
-body.tg-occupied #zoneBottom {
+body.tg-occupied #zoneBottomLeft,
+body.tg-occupied #zoneBottomRight {
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.4s ease;
@@ -1245,7 +1246,7 @@ body.settings-open #chatWrapper {
    Main content T-grid — three component zones (top-left screenshot /
    top-right todo·web·shell / full-width bottom) fill the area to the right of
    the left bar. The zones are injected by the container/top_left,
-   container/top_right and container/bottom components.
+   container/top_right and container/bottom_left components.
    ===================================================================== */
 .main-grid {
     position: fixed;

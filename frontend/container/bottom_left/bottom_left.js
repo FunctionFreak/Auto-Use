@@ -817,17 +817,17 @@
     }
     function mount() {
         var grid = document.getElementById('mainGrid');
-        if (!grid || grid.querySelector('.bottom-zone')) return;
-        fetch('container/bottom/bottom.html')
+        if (!grid || grid.querySelector('.bottom-left-zone')) return;
+        fetch('container/bottom_left/bottom_left.html')
             .then(function (r) { return r.text(); })
             .then(function (html) {
-                if (grid.querySelector('.bottom-zone')) return; // guard race
+                if (grid.querySelector('.bottom-left-zone')) return; // guard race
                 var holder = document.createElement('div');
                 holder.innerHTML = html.trim();
-                var zone = holder.querySelector('.bottom-zone');
+                var zone = holder.querySelector('.bottom-left-zone');
                 if (!zone) return;
                 grid.appendChild(zone);
-                zoneEl = zone;                                // .bottom-zone (heading reveal toggles on it)
+                zoneEl = zone;                                // .bottom-left-zone (heading reveal toggles on it)
                 flowEl = zone.querySelector('.tool-flow');
                 var tree = zone.querySelector('.tool-flow-tree');
                 if (tree) {
