@@ -1098,6 +1098,23 @@ def send_shell_status_to_frontend(event, data=None, label=None):
         except Exception:
             debug_exception("send_shell_status_to_frontend")
 
+def send_flow_to_frontend(event, payload=None):
+    """Drive the bottom 'Tool response' tool-flow chain.
+    event: run_start | turn | received | tool | done | run_end.
+    payload: a small JSON-serializable dict (or None)."""
+    global webview_window
+    if webview_window:
+        try:
+            ev = str(event).replace("'", "\\'")
+            if payload is None:
+                webview_window.evaluate_js(f"window.toolFlow && window.toolFlow.onFlow('{ev}')")
+            else:
+                pj = json.dumps(payload, ensure_ascii=False)
+                pj = pj.replace('\\', '\\\\').replace("'", "\\'").replace('\n', '\\n').replace('\r', '\\r')
+                webview_window.evaluate_js(f"window.toolFlow && window.toolFlow.onFlow('{ev}', '{pj}')")
+        except Exception:
+            debug_exception("send_flow_to_frontend")
+
 @app.route('/api/start-agent', methods=['POST'])
 def start_agent():
     """Start the agent with the provided provider, model, and task"""
@@ -1209,6 +1226,7 @@ def start_agent():
                     web_callback=send_web_status_to_frontend,
                     shell_callback=send_shell_status_to_frontend,
                     cli_callback=send_cli_event_to_frontend,
+                    tool_callback=send_flow_to_frontend,
                     api_key=api_key,
                     stop_event=stop_event,
                 )

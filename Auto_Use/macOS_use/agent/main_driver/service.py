@@ -76,7 +76,7 @@ def _cleanup_scratchpad():
 class AgentService:
     """Service for Windows automation agent"""
     
-    def __init__(self, provider: str, model: str, save_conversation: bool = False, thinking: bool = True, frontend_callback=None, text_callback=None, web_callback=None, shell_callback=None, cli_callback=None, api_key: str = None, stop_event=None, external_terminal: bool = False):
+    def __init__(self, provider: str, model: str, save_conversation: bool = False, thinking: bool = True, frontend_callback=None, text_callback=None, web_callback=None, shell_callback=None, cli_callback=None, tool_callback=None, api_key: str = None, stop_event=None, external_terminal: bool = False):
         """Initialize the Agent Service"""
         # Clean up scratchpad for a fresh start
         _cleanup_scratchpad()
@@ -106,6 +106,13 @@ class AgentService:
 
         # Store CLI callback for streaming CLI agent subprocess output to the frontend
         self.cli_callback = cli_callback
+
+        # Store tool-flow callback for the bottom "Tool response" chain animation.
+        # Signature: tool_callback(event: str, payload: dict|None)
+        #   events: run_start | turn{hasImage} | received{tools:[{name,clicks?}]} | run_end
+        # The per-turn tools come straight from the parsed action block (this driver),
+        # so the controller needs no per-action plumbing.
+        self.tool_callback = tool_callback
 
         # Initialize Controller with provider and actual API model name (pass api_key for CLI agent subprocess)
         self.controller = ControllerView(provider=provider, model=self.llm_manager.get_model_name(), web_callback=web_callback, shell_callback=shell_callback, cli_callback=cli_callback, api_key=api_key, stop_event=stop_event, external_terminal=external_terminal)
@@ -353,6 +360,15 @@ class AgentService:
         except Exception:
             return entry
 
+    def _emit_flow(self, event, payload=None):
+        """Push a tool-flow event to the frontend bottom chain (best-effort)."""
+        if not self.tool_callback:
+            return
+        try:
+            self.tool_callback(event, payload)
+        except Exception:
+            pass
+
     def process_request(self, task: str) -> dict:
         """Process a user request in an iterative loop until completion.
 
@@ -380,7 +396,8 @@ class AgentService:
         
         # Print model info once at the start
         print(f"\n🔄 Processing with {self.llm_manager.get_model_name()}")
-        
+        self._emit_flow("run_start")   # tool-flow chain: clear + take over the demo
+
         # Main agent loop
         while True:
             # Check for stop signal
@@ -399,6 +416,10 @@ class AgentService:
                 final_status, final_message = "incomplete", "Reached the 100-step limit without finishing"
                 break
             
+            # Tool-flow chain: announce the turn. Digest iterations send no image,
+            # so the chain skips screenshot+mapping (true to the agent's behaviour).
+            self._emit_flow("turn", {"hasImage": not (cli_await_result or pending_web_response)})
+
             # Skip scan for light digest iterations (CLI await or web tool response)
             if cli_await_result or pending_web_response:
                 print(f"\n{'='*60}")
@@ -715,7 +736,7 @@ No image and element tree provided. Focus on digesting the web response below.
                     break
                     
                 print("✓ LLM response received")
-                
+
                 # Save raw response before any parsing (for debugging)
                 self._save_raw_response(raw_response, step_number)
                 
@@ -759,7 +780,11 @@ No image and element tree provided. Focus on digesting the web response below.
                 # Send to frontend if callback exists (omit action from stream)
                 if self.text_callback:
                     self.text_callback(AgentResponseFormatter.format_response(normalized_json, include_action=False))
-                
+
+                # Tool-flow chain: the packet arrived — tick "packet received" and hand
+                # the frontend this turn's tools, read straight from the action block.
+                self._emit_flow("received", {"tools": AgentResponseFormatter.extract_tools(normalized_json)})
+
                 # Parse the normalized JSON to extract fields and check for done
                 try:
                     agent_response = json.loads(normalized_json)
@@ -887,5 +912,12 @@ No image and element tree provided. Focus on digesting the web response below.
 
         # Cleanup: Stop CLI agent subprocess if running
         self.controller.stop_cli_agent()
+
+        # tool-flow chain: if the run didn't finish cleanly, cap it with a "!" drop.
+        if final_status == "error":
+            self._emit_flow("error", {"text": "llm service not responding"})
+        elif final_status == "incomplete" and final_message and "stop" in final_message.lower():
+            self._emit_flow("error", {"text": "agent interrupted"})
+        self._emit_flow("run_end")   # tool-flow chain: run finished
 
         return {"status": final_status, "message": final_message}

@@ -20,7 +20,8 @@
     flex-direction: column;
 }
 
-/* Small slanted label, tucked top-left. */
+/* Small slanted label, tucked top-left. Hidden until the first agent run starts
+   (bottom.js adds .flow-started on run_start); after that it stays. */
 .tool-response-label {
     flex: 0 0 auto;
     font-family: Georgia, 'Times New Roman', 'Iowan Old Style', serif;
@@ -30,20 +31,29 @@
     letter-spacing: 0.01em;
     color: rgba(60, 60, 60, 0.8);
     user-select: none;
+    opacity: 0;
+    transition: opacity 0.35s ease;
 }
+.bottom-zone.flow-started .tool-response-label { opacity: 1; }
 .tool-used-count {
     font-weight: 600;
     color: rgba(40, 40, 40, 0.9);
 }
 
-/* Flow area. Opacity is toggled by the JS test loop for a clean reset. */
+/* Flow area. Opacity is toggled by the JS test loop for a clean reset.
+   overflow:hidden + a top mask gradient make logos that scroll up past the top
+   edge dissolve smoothly (the "conveyor" hides them as they rise). */
 .tool-flow {
     flex: 1 1 auto;
     position: relative;
     min-height: 0;
     --tf-line: rgba(0, 0, 0, 0.22);
+    --tf-fade: clamp(14px, 2.6vh, 20px);  /* top fade band ≈ one logo + connector */
     opacity: 1;
     transition: opacity 0.45s ease;
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--tf-fade));
+            mask-image: linear-gradient(to bottom, transparent 0, #000 var(--tf-fade));
 }
 
 /* The column of logos; a line segment connects each logo to the one above
@@ -57,6 +67,10 @@
     flex-direction: column;
     padding-top: var(--tf-gap);         /* room for the first segment (label -> logo 1) */
     gap: var(--tf-gap);
+    /* bottom.js slides the whole chain up (translateY) as new logos arrive; this
+       matches the ::before line-in curve so the slide and the new link draw together. */
+    will-change: transform;
+    transition: transform 0.45s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
 .tool-flow-item {
