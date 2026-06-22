@@ -45,48 +45,132 @@ document.addEventListener('DOMContentLoaded', () => {
     // Query the chat input on demand (it's declared later in this closure).
     const getChatInput = () => document.querySelector('.chat-input');
 
-    // Expose the live (provider, model) selection so the chat-input wiring — now
-    // in chat_input/chat_input.js — can read it without owning it. applyModelSelection()
-    // below stays the single writer of selectedProvider/selectedModel.
+    // The chat-box drop-up (model picker) — wired on 'chatinput:ready' below.
+    let chatDropdown = null;
+
+    // Expose the live (provider, model) selection so the chat-input wiring
+    // (chat_input/chat_input.js) can read it. setProvider/setModel are the writers.
     window.getModelSelection = () => ({ provider: selectedProvider, model: selectedModel });
 
-    // Apply a (provider, model) choice: store it, then gate the chat input on
-    // API key / Vertex config, opening the relevant settings view if missing.
-    const applyModelSelection = (providerName, modelId) => {
-        selectedProvider = providerName;
-        selectedModel = modelId;
-        if (!providerName || !modelId) return;
-        const chatInput = getChatInput();
+    // Small transient top-center notification (e.g. "Please set the provider in Settings").
+    let _toastTimer = null;
+    window.showToast = (message, ms = 4000) => {
+        const el = document.getElementById('appToast');
+        if (!el || !message) return;
+        el.textContent = message;
+        el.classList.add('active');
+        clearTimeout(_toastTimer);
+        _toastTimer = setTimeout(() => el.classList.remove('active'), ms);
+    };
 
-        const isVertex = modelId.includes('vertex');
-        if (isVertex) {
-            fetch('/api/vertex/status')
-                .then(res => res.json())
-                .then(data => {
-                    if (data.project_id) {
-                        if (chatInput) { chatInput.disabled = false; chatInput.placeholder = 'Type your task...'; }
-                    } else {
-                        if (chatInput) { chatInput.disabled = true; chatInput.placeholder = 'Configure GCP Vertex in Settings first...'; }
-                        loadKeyStatus();
-                        showSettingsView('apikeys');
-                    }
-                })
-                .catch(err => console.error('Failed to check vertex status:', err));
+    // Persist the choice so it auto-loads next launch (selection only — keys stay
+    // server-side). Partial: send just {provider}, just {model}, or both.
+    const persistSelection = (updates) => {
+        fetch('/api/last-selection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updates)
+        }).catch(() => { /* non-fatal */ });
+    };
+
+    // Enable/disable the chat textarea (queried lazily — chat_input.js injects it).
+    const gateInput = (enabled, placeholder) => {
+        const ci = getChatInput();
+        if (!ci) return;
+        ci.disabled = !enabled;
+        if (placeholder) ci.placeholder = placeholder;
+    };
+
+    // Models of the active provider (drives the chat drop-up menu).
+    const activeProviderModels = () => {
+        const p = providersData.find(x => x.id === selectedProvider);
+        return (p && p.models) || [];
+    };
+
+    // Sync the chat drop-up: fill it with the active provider's models, and set its
+    // label — the chosen model's name, else the provider name, else "select model".
+    const refreshChatDropdown = () => {
+        if (!chatDropdown) return;
+        const models = activeProviderModels();
+        chatDropdown.setItems(models.map(m => ({
+            value: m.id, label: m.display_name, reasoning: m.reasoning_support
+        })));
+        chatDropdown.setDisabled(!selectedProvider);   // kept clickable via CSS so it can toast
+        if (selectedModel && models.some(m => m.id === selectedModel)) {
+            chatDropdown.select(selectedModel);          // label = model name
+        } else if (selectedProvider) {
+            chatDropdown.setPlaceholder(selectedProvider);   // label = provider name
+        } else {
+            chatDropdown.setPlaceholder('select model');
+        }
+    };
+
+    // Gate the chat input on whether the provider's key (or Vertex config, for
+    // vertex models) is present; toast + reveal key rows if missing.
+    const gateOnConfig = (providerId, modelId) => {
+        if (!providerId || !modelId) { gateInput(false, 'Select a model…'); return; }
+        if (modelId.includes('vertex')) {
+            fetch('/api/vertex/status').then(r => r.json()).then(data => {
+                if (data.project_id) { gateInput(true, 'Type your task...'); }
+                else { gateInput(false, 'Configure GCP Vertex in Settings first...'); loadKeyStatus(); if (window.showToast) window.showToast('Configure GCP Vertex in Settings'); }
+            }).catch(() => {});
             return;
         }
+        fetch('/api/keys/status').then(r => r.json()).then(status => {
+            if (status[providerId]) { gateInput(true, 'Type your task...'); }
+            else { gateInput(false, 'Add the API key in Settings first...'); loadKeyStatus(); if (window.showToast) window.showToast('Add the ' + providerId + ' API key in Settings'); }
+        }).catch(() => {});
+    };
 
-        fetch('/api/keys/status')
-            .then(res => res.json())
-            .then(status => {
-                if (status[providerName]) {
-                    if (chatInput) { chatInput.disabled = false; chatInput.placeholder = 'Type your task...'; }
+    // Provider chosen in Settings: clear the model, persist, refresh the drop-up,
+    // and keep the input disabled until a model is picked.
+    const setProvider = (providerId) => {
+        selectedProvider = providerId || null;
+        selectedModel = null;
+        persistSelection({ provider: selectedProvider, model: null });
+        refreshChatDropdown();
+        gateInput(false, providerId ? 'Select a model…' : 'Select a model in Settings to start...');
+        if (providerId) {
+            fetch('/api/keys/status').then(r => r.json()).then(s => {
+                if (!s[providerId]) { loadKeyStatus(); if (window.showToast) window.showToast('Add the ' + providerId + ' API key in Settings'); }
+            }).catch(() => {});
+        }
+    };
+
+    // Model chosen in the chat drop-up: persist, relabel the drop-up, gate the input.
+    const setModel = (modelId) => {
+        selectedModel = modelId || null;
+        persistSelection({ model: selectedModel });
+        if (chatDropdown && selectedModel) chatDropdown.select(selectedModel);
+        gateOnConfig(selectedProvider, selectedModel);
+    };
+
+    // On launch: load the saved provider/model and apply it, or prompt if unusable.
+    const restoreSelection = () => {
+        fetch('/api/last-selection').then(r => r.json()).then(sel => {
+            sel = sel || {};
+            const known = providersData.find(p => p.id === sel.provider);
+            if (!sel.provider || !known) {                 // nothing usable saved
+                refreshChatDropdown();                     // "select model"
+                if (window.showToast) window.showToast('Please set the provider in Settings');
+                return;
+            }
+            selectedProvider = sel.provider;
+            if (providerDropdown) providerDropdown.select(sel.provider);
+            const models = known.models || [];
+            if (sel.model && models.some(m => m.id === sel.model)) selectedModel = sel.model;
+            refreshChatDropdown();
+            fetch('/api/keys/status').then(r => r.json()).then(status => {
+                if (!status[sel.provider]) {
+                    gateInput(false, 'Add the API key in Settings first...');
+                    if (window.showToast) window.showToast('Please set the provider in Settings');
+                } else if (selectedModel) {
+                    gateOnConfig(sel.provider, selectedModel);
                 } else {
-                    if (chatInput) { chatInput.disabled = true; chatInput.placeholder = 'Add API key in Settings first...'; }
-                    loadKeyStatus();
-                    showSettingsView('apikeys');
+                    gateInput(false, 'Select a model…');
                 }
-            })
-            .catch(err => console.error('Failed to check key status:', err));
+            }).catch(() => {});
+        }).catch(() => { refreshChatDropdown(); });
     };
 
     // Build the brain SVG icon (same #icon-brain symbol the old dropdown used)
@@ -109,6 +193,25 @@ document.addEventListener('DOMContentLoaded', () => {
         const valueEl = root.querySelector('.model-dropdown-value');
         const menu = root.querySelector('.model-dropdown-menu');
         let value = '';
+
+        // Clicks inside the menu (its padding, the scrollbar) must NOT bubble to the
+        // document close-handler — only choosing an option closes the dropdown. Without
+        // this, interacting with the scrollbar collapses the list.
+        if (menu) menu.addEventListener('click', (e) => e.stopPropagation());
+
+        // Wheel/trackpad scrolling: WebKit (the WKWebView host) refuses to natively
+        // async-scroll this overflow menu because it sits inside a position:fixed +
+        // transform + backdrop-filter subtree, so long lists (e.g. OpenRouter's ~17
+        // models) looked frozen and the top items were unreachable. Programmatic
+        // scrollTop DOES work there, so drive it ourselves from the wheel event (which
+        // real trackpad/wheel input fires regardless). No-op when nothing overflows, so
+        // the short settings provider list is unaffected.
+        if (menu) menu.addEventListener('wheel', (e) => {
+            if (menu.scrollHeight <= menu.clientHeight) return;
+            const step = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+            menu.scrollTop += step;
+            e.preventDefault();
+        }, { passive: false });
 
         trigger.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -177,36 +280,13 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const providerDropdown = makeDropdown('providerDropdown', (providerId) => {
-        // Provider chosen → refill models; not applied until a model is picked.
-        populateModelSelect(providerId);
-    });
-    const modelDropdown = makeDropdown('modelDropdown', (modelId) => {
-        const providerId = providerDropdown ? providerDropdown.value : selectedProvider;
-        if (providerId && modelId) applyModelSelection(providerId, modelId);
+        if (providerId) setProvider(providerId);   // model is now chosen in the chat drop-up
     });
 
     // Close any open dropdown when clicking elsewhere.
     document.addEventListener('click', () => {
         document.querySelectorAll('.model-dropdown.open').forEach(d => d.classList.remove('open'));
     });
-
-    // Populate the Model dropdown for a given provider id.
-    const populateModelSelect = (providerId) => {
-        if (!modelDropdown) return;
-        const provider = providersData.find(p => p.id === providerId);
-        const models = (provider && provider.models) || [];
-        modelDropdown.setItems(models.map(m => ({
-            value: m.id, label: m.display_name, reasoning: m.reasoning_support
-        })));
-        modelDropdown.setDisabled(!providerId || !models.length);
-        if (providerId && selectedModel && models.some(m => m.id === selectedModel)) {
-            modelDropdown.select(selectedModel);
-        } else {
-            modelDropdown.setPlaceholder(
-                providerId ? (models.length ? 'Select a model…' : 'No models') : 'Select a provider first…'
-            );
-        }
-    };
 
     // Populate the Provider dropdown from providersData, restoring any current
     // selection so reopening Settings shows the active choice.
@@ -215,7 +295,6 @@ document.addEventListener('DOMContentLoaded', () => {
         providerDropdown.setItems(providersData.map(p => ({ value: p.id, label: p.name, reasoning: false })));
         if (selectedProvider) providerDropdown.select(selectedProvider);
         else providerDropdown.setPlaceholder(providersData.length ? 'Select a provider…' : 'No providers found');
-        populateModelSelect(selectedProvider || '');
     };
 
     // Fetch providers and populate the dropdowns.
@@ -225,11 +304,13 @@ document.addEventListener('DOMContentLoaded', () => {
             .then(providers => {
                 providersData = Array.isArray(providers) ? providers : [];
                 populateProviderSelect();
+                restoreSelection();   // auto-load the last provider/model on launch
             })
             .catch(err => {
                 console.error('Failed to load providers:', err);
                 providersData = [];
                 populateProviderSelect();
+                restoreSelection();
             });
     };
 
@@ -248,6 +329,22 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         })
         .catch(err => console.error('Failed to load key status:', err));
+
+    // Wire the chat-box drop-up (model picker) once chat_input.js injects it. It
+    // reuses makeDropdown; picking a model calls setModel. Clicking it with no
+    // provider set nudges the user to Settings.
+    const wireChatDropdown = () => {
+        if (chatDropdown) return;
+        chatDropdown = makeDropdown('chatModelDropdown', (modelId) => { if (modelId) setModel(modelId); });
+        if (!chatDropdown) return;
+        const trig = document.querySelector('#chatModelDropdown .model-dropdown-trigger');
+        if (trig) trig.addEventListener('click', () => {
+            if (!selectedProvider && window.showToast) window.showToast('Please set the provider in Settings');
+        });
+        refreshChatDropdown();   // sync label/menu from any already-restored selection
+    };
+    if (document.querySelector('#chatModelDropdown')) wireChatDropdown();
+    else document.addEventListener('chatinput:ready', wireChatDropdown);
 
     // ============================================
     // SETTINGS PANEL - Open / Close
@@ -332,13 +429,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 apiKeys[provider] = null;
                 // Lock input and reset if deleted key belongs to the active provider
                 if (provider === selectedProvider) {
-                    chatInput.disabled = true;
-                    chatInput.value = '';
-                    chatInput.placeholder = 'Select a model in Settings to start...';
                     selectedProvider = null;
                     selectedModel = null;
-                    // Reset the Model Selection dropdowns to their default state.
-                    populateProviderSelect();
+                    persistSelection({ provider: null, model: null });
+                    gateInput(false, 'Select a model in Settings to start...');
+                    const ci = getChatInput(); if (ci) ci.value = '';
+                    populateProviderSelect();   // reset the Settings provider dropdown
+                    refreshChatDropdown();      // chat drop-up back to "select model"
                 }
             })
             .catch(err => console.error('Failed to delete key:', err));
@@ -419,8 +516,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 vertexOverlay.classList.remove('active');
                 // Unlock chat input if a Vertex model is currently selected
                 if (selectedModel && selectedModel.includes('vertex')) {
-                    chatInput.disabled = false;
-                    chatInput.placeholder = 'Type your task...';
+                    gateInput(true, 'Type your task...');
                 }
             })
             .catch(err => console.error('Failed to save vertex config:', err));
@@ -521,18 +617,11 @@ document.addEventListener('DOMContentLoaded', () => {
                             fetch('/api/vertex/status')
                                 .then(res => res.json())
                                 .then(data => {
-                                    if (data.project_id) {
-                                        chatInput.disabled = false;
-                                        chatInput.placeholder = 'Type your task...';
-                                    } else {
-                                        chatInput.disabled = true;
-                                        chatInput.placeholder = 'Configure GCP Vertex in Settings first...';
-                                    }
+                                    gateInput(!!data.project_id, data.project_id ? 'Type your task...' : 'Configure GCP Vertex in Settings first...');
                                 })
                                 .catch(() => {});
                         } else if (apiKeys[selectedProvider]) {
-                            chatInput.disabled = false;
-                            chatInput.placeholder = 'Type your task...';
+                            gateInput(true, 'Type your task...');
                         }
                     }
                 })

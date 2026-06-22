@@ -620,6 +620,40 @@ def write_api_keys(keys):
     except Exception:
         debug_exception("write_api_keys")
 
+# ── Last-used selection (provider + model) ──────────────────────────────────
+# Persisted so the app auto-loads the user's last choice on launch instead of
+# making them re-pick every time. Selection ONLY — API keys stay in api_key.txt.
+def get_settings_file():
+    """Path to settings.json (the user's last selection), in the per-user app-data dir."""
+    return app_data_dir() / "settings.json"
+
+def read_settings():
+    """Read settings.json -> {'provider':..., 'model':...} (or {} if missing/invalid)."""
+    settings_file = get_settings_file()
+    if settings_file.exists():
+        try:
+            with open(settings_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            debug_exception("read_settings")
+    return {}
+
+def write_settings(updates):
+    """Merge a dict of fields (e.g. {'provider':..,'model':..}) into settings.json.
+    A field whose value is None is written through, so the frontend can CLEAR the
+    model (provider changed) by sending {'model': None}."""
+    settings_file = get_settings_file()
+    try:
+        data = read_settings()
+        data.update(updates)
+        settings_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(settings_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        debug_exception("write_settings")
+
 def get_provider_api_key(provider):
     """Get API key for a specific provider from file"""
     env_name = PROVIDER_KEY_MAP.get(provider)
@@ -834,6 +868,34 @@ def delete_api_key():
     except Exception:
         debug_exception("delete_api_key")
         return jsonify({'error': 'Failed to delete'}), 500
+
+@app.route('/api/last-selection', methods=['GET'])
+def get_last_selection():
+    """Return the user's last-used {provider, model} so the app auto-loads it on launch."""
+    try:
+        return jsonify(read_settings())
+    except Exception:
+        debug_exception("get_last_selection")
+        return jsonify({})
+
+@app.route('/api/last-selection', methods=['POST'])
+def save_last_selection():
+    """Persist the user's selected provider and/or model (partial merge; only the
+    keys present in the body are updated, so provider and model can be saved separately)."""
+    from flask import request
+    try:
+        data = request.get_json(silent=True) or {}
+        updates = {}
+        if 'provider' in data:
+            updates['provider'] = data['provider']
+        if 'model' in data:
+            updates['model'] = data['model']
+        if updates:
+            write_settings(updates)
+        return jsonify({'status': 'saved'})
+    except Exception:
+        debug_exception("save_last_selection")
+        return jsonify({'error': 'Failed to save'}), 500
 
 @app.route('/api/vertex/status', methods=['GET'])
 def get_vertex_status():

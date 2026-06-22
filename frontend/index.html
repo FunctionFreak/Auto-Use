@@ -178,6 +178,9 @@
     <!-- Main content 2x2 grid: screenshot (top-left) | tracking progress (top-right) |
          tool-response chain (bottom-left) | todo list (bottom-right). Zones are injected
          by their components (container/top_left, top_right, bottom_left, bottom_right). -->
+    <!-- Transient top-center notification (driven by window.showToast) -->
+    <div id="appToast" class="app-toast" role="status" aria-live="polite"></div>
+
     <div class="main-grid" id="mainGrid"></div>
 
     <!-- Chat input (the bottom text box) is a component now — markup lives in
@@ -195,25 +198,15 @@
                     <span class="settings-title">Settings</span>
                 </div>
 
-                <!-- Model Selection -->
+                <!-- Provider Selection (the MODEL is now picked in the chat-box drop-up) -->
                 <div class="settings-view settings-modelselect-view" id="settingsModelView">
-                    <div class="settings-section-heading">Model Selection</div>
+                    <div class="settings-section-heading">Provider</div>
                     <div class="model-select-row">
                         <div class="model-select-field">
                             <label class="model-select-label">Provider</label>
                             <div class="model-dropdown" id="providerDropdown">
                                 <button class="model-dropdown-trigger" type="button">
                                     <span class="model-dropdown-value placeholder">Select a provider…</span>
-                                    <svg class="model-dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                                </button>
-                                <div class="model-dropdown-menu"></div>
-                            </div>
-                        </div>
-                        <div class="model-select-field">
-                            <label class="model-select-label">Model</label>
-                            <div class="model-dropdown" id="modelDropdown">
-                                <button class="model-dropdown-trigger" type="button">
-                                    <span class="model-dropdown-value placeholder">Select a provider first…</span>
                                     <svg class="model-dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
                                 </button>
                                 <div class="model-dropdown-menu"></div>

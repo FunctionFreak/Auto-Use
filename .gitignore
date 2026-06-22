@@ -91,6 +91,7 @@ _build_stamp.py
 *.mp4
 !demo.mp4
 /Auto_Use/api_key
+/settings.json
 /Auto_Use/windows_use/mcp_tracking
 *.exe
 *.ico

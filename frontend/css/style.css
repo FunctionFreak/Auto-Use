@@ -432,8 +432,16 @@ body {
    click-through show/hide controller; the panel itself is the glass card. */
 .settings-overlay {
     position: fixed;
-    inset: 0;
-    background: transparent;
+    /* Cover the content area (right of the left bar) with the app's exact base
+       colour so a prior agent run's grid (#mainGrid zones, which body.settings-open
+       does NOT fade) is fully hidden behind Settings instead of showing through a
+       transparent panel and cluttering the view. Left bar stays visible, matching
+       how body.settings-open already keeps it. */
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: var(--left-bar-w);
+    background: #D0CFC9;
     z-index: 100;
 
     opacity: 0;
@@ -507,6 +515,37 @@ body.tg-occupied #zoneBottomRight {
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.4s ease;
+}
+
+/* Transient top-center notification (window.showToast) — e.g. "Please set the
+   provider in Settings". Hidden until .active, then fades in/out. */
+.app-toast {
+    position: fixed;
+    top: clamp(14px, 2.2vw, 24px);
+    left: 50%;
+    transform: translate(-50%, -8px);
+    z-index: 25;
+    max-width: min(90vw, 460px);
+    padding: clamp(8px, 1vw, 11px) clamp(14px, 1.6vw, 20px);
+    border-radius: 999px;
+    background: rgba(40, 40, 46, 0.92);
+    color: rgba(255, 255, 255, 0.96);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: clamp(12px, 1.2vw, 13.5px);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    text-align: center;
+    white-space: nowrap;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.app-toast.active {
+    opacity: 1;
+    transform: translate(-50%, 0);
 }
 
 .telegram-task-content {

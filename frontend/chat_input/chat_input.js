@@ -19,13 +19,45 @@
         const chatInput = (root || document).querySelector('.chat-input');
         if (!chatInput) return;
 
-        // Auto-grow the textarea up to the CSS max-height.
+        // The input bar wrapper + a hidden mirror used to measure how many lines the
+        // text would take at the COMPACT width (right reserve for the model pill).
+        const wrapper = chatInput.closest('.input-area-wrapper');
+        let mirror = wrapper && wrapper.querySelector('.chat-input-mirror');
+        if (wrapper && !mirror) {
+            mirror = document.createElement('div');
+            mirror.className = 'chat-input-mirror';
+            mirror.setAttribute('aria-hidden', 'true');
+            wrapper.appendChild(mirror);
+        }
+
+        // Auto-grow the textarea up to the CSS max-height, and decide compact vs
+        // expanded. Expanded = the text would wrap to 2+ lines at the COMPACT width
+        // (i.e. it has reached the model pill) → drop the pill to the bottom strip and
+        // let the text run full width. We always measure at the compact width via the
+        // mirror (whose width/padding don't change with the textarea's mode), so the
+        // state can't oscillate when expanding widens the textarea.
         const adjustHeight = () => {
+            if (wrapper && mirror) {
+                const cs = getComputedStyle(chatInput);
+                mirror.style.width = chatInput.offsetWidth + 'px';   // border-box; constant across modes
+                mirror.style.fontFamily = cs.fontFamily;
+                mirror.style.fontSize = cs.fontSize;
+                mirror.style.fontWeight = cs.fontWeight;
+                mirror.style.letterSpacing = cs.letterSpacing;
+                mirror.style.lineHeight = cs.lineHeight;
+                mirror.textContent = (chatInput.value || '') + ' '; // trailing space counts a final blank line
+                const lh = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) * 1.4) || 20;
+                const lines = Math.max(1, Math.round(mirror.scrollHeight / lh));
+                wrapper.classList.toggle('input-expanded', lines >= 2);
+            }
+            // Grow AFTER the class toggle so the height includes the expanded bottom strip.
             chatInput.style.height = 'auto';
             const newHeight = Math.min(chatInput.scrollHeight, 150); // 150px matches CSS max-height
             chatInput.style.height = `${Math.max(newHeight, 44)}px`; // 44px matches CSS min-height base
         };
         chatInput.addEventListener('input', adjustHeight);
+        // Keep the mirror's wrap width in sync when the window resizes.
+        window.addEventListener('resize', adjustHeight);
         adjustHeight();
 
         // Enter (without Shift) starts the agent; Shift+Enter inserts a newline.
