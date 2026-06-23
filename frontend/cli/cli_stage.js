@@ -73,10 +73,9 @@
             var card = cards.get(taskId);
             if (card) card.setLine(line);
         };
-        window.cliTaskTodo = function (taskId, payload) {
-            var card = cards.get(taskId);
-            if (card) card.setTodos(payload);
-        };
+        // Todos are handled internally by the agent and intentionally NOT rendered in the UI.
+        // The backend still emits todo_update events, so keep a no-op stub to swallow them.
+        window.cliTaskTodo = function () {};
         window.cliTaskEnd = function (taskId, status, summary) {
             var card = cards.get(taskId);
             if (card) card.setDone(status, summary);

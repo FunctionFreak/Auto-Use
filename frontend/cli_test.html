@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<!-- =====================================================================
+     CLI / coder-card UI TEST HARNESS  (dev-only — not shipped, not wired to backend)
+     ---------------------------------------------------------------------
+     Loads the REAL cli stylesheets + scripts (cli/cli_stage.js, coder_card.js,
+     tool_icons.js) over a minimal 4-zone grid that mimics the app, then drives the
+     same window.cli* event stream the backend normally pushes — with DUMMY JSON
+     action blocks (same schema as agent/coder/system_prompt.md) so you can eyeball
+     the coder terminal, the tool-icon chain, the scratchpad tracker, and the minion
+     tree without launching Flask/pywebview.
+
+     Run:  ./cli_test.sh        (serves this folder + opens the page)
+     ===================================================================== -->
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Auto-Use — CLI UI Test Harness</title>
+
+<!-- real app stylesheets (root vars --glass-radius/--left-bar-w, .main-grid, etc.) -->
+<link rel="stylesheet" href="css/style.css" />
+<link rel="stylesheet" href="cli/cli_stage.css" />
+<link rel="stylesheet" href="cli/cli_container/coder_card.css" />
+
+<style>
+    /* ---- harness chrome only (everything below is test scaffolding) ---- */
+    html, body { margin: 0; height: 100vh; width: 100vw; overflow: hidden; background: #D0CFC9; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+
+    /* soft drifting blobs, same palette as the splash, so the bg reads like the app */
+    .blob { position: fixed; z-index: 0; width: 55vw; height: 55vw; max-width: 720px; max-height: 720px;
+            border-radius: 50%; filter: blur(80px); opacity: 0.5; pointer-events: none; }
+    .blob-pink   { top: 16%; left: 10%; background: radial-gradient(circle at 30% 30%, #d880be 0%, rgba(216,128,190,0) 70%); }
+    .blob-purple { bottom: 12%; right: 8%; background: radial-gradient(circle at 70% 70%, #8782eb 0%, rgba(135,130,235,0) 70%); }
+
+    /* the four T-grid zones — light glass cards just to frame the "complete UI" so the
+       slide-up-to-CLI-mode transition reads correctly. (Real app injects rich content here.) */
+    #mainGrid .tz {
+        position: relative; display: flex; align-items: center; justify-content: center;
+        border: 1.5px solid rgba(120, 124, 132, 0.45); border-radius: var(--glass-radius);
+        background: rgba(255, 255, 255, 0.16); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+        color: rgba(70, 72, 80, 0.55); font-style: italic; font-size: clamp(11px, 1.1vw, 14px); user-select: none;
+    }
+
+    /* dev control bar (top-center), above everything */
+    #harnessBar {
+        position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 50;
+        display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 999px;
+        background: rgba(30, 32, 38, 0.9); color: #fff; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+        box-shadow: 0 6px 22px rgba(0,0,0,0.25); font-size: 12px;
+    }
+    #harnessBar b { font-weight: 600; letter-spacing: 0.02em; margin-right: 4px; opacity: 0.9; }
+    #harnessBar button {
+        border: 0; border-radius: 999px; padding: 5px 11px; cursor: pointer; font-size: 12px; font-weight: 600;
+        background: rgba(255,255,255,0.14); color: #fff; transition: background 0.15s ease;
+    }
+    #harnessBar button:hover { background: rgba(255,255,255,0.26); }
+    #harnessBar button.on { background: rgba(110,197,233,0.85); color: #08222c; }
+    #harnessBar .sep { width: 1px; height: 18px; background: rgba(255,255,255,0.2); margin: 0 2px; }
+    #harnessStatus { opacity: 0.75; min-width: 120px; }
+
+    /* fake "Agent activated" strip, like the real screenshot, for context */
+    #fakeStrip {
+        position: fixed; left: 50%; transform: translateX(-50%); bottom: 96px; z-index: 12;
+        display: flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 14px;
+        background: rgba(255,255,255,0.18); color: rgba(60,62,70,0.8); font-size: 13px;
+        -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); border: 1px solid rgba(255,255,255,0.25);
+    }
+    #fakeStrip .tri { color: #8782eb; }
+    /* fake chat box at the very bottom, for context */
+    #fakeChat {
+        position: fixed; left: 50%; transform: translateX(-50%); bottom: 28px; z-index: 12;
+        width: clamp(420px, 60vw, 820px); height: 52px; border-radius: 26px;
+        background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3);
+        display: flex; align-items: center; padding: 0 22px; color: rgba(60,62,70,0.5); font-size: 14px;
+        -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    }
+</style>
+</head>
+<body>
+    <div class="blob blob-pink"></div>
+    <div class="blob blob-purple"></div>
+
+    <!-- dev control bar -->
+    <div id="harnessBar">
+        <b>CLI UI test</b>
+        <button id="btnReplay">▶ Replay</button>
+        <span class="sep"></span>
+        <button class="spd" data-spd="0.5">0.5×</button>
+        <button class="spd on" data-spd="1">1×</button>
+        <button class="spd" data-spd="2">2×</button>
+        <button class="spd" data-spd="4">4×</button>
+        <span class="sep"></span>
+        <span id="harnessStatus">idle</span>
+    </div>
+
+    <!-- the 2×2 T-grid (cli_stage.js injects #cliContainer here as a 5th child) -->
+    <div class="main-grid" id="mainGrid">
+        <div class="tz" id="zoneTopLeft">screenshot</div>
+        <div class="tz" id="zoneTopRight">tracking progress</div>
+        <div class="tz" id="zoneBottomLeft">tool response</div>
+        <div class="tz" id="zoneBottomRight">todo list</div>
+    </div>
+
+    <!-- context-only chrome (matches the real screenshot) -->
+    <div id="fakeStrip"><span class="tri">▶</span> Agent activated: entered cli_await to hold the pipeline.</div>
+    <div id="fakeChat">Type your task…</div>
+
+    <!-- REAL cli scripts, same order as index.html -->
+    <script src="cli/cli_container/tool_icons.js"></script>
+    <script src="cli/cli_container/coder_card.js"></script>
+    <script src="cli/cli_stage.js"></script>
+
+    <!-- ===================== dummy event driver ===================== -->
+    <script>
+    (function () {
+        'use strict';
+
+        var SPEED = 1;
+        var running = false;
+        var cancelToken = 0;                 // bumped on replay to abort an in-flight run
+        var statusEl = document.getElementById('harnessStatus');
+        function status(s) { if (statusEl) statusEl.textContent = s; }
+
+        function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms / SPEED); }); }
+
+        // Stream ONE JSON object the way the backend pipe does: pretty-printed, one line per
+        // cliTaskLine call (the frontend buffers until JSON.parse succeeds on the closing brace).
+        async function streamLines(emit, taskId, obj, token) {
+            var lines = JSON.stringify(obj, null, 2).split('\n');
+            for (var i = 0; i < lines.length; i++) {
+                if (token !== cancelToken) return;
+                emit(taskId, lines[i], 'out');
+                await sleep(40);
+            }
+        }
+        // Coder packets arrive as pretty-printed JSON, one line per event (the frontend buffers
+        // until parse succeeds). Minion packets arrive as ONE compact JSON line (that's how the
+        // minion backend prints them) — so the minion row shows the raw JSON streaming by.
+        function streamCoder(taskId, obj, token) { return streamLines(window.cliTaskLine, taskId, obj, token); }
+        async function streamMinion(taskId, obj, token) {
+            if (token !== cancelToken) return;
+            window.cliMinionLine(taskId, JSON.stringify(obj), 'out');
+            await sleep(120);
+        }
+
+        // every coder tool, one per step — same action schema as system_prompt.md
+        function coderSteps() {
+            return [
+                { label: 'shell',     obj: { action: [{ type: 'shell',   command: 'npm install jsonwebtoken bcrypt', input: '' }] } },
+                { label: 'glob',      obj: { action: [{ type: 'glob',    pattern: 'src/**/*.js', path: 'src' }] } },
+                { label: 'grep',      obj: { action: [{ type: 'grep',    pattern: 'app\\.use\\(', path: 'src', glob: '*.js', output_mode: 'content' }] } },
+                { label: 'view',      obj: { action: [{ type: 'view',    path: 'src/server.js', start: 1, end: 40 }] } },
+                { label: 'scratchpad',obj: { action: [{ type: 'scratchpad', value: 'Auth middleware must run BEFORE route handlers; read the secret from env JWT_SECRET, never hard-code it.' }] } },
+                { label: 'write',     obj: { action: [{ type: 'write',   path: 'src/middleware/auth.js', line: 1, content: '// jwt verify middleware' }] } },
+                { label: 'replace',   obj: { action: [{ type: 'replace', path: 'src/server.js', line: 12, old_block: 'app.use(router)', new_block: 'app.use(authMiddleware)\napp.use(router)' }] } },
+                { label: 'web',       obj: { action: [{ type: 'web',     value: 'express jwt authentication best practices 2026' }] }, web: true },
+                { label: 'todo_list (hidden)', obj: { action: [{ type: 'todo_list', value: 'Objective: JWT auth\n- [ ] install deps\n- [ ] middleware\n- [ ] protect routes' }] } }
+            ];
+        }
+
+        async function run() {
+            var token = ++cancelToken;
+            running = true;
+            document.getElementById('btnReplay').disabled = true;
+
+            status('full UI — entering cli_await…');
+            await sleep(1200);                          // let the full 4-zone grid show first
+            if (token !== cancelToken) return;
+            if (window.cliAwaitStart) window.cliAwaitStart('test');
+            status('sliding to CLI…');
+            await sleep(800);
+
+            var T = 'coder-' + Date.now();
+            if (window.cliTaskStart) window.cliTaskStart(T, 'Add JWT auth to the Express API');
+            await sleep(950);
+
+            var steps = coderSteps();
+            for (var s = 0; s < steps.length; s++) {
+                if (token !== cancelToken) return;
+                status('coder: ' + steps[s].label);
+                if (steps[s].web && window.cliPillWebLoadingStart) window.cliPillWebLoadingStart(T);
+                await streamCoder(T, steps[s].obj, token);
+                if (steps[s].web) { await sleep(1500); if (window.cliPillWebLoadingEnd) window.cliPillWebLoadingEnd(T); }
+                await sleep(1850);
+            }
+
+            // ---- minions: launch two so the tree shows the trunk + an L per row ----
+            if (token !== cancelToken) return;
+            status('coder: minion dispatch');
+            await streamCoder(T, { action: [{ type: 'minion', value: 'find every req.user usage across the codebase' }] }, token);
+            var M1 = 'minion-A-' + Date.now();
+            var M2 = 'minion-B-' + Date.now();
+            if (window.cliMinionStart) window.cliMinionStart(T, M1, 'find every req.user usage across the codebase');
+            await sleep(850);
+            if (window.cliMinionStart) window.cliMinionStart(T, M2, 'list all routes missing auth middleware');
+            await sleep(950);
+
+            // each minion streams the FULL minion schema (read-only tools), like the real backend.
+            // Minion A runs MANY tools so its sub-chain overflows the window and starts to slide
+            // (conveyor): oldest tools vanish on the left, newest slide in from the right.
+            var aTools = [
+                { type: 'grep',  pattern: 'req\\.user', path: 'src', glob: '*.js' },
+                { type: 'view',  path: 'src/routes/user.js', start: 1, end: 30 },
+                { type: 'glob',  pattern: 'src/**/*.js' },
+                { type: 'shell', command: 'rg -n req.user src' },
+                { type: 'grep',  pattern: 'authMiddleware', path: 'src' },
+                { type: 'view',  path: 'src/server.js', start: 1, end: 40 },
+                { type: 'glob',  pattern: 'src/middleware/*.js' },
+                { type: 'shell', command: 'cat package.json' },
+                { type: 'grep',  pattern: 'jwt', path: 'src' },
+                { type: 'view',  path: 'src/middleware/auth.js', start: 1, end: 60 },
+                { type: 'glob',  pattern: 'test/**/*.spec.js' },
+                { type: 'shell', command: 'ls -la src' },
+                { type: 'grep',  pattern: 'bcrypt', path: 'src' },
+                { type: 'view',  path: 'src/config.js', start: 1, end: 25 }
+            ];
+            for (var a = 0; a < aTools.length; a++) {
+                if (token !== cancelToken) return;
+                status('minion A: ' + aTools[a].type + ' (' + (a + 1) + '/' + aTools.length + ')');
+                await streamMinion(M1, { thinking: 'THINK', memory: 'step ' + (a + 1), next_goal: 'scout', action: [aTools[a]] }, token);
+                await sleep(950);
+                if (a === 1) {   // kick minion B along the way so both run concurrently
+                    status('minion B: glob');
+                    await streamMinion(M2, { thinking: 'THINK', memory: 'step 1', next_goal: 'list route files', action: [{ type: 'glob', pattern: 'src/routes/*.js' }] }, token);
+                    await sleep(950);
+                }
+                if (a === 4) {
+                    status('minion B: shell');
+                    await streamMinion(M2, { thinking: 'THINK', memory: 'step 2', next_goal: 'scan', action: [{ type: 'shell', command: 'grep -rL authMiddleware src/routes' }] }, token);
+                    await sleep(950);
+                }
+            }
+            status('minion A: finishing');
+            await streamMinion(M1, { thinking: 'THINK: done.', memory: 'final', next_goal: 'exit', action: [{ type: 'scratchpad', value: 'req.user used in 6 files' }, { type: 'exit', value: 'found 6 usages' }] }, token);
+            await sleep(800);
+            if (window.cliMinionEnd) window.cliMinionEnd(M1, 'complete', 'found 6 usages');
+            await sleep(900);
+            status('minion B: finishing');
+            await streamMinion(M2, { thinking: 'THINK: done.', memory: 'final', next_goal: 'exit', action: [{ type: 'exit', value: '3 routes unprotected' }] }, token);
+            await sleep(800);
+            if (window.cliMinionEnd) window.cliMinionEnd(M2, 'complete', '3 routes unprotected');
+            await sleep(1400);
+
+            // ---- back to the coder: wait, then exit ----
+            if (token !== cancelToken) return;
+            status('coder: wait');
+            await streamCoder(T, { action: [{ type: 'wait', value: '3' }] }, token);
+            await sleep(1850);
+            status('coder: exit');
+            await streamCoder(T, { action: [{ type: 'exit', value: 'Added JWT middleware, protected routes, tests green.' }] }, token);
+            await sleep(900);
+            if (window.cliTaskEnd) window.cliTaskEnd(T, 'complete', 'All done — JWT auth wired up and verified.');
+
+            status('done ✓');
+            running = false;
+            document.getElementById('btnReplay').disabled = false;
+        }
+
+        function replay() {
+            cancelToken++;                              // abort any in-flight run
+            if (window.cliAwaitEnd) window.cliAwaitEnd();   // slide down + clearAll (after 600ms)
+            status('resetting…');
+            setTimeout(function () { run(); }, 950);
+        }
+
+        // wire controls
+        document.getElementById('btnReplay').addEventListener('click', function () { if (!running) replay(); });
+        Array.prototype.forEach.call(document.querySelectorAll('.spd'), function (b) {
+            b.addEventListener('click', function () {
+                SPEED = parseFloat(b.dataset.spd);
+                document.querySelectorAll('.spd').forEach(function (x) { x.classList.remove('on'); });
+                b.classList.add('on');
+            });
+        });
+
+        // auto-start once cli_stage.js has installed its window.cli* hooks (it does so on a
+        // macrotask after DOMContentLoaded — wait for window 'load' + a tick to be safe).
+        window.addEventListener('load', function () { setTimeout(run, 450); });
+    })();
+    </script>
+</body>
+</html>

@@ -164,6 +164,38 @@
         };
     }
 
+    // --- minion mascot: three AI heads, a parent branching to two children — ported from
+    //     tool_animaation.html (AINODE / generateMinionData / drawSmallHead) ---
+    var MINION_NODE = { left: [-24, 0], h1: [24, -20], h2: [24, 20], half: 12, l1: [-7, -4, 7, -16], l2: [-7, 4, 7, 16] };
+    function drawMiniHead(ctx, cx, cy, half, t, alpha) {
+        var k = half / 30;
+        ctx.globalAlpha = alpha * 0.92; ctx.fillStyle = COLOR;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(cx - half, cy - half, 2 * half, 2 * half, 13 * k); else ctx.rect(cx - half, cy - half, 2 * half, 2 * half);
+        ctx.fill();
+        var bt = t % 1800, sy = 1;
+        if (bt > 1620) sy = bt < 1710 ? 1 - ((bt - 1620) / 90) * 0.92 : 0.08 + ((bt - 1710) / 90) * 0.92;
+        var eyeH = 14 * k * sy, eyeY = cy + (-5 * k) - eyeH / 2, eyeR = Math.min(4 * k, eyeH / 2);
+        ctx.globalAlpha = alpha; ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        if (ctx.roundRect) { ctx.roundRect(cx - 12 * k, eyeY, 8 * k, eyeH, eyeR); ctx.roundRect(cx + 4 * k, eyeY, 8 * k, eyeH, eyeR); }
+        else { ctx.rect(cx - 12 * k, eyeY, 8 * k, eyeH); ctx.rect(cx + 4 * k, eyeY, 8 * k, eyeH); }
+        ctx.fill();
+    }
+    function minionPainter() {
+        return function (ctx, cx, cy, t, alpha) {
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = COLOR; ctx.lineCap = 'round'; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(MINION_NODE.l1[0], MINION_NODE.l1[1]); ctx.lineTo(MINION_NODE.l1[2], MINION_NODE.l1[3]); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(MINION_NODE.l2[0], MINION_NODE.l2[1]); ctx.lineTo(MINION_NODE.l2[2], MINION_NODE.l2[3]); ctx.stroke();
+            drawMiniHead(ctx, MINION_NODE.left[0], MINION_NODE.left[1], MINION_NODE.half, t, alpha);
+            drawMiniHead(ctx, MINION_NODE.h1[0], MINION_NODE.h1[1], MINION_NODE.half, t, alpha);
+            drawMiniHead(ctx, MINION_NODE.h2[0], MINION_NODE.h2[1], MINION_NODE.half, t, alpha);
+            ctx.restore();
+        };
+    }
+
     // --- pen writing (write/insert) — from bottom_left penPainter ---
     var PEN_LINE_REST = -26;
     function drawPenShape(ctx, lineLeftX) {
@@ -259,6 +291,7 @@
         web:     globePainter,
         book:    bookPainter,
         agent:   agentPainter,
+        minion:  minionPainter,
         loader:  loaderPainter,
     };
 
@@ -273,9 +306,11 @@
         replace: { shape: 'replace', label: 'edited a file' },
         web:     { shape: 'web',     label: 'searching the web' },
         wait:    { shape: 'loader',  label: 'waiting' },
+        minion:  { shape: 'minion',  label: 'dispatched minion' },
     };
-    // todo_list / update_todo / minion / scratchpad / exit are intentionally absent — they are
-    // surfaced elsewhere in the card (checklist / minion rows / right book) and so are skipped.
+    // todo_list / update_todo / scratchpad / exit are intentionally absent — they are surfaced
+    // elsewhere in the card (right tracker / not shown) and so are skipped. `minion` IS shown
+    // here now (the three-head logo) since the user wants the dispatch represented in the chain.
 
     // "done" ✓ badge — filled circle + white check (from bottom_left drawTick)
     function drawTick(ctx, cx, cy, alpha) {
@@ -352,6 +387,7 @@
                 if (horizontal) {
                     var overX = Math.max(0, treeEl.scrollWidth - box.clientWidth);
                     treeEl.style.transform = overX ? 'translateX(' + (-overX) + 'px)' : 'translateX(0)';
+                    box.classList.toggle('cc-conveyor', overX > 0);   // fade the left edge only while sliding
                 } else {
                     var overY = Math.max(0, treeEl.scrollHeight - box.clientHeight);
                     treeEl.style.transform = overY ? 'translateY(' + (-overY) + 'px)' : 'translateY(0)';

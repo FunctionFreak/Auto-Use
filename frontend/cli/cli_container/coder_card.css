@@ -133,27 +133,53 @@
     white-space: normal; overflow-wrap: anywhere;
 }
 
-/* ---- minion sub-chain (horizontal, under each minion head; icons only). Higher-specificity
-   overrides flip the shared chain-item connector to point LEFT. ---- */
+/* ---- minion sub-chain (horizontal, under each minion head; icons only) ----
+   .cc-msub is the fixed CONVEYOR WINDOW: it clips the chain so the newest tool stays in view
+   and older ones slide left and vanish (the inner .cc-mchain translates — driven by tool_icons
+   scrollToEnd). It's indented to sit under/after the loader; the left edge fades only while it's
+   actually sliding (.cc-conveyor, toggled in tool_icons.js). Hidden until the minion has tools.
+   The window also clips the first icon's leftward connector stub, so the loader→sub-chain L
+   (.cc-mrow.has-tools::before) is the single clean entry connector — no double line / stair. */
+/* min-width:0 is ESSENTIAL: as a flex item, .cc-msub defaults to min-width:auto and would grow
+   to its chain's content width (so it never clips → never slides). Pinning it to 0 keeps the
+   window at the available width so the chain overflows it and the conveyor translateX kicks in. */
+#cliContainer .cc-msub { position: relative; overflow: hidden; min-width: 0; margin: 3px 0 0 22px; }
+#cliContainer .cc-mrow:not(.has-tools) .cc-msub { display: none; }
+#cliContainer .cc-msub.cc-conveyor {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 16px);
+            mask-image: linear-gradient(to right, transparent 0, #000 16px);
+}
 #cliContainer .cc-mchain {
-    display: flex; flex-direction: row; align-items: center; gap: 8px; margin: 3px 0 0 22px;
+    display: flex; flex-direction: row; align-items: center; gap: 8px;
     will-change: transform; transition: transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
-#cliContainer .cc-mchain:empty { display: none; }
 #cliContainer .cc-mchain .cc-chain-item::before { left: -8px; top: 9.5px; height: 1px; width: 8px; transform: scaleX(0); transform-origin: left; }
 #cliContainer .cc-mchain .cc-chain-item.in::before { transform: scaleX(1); }
 #cliContainer .cc-mchain .cc-chain-word { display: none; }
 
-/* the single live `>` output line (coder output, streamed letter-by-letter) */
-.coder-card .cc-out { min-height: 16px; display: flex; align-items: baseline; overflow: hidden; }
+/* the live `>` output — now a 5-LINE scrolling terminal of action narration. The `>` pill sits
+   at the TOP of the block (align-items:flex-start), beside the fixed-height scrolling viewport. */
+.coder-card .cc-out { display: flex; align-items: flex-start; }
 .coder-card .cc-p { color: rgba(0, 0, 0, 0.4); flex-shrink: 0; margin-right: 7px; }
-/* Streamer host: fills the row and clips overflow so makeLineStreamer can paginate. */
-.coder-card .cc-out-text { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+/* Viewport: clamped to exactly 5 rows (1.38 line-height × 5) and clips overflow; the .cc-scroll
+   conveyor inside translates up as lines accumulate. font-size/line-height come from .cc-body. */
+.coder-card .cc-out-text { flex: 1 1 auto; min-width: 0; position: relative; overflow: hidden; height: calc(1.38em * var(--cc-max-lines, 5)); }
+/* fade the TOP edge only once the terminal actually scrolls (toggled by JS) — keeps few-line
+   output crisp while giving scrollback a soft top once it overflows. */
+.coder-card .cc-out-text.cc-scrolled {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 16px);
+            mask-image: linear-gradient(to bottom, transparent 0, #000 16px);
+}
+/* the append-only conveyor: smooth translateY auto-scroll (same easing as the icon chain). */
+.coder-card .cc-out-text .cc-scroll {
+    position: absolute; left: 0; right: 0; top: 0;
+    will-change: transform; transition: transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
 
-/* One streamed page = one visual line. The streamer fills it letter-by-letter (each char is a
-   .cc-char span, opacity/transition set inline) and, on overflow, holds → clears → continues on
-   a fresh page so the COMPLETE line flows by instead of being ellipsis-clipped. */
+/* SINGLE-LINE page (minion rows) — letter-by-letter, holds → clears → continues on overflow. */
 .coder-card .cc-line { white-space: nowrap; overflow: hidden; }
+/* MULTILINE terminal line (the `>` output) — real word-wrap across multiple visual rows. */
+.coder-card .cc-out-text .cc-line { white-space: pre-wrap; overflow-wrap: anywhere; overflow: visible; line-height: 1.38; }
 /* a finished line shimmers (loading shine) until the next line replaces it / the step ends */
 .coder-card .cc-line.cc-shimmer {
     background: linear-gradient(100deg, rgba(35,38,44,0.92) 0%, rgba(35,38,44,0.92) 40%, rgba(155,159,167,1) 50%, rgba(35,38,44,0.92) 60%, rgba(35,38,44,0.92) 100%);
@@ -161,29 +187,31 @@
     -webkit-text-fill-color: transparent; color: transparent; animation: cc-shimmer 1.4s linear infinite;
 }
 
-/* ---- todo checklist ---- */
-/* margin-left 22px so the todo loaders line up with the minion loaders below
-   (minion content sits at 4px margin + 18px padding = 22px), per coder_animation.html. */
-.coder-card .cc-todos { margin: 6px 0 3px 20px; display: flex; flex-direction: column; gap: 4px; }
-.coder-card .cc-todos.hidden { display: none; }
-.coder-card .cc-item { display: flex; align-items: center; gap: 6px; color: rgba(0, 0, 0, 0.62); }
-.coder-card .cc-item .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.coder-card .cc-chk { width: 11px; height: 11px; min-width: 11px; box-sizing: border-box; border-radius: 3px; border: 1px solid rgba(0,0,0,0.3); }
-.coder-card .cc-chk.done { border-color: transparent; position: relative; }
-.coder-card .cc-chk.done::after { content: ""; position: absolute; left: 4px; top: 0; width: 3px; height: 6.5px; box-sizing: border-box; border: solid #7c8088; border-width: 0 2px 2px 0; transform: rotate(45deg); animation: cc-tickGlow 2.4s ease-in-out infinite; }
-.coder-card .cc-loading { width: 11px; height: 11px; min-width: 11px; box-sizing: border-box; border-radius: 50%; border: 2px solid rgba(120,124,132,0.3); border-top-color: #7c8088; animation: cc-spin 1s linear infinite; display: inline-block; }
-
 /* ---- minion TREE ----
    One vertical .cc-trunk (its top/height set in JS so it runs from the `>` line's
    center down to the last minion's center) + a horizontal elbow per row. cc-minions'
    left margin puts the trunk (left:0) directly under the `>`. */
 .coder-card .cc-minions { position: relative; display: flex; flex-direction: column; gap: 3px; margin: 3px 0 5px 3px; padding-left: 16px; }
 .coder-card .cc-trunk { position: absolute; left: 0; top: 0; width: 1px; height: 0; background: rgba(0,0,0,0.22); }
-/* a minion row is now a COLUMN: a head (loader + live line) above its own action sub-chain. */
-.coder-card .cc-mrow { position: relative; display: flex; flex-direction: column; color: rgba(0,0,0,0.7); overflow: hidden; }
+/* a minion row is now a COLUMN: a head (loader + live line) above its own action sub-chain.
+   NO overflow:hidden here — it used to clip the negative-left elbow (so the trunk never turned
+   into an L) AND the loader's orbiting glow (the "chopped" loader). Text clipping is scoped to
+   .mline / .cc-line instead. */
+.coder-card .cc-mrow { position: relative; display: flex; flex-direction: column; color: rgba(0,0,0,0.7); min-width: 0; }
 .coder-card .cc-mrow-head { min-height: 16px; display: flex; align-items: center; gap: 6px; }
-/* horizontal elbow from the trunk (left:0 of cc-minions) toward the head's loader (head center) */
-.coder-card .cc-mrow::after { content: ""; position: absolute; left: -16px; top: 8px; width: 14px; height: 1px; background: rgba(0,0,0,0.22); }
+/* horizontal elbow from the trunk (left:0 of cc-minions) toward the head's loader (head center).
+   width:16px spans the full trunk→row gap so the L visually meets the loader. */
+.coder-card .cc-mrow::after { content: ""; position: absolute; left: -16px; top: 8px; width: 16px; height: 1px; background: rgba(0,0,0,0.22); }
+/* L-connector DROPPING from BELOW the loader (a small gap, NOT through it) into the tool
+   sub-chain. Lives on the stable row, NOT the scrolling chain, so it stays anchored. The
+   horizontal sits at the chain's connector line (row y≈28.5 = window top 19 + 9.5) and runs to
+   the window's left edge (x=22), so it's collinear with the inter-icon connectors — no stair.
+   top:16 starts it ~2.5px below the 11px loader. Revealed once the minion has tools (JS class). */
+.coder-card .cc-mrow.has-tools::before {
+    content: ""; position: absolute; left: 5px; top: 16px; width: 17px; height: 12.5px;
+    border-left: 1px solid rgba(0,0,0,0.22); border-bottom: 1px solid rgba(0,0,0,0.22);
+    border-bottom-left-radius: 3px;
+}
 /* minion row output — same paginated letter-by-letter streamer as the `>` line (.cc-line
    inside handles the single-line clip); kept slightly dimmed. */
 .coder-card .cc-mrow .mline { flex: 1; min-width: 0; overflow: hidden; opacity: 0.85; }
@@ -208,7 +236,5 @@
 .coder-card.done .cc-fill { animation: none; transform: none; background: linear-gradient(90deg, rgba(120,124,132,0.6), rgba(110,197,233,0.6)); }
 .coder-card.error .cc-fill { animation: none; transform: none; background: rgba(200,70,90,0.5); }
 
-@keyframes cc-tickGlow { 0%,100% { filter: drop-shadow(0 0 1px rgba(120,124,132,0.55)); } 50% { filter: drop-shadow(0 0 4px rgba(120,124,132,1)); } }
-@keyframes cc-spin { to { transform: rotate(360deg); } }
 @keyframes cc-orbit { 80%, 100% { transform: rotate(360deg); } }
 @keyframes cc-flow { 0% { transform: translateX(-75%); opacity: 0.8; } 50% { opacity: 1; } 100% { transform: translateX(75%); opacity: 0.8; } }
