@@ -25,8 +25,8 @@
     max-height: 100%;
     box-sizing: border-box;
     border-radius: 12px;
-    background: transparent;                                /* transparent — just the grey border */
-    box-shadow: inset 0 0 0 1px rgba(120, 124, 132, 0.55);  /* same grey as the container border */
+    background: transparent;                                /* fully blended — no border box */
+    box-shadow: none;                                       /* border removed so the terminal blends in */
     overflow: hidden;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
     display: flex;
@@ -161,6 +161,13 @@
    at the TOP of the block (align-items:flex-start), beside the fixed-height scrolling viewport. */
 .coder-card .cc-out { display: flex; align-items: flex-start; }
 .coder-card .cc-p { color: rgba(0, 0, 0, 0.4); flex-shrink: 0; margin-right: 7px; }
+/* a small blinking cursor dot right after the `>` prompt — terminal feel */
+.coder-card .cc-p::after {
+    content: ""; display: inline-block; width: 4px; height: 4px; margin-left: 5px;
+    border-radius: 50%; background: rgba(0, 0, 0, 0.55); vertical-align: middle;
+    animation: cc-blink 1.2s ease-in-out infinite;
+}
+@keyframes cc-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.12; } }
 /* Viewport: clamped to exactly 5 rows (1.38 line-height × 5) and clips overflow; the .cc-scroll
    conveyor inside translates up as lines accumulate. font-size/line-height come from .cc-body. */
 .coder-card .cc-out-text { flex: 1 1 auto; min-width: 0; position: relative; overflow: hidden; height: calc(1.38em * var(--cc-max-lines, 5)); }
@@ -232,7 +239,7 @@
 .coder-card .cc-progress { flex: 0 0 auto; margin: 0 11px 9px; height: 5px; border-radius: 999px; position: relative; overflow: hidden; background: rgba(0,0,0,0.06); border: 1px solid rgba(0,0,0,0.04); }
 .coder-card .cc-fill { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(120,124,132,0), rgba(120,124,132,0.55), rgba(150,154,162,0.7), rgba(120,124,132,0)); transform: translateX(-70%); animation: cc-flow 1.05s cubic-bezier(0.2,0.8,0.2,1) infinite; }
 
-.coder-card.done { box-shadow: inset 0 0 0 1px rgba(120,124,132,0.45); }
+.coder-card.done { box-shadow: none; }
 .coder-card.done .cc-fill { animation: none; transform: none; background: linear-gradient(90deg, rgba(120,124,132,0.6), rgba(110,197,233,0.6)); }
 .coder-card.error .cc-fill { animation: none; transform: none; background: rgba(200,70,90,0.5); }
 

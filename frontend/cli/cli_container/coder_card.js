@@ -252,7 +252,7 @@
 
         // The `>` terminal shows a clean, multi-line scrolling log of the coder's ACTIONS
         // (synthesized narration, NOT the raw JSON). Up to 5 lines visible, then it auto-scrolls.
-        var outStream = makeLineStreamer(outText, 'starting…', { multiline: true, maxLines: 5 });
+        var outStream = makeLineStreamer(outText, 'AutoUse Code', { multiline: true, maxLines: 5 });
         var minionStreams = {};   // minion id -> its line streamer
 
         // LEFT zone — "Tool response: N tools used" + the vertical action-icon chain (extreme
@@ -263,8 +263,22 @@
             '<div class="cc-tools-label">Tool response: <span class="cc-tools-count">0</span> tools used</div>' +
             '<div class="cc-chain-flow"><div class="cc-chain"></div></div>';
         var toolsCountEl = chainEl.querySelector('.cc-tools-count');
-        var toolCount = 0;
-        function bumpToolCount() { toolCount += 1; if (toolsCountEl) toolsCountEl.textContent = String(toolCount); }
+        // UNIVERSAL tool counter: the coder card continues the SAME running total as the main
+        // agent (bottom_left's #toolUsedCount). Coder AND minion tools bump it in real time, so the
+        // card shows main-agent + coder + minion tools, and because it's the same element, the
+        // total rolls back up to the main agent when the cli stage closes. Falls back to a local
+        // count when the main-agent counter isn't present (e.g. the standalone test harness).
+        var localCount = 0;
+        function gCountEl() { return document.getElementById('toolUsedCount'); }
+        function readCount() { var g = gCountEl(); return g ? (parseInt(g.textContent, 10) || 0) : localCount; }
+        function showCount() { if (toolsCountEl) toolsCountEl.textContent = String(readCount()); }
+        function bumpToolCount() {
+            var g = gCountEl();
+            if (g) g.textContent = String((parseInt(g.textContent, 10) || 0) + 1);   // universal counter
+            else localCount += 1;                                                     // harness fallback
+            showCount();
+        }
+        showCount();   // seed the card from the main agent's current count — continue from there
 
         // RIGHT zone — "tracking progress" (the coder's scratchpad), mirroring the top-right
         // container: NO logo; each scratchpad entry streams in char-by-char as a dot-bullet line.
@@ -288,8 +302,9 @@
                 if (isCoder) { var n = narrationFor(a); if (n) outStream.push(n); }
                 // scratchpad -> the right "tracking progress" stream (coder only; not minions)
                 if (a.type === 'scratchpad') { if (isCoder && tracker) tracker.push(argOf(a)); return; }
-                // every other real tool -> the icon chain; count it for the coder's label
-                if (chain && chain.addAction({ name: a.type, arg: argOf(a) }) && isCoder) bumpToolCount();
+                // every other real tool -> the icon chain; count it on the UNIVERSAL counter
+                // (coder tools AND minion tools both bump — minions run inside the coder's turn).
+                if (chain && chain.addAction({ name: a.type, arg: argOf(a) })) bumpToolCount();
             });
         }
 

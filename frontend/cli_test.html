@@ -94,6 +94,10 @@
         <span id="harnessStatus">idle</span>
     </div>
 
+    <!-- Simulates the main agent's universal tool counter (real app: bottom_left #toolUsedCount).
+         Seeded to 4 so you can see the coder card CONTINUE from the main agent's 4 tools. -->
+    <span id="toolUsedCount" style="display:none">4</span>
+
     <!-- the 2×2 T-grid (cli_stage.js injects #cliContainer here as a 5th child) -->
     <div class="main-grid" id="mainGrid">
         <div class="tz" id="zoneTopLeft">screenshot</div>
