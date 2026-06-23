@@ -245,7 +245,9 @@ class AgentService:
 
                 return "Max iterations reached"
 
-            safe_print(f"minion running step {step_number}")
+            # Step heartbeat → debug log only (NOT the UI). The row shows ONLY the minion's
+            # own validated output; this "running step N" marker is ours, not the model's.
+            debug_log(f"minion running step {step_number}")
 
             agent_sitting = self._get_agent_sitting()
 
@@ -323,8 +325,9 @@ class AgentService:
 
                 json_fail_count = 0
 
-                # Stream ONLY the validated, complete response — non-action sections only
-                # (format_stream_json drops `action`, which gets its own UI section).
+                # Stream the validated, complete response (action included) to the minion row.
+                # The frontend parses the `action` array out of THIS JSON to drive the row's
+                # own action sub-chain — no extra backend events needed.
                 safe_print(self.formatter.format_stream_json(normalized))
 
                 self._save_conversation_snapshot(messages, normalized, step_number)

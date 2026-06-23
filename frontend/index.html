@@ -380,7 +380,9 @@
     <script src="script.js"></script>
     <!-- CLI container — the coder card component, then the stage orchestrator. Both load
          AFTER script.js so the orchestrator's window.cli* hooks override the old chat-box
-         CLI rendering. coder_card.js must precede cli_stage.js (it defines CliCoderCard). -->
+         CLI rendering. coder_card.js must precede cli_stage.js (it defines CliCoderCard);
+         tool_icons.js precedes coder_card.js (it defines the action-icon engine). -->
+    <script src="cli/cli_container/tool_icons.js"></script>
     <script src="cli/cli_container/coder_card.js"></script>
     <script src="cli/cli_stage.js"></script>
 </body>

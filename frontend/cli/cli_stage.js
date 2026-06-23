@@ -61,7 +61,12 @@
             if (!c || !window.CliCoderCard) return;
             var card = window.CliCoderCard.create(desc);
             c.innerHTML = '';            // (single-card slot for now)
-            c.appendChild(card.el);
+            if (card.chainEl) c.appendChild(card.chainEl);   // "Tool response" zone — extreme LEFT
+            var wrap = document.createElement('div');
+            wrap.className = 'cc-card-wrap';
+            wrap.appendChild(card.el);                        // terminal card — centered
+            c.appendChild(wrap);
+            if (card.trackEl) c.appendChild(card.trackEl);    // "tracking progress" zone — RIGHT
             cards.set(taskId, card);
         };
         window.cliTaskLine = function (taskId, line, stream) {

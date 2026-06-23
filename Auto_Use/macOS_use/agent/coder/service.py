@@ -282,7 +282,9 @@ class AgentService:
 
                 return "Max iterations reached"
             
-            safe_print(f"cli agent running step {step_number}")
+            # Step heartbeat → debug log only (NOT the UI). The card shows ONLY the agent's
+            # own validated output; this "running step N" marker is ours, not the model's.
+            debug_log(f"cli agent running step {step_number}")
             
             # Get agent sitting info
             agent_sitting = self._get_agent_sitting()
@@ -378,10 +380,9 @@ class AgentService:
                 # Reset consecutive JSON fail counter on success
                 json_fail_count = 0
 
-                # Stream ONLY the validated, complete response to the card — and only the
-                # non-action sections (format_stream_json drops `action`, which gets its own
-                # UI section and otherwise collides with the web-search pill). The parent's
-                # pipe reader forwards this to the streaming pill.
+                # Stream the validated, complete response (action included) to the card's
+                # `>` line. The frontend parses the `action` array out of THIS JSON to drive
+                # the action-icon chain + scratchpad — no extra backend events needed.
                 safe_print(CLIAgentResponseFormatter.format_stream_json(normalized))
 
                 # Save TRUE agent memory snapshot
