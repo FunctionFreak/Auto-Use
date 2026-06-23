@@ -303,9 +303,6 @@ class AgentService:
             try:
                 raw_response = self.llm.send_request(messages)
 
-                if raw_response:
-                    safe_print(raw_response)
-
                 if self.stop_event and self.stop_event.is_set():
                     break
 
@@ -314,8 +311,9 @@ class AgentService:
                 success, normalized, failed_raw = self.formatter.normalize_response(raw_response)
 
                 if not success:
+                    # Emit nothing to the UI on failure — raw/partial/malformed JSON would
+                    # glitch the streaming card; raw response already saved above for debugging.
                     json_fail_count += 1
-                    safe_print(f"⚠️ JSON parse failed ({json_fail_count}/3). Discarding and retrying...")
 
                     if json_fail_count >= 3:
                         break
@@ -324,6 +322,10 @@ class AgentService:
                     continue
 
                 json_fail_count = 0
+
+                # Stream ONLY the validated, complete response — non-action sections only
+                # (format_stream_json drops `action`, which gets its own UI section).
+                safe_print(self.formatter.format_stream_json(normalized))
 
                 self._save_conversation_snapshot(messages, normalized, step_number)
 

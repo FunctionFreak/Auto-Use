@@ -142,3 +142,17 @@ class CLIAgentResponseFormatter:
         except:
             pass
         return []
+
+    @staticmethod
+    def format_stream_json(normalized_response: str) -> str:
+        """Per-step payload for the streaming UI card. For now it returns the COMPLETE
+        validated JSON (action INCLUDED). All display shaping is centralized here, so
+        changing what the card shows later — e.g. splitting `action` into its own section
+        (see get_action_block) — is a one-spot edit. On any parse error, fall back to the
+        input unchanged.
+        """
+        try:
+            json_data = json.loads(normalized_response)
+            return json.dumps(json_data, indent=2, ensure_ascii=False)
+        except Exception:
+            return normalized_response

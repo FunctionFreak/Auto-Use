@@ -16,6 +16,10 @@
     <link rel="stylesheet" href="container/bottom_right/bottom_right.css">
     <!-- Chat input (bottom text box) component -->
     <link rel="stylesheet" href="chat_input/chat_input.css">
+    <!-- CLI container — full-width panel that slides up from the bottom on cli_await -->
+    <link rel="stylesheet" href="cli/cli_stage.css">
+    <!-- Live coder card rendered inside that container (one per CLI agent) -->
+    <link rel="stylesheet" href="cli/cli_container/coder_card.css">
     <!-- Three.js for Globe Animation -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
@@ -374,5 +378,10 @@
     <!-- Chat input (bottom text box): injects into #chatWrapper, fires 'chatinput:ready' -->
     <script src="chat_input/chat_input.js"></script>
     <script src="script.js"></script>
+    <!-- CLI container — the coder card component, then the stage orchestrator. Both load
+         AFTER script.js so the orchestrator's window.cli* hooks override the old chat-box
+         CLI rendering. coder_card.js must precede cli_stage.js (it defines CliCoderCard). -->
+    <script src="cli/cli_container/coder_card.js"></script>
+    <script src="cli/cli_stage.js"></script>
 </body>
 </html>

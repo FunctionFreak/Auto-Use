@@ -1,0 +1,43 @@
+/* =====================================================================
+   CLI container (step 1) — a single full-width panel that slides UP from the bottom
+   when the agent enters cli_await. It takes the bottom-row slot (spanning bottom-left
+   + bottom-right, full width, same height as the bottom row) and pushes the grid up so
+   the top two zones scroll out of view. EMPTY for now — its content will live in
+   cli/cli_container/ later. Toggled by body.cli-stage (cli/cli_stage.js).
+   ===================================================================== */
+
+/* Clip the grid so the zones scrolling up + the panel sliding in stay inside its box. */
+#mainGrid { overflow: hidden; }
+
+/* Smooth the zones' push-up / restore. */
+#zoneTopLeft, #zoneTopRight, #zoneBottomLeft, #zoneBottomRight {
+    transition: transform 0.55s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.4s ease;
+}
+
+/* The panel: a full-width container CENTERED vertically (straddling the lower half of
+   the top row + upper half of the bottom row). Transparent like the other zones — just
+   the border. Spans both grid rows so align-self can center it; parked below until
+   cli_await, then it slides up into the center. */
+#cliContainer {
+    grid-column: 1 / -1;        /* full width, both columns */
+    grid-row: 1 / 3;            /* span both rows so it can center across the middle */
+    align-self: center;         /* centered vertically — half top + half bottom */
+    height: 50%;                /* ~ one container tall */
+    z-index: 6;
+    box-sizing: border-box;
+    border: 1.5px solid rgba(139, 92, 246, 0.6);   /* border only */
+    border-radius: var(--glass-radius);
+    background: transparent;                        /* transparent like the other zones */
+    transform: translateY(110%);                   /* parked below (clipped) */
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.55s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.4s ease;
+}
+
+/* cli_await ON: panel slides up into the bottom row; ALL four zones push up & fade out
+   (so the panel has the cleared space to itself). */
+body.cli-stage #cliContainer { transform: translateY(0); opacity: 1; pointer-events: auto; }
+body.cli-stage #zoneTopLeft,
+body.cli-stage #zoneTopRight,
+body.cli-stage #zoneBottomLeft,
+body.cli-stage #zoneBottomRight { transform: translateY(-130%); opacity: 0; }

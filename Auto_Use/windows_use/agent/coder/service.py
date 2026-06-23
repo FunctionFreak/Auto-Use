@@ -353,12 +353,6 @@ class AgentService:
                 # Call LLM
                 raw_response = self.llm.send_request(messages)
 
-                # Stream the raw LLM response to stdout. The parent main agent's
-                # subprocess pipe reader picks it up and renders it line-by-line
-                # in the CLI streaming pill UI (no decoration, just raw text).
-                if raw_response:
-                    safe_print(raw_response)
-
                 # Check stop after LLM
                 if self.stop_event and self.stop_event.is_set():
                     break
@@ -369,10 +363,11 @@ class AgentService:
                 # Validate and normalize response
                 success, normalized, failed_raw = CLIAgentResponseFormatter.normalize_response(raw_response)
                 
-                # If JSON parse failed, discard response and retry with fresh context
+                # If JSON parse failed, discard response and retry with fresh context.
+                # Emit NOTHING to the UI on failure — raw/partial/malformed JSON would glitch
+                # the streaming card; the raw response is already saved above for debugging.
                 if not success:
                     json_fail_count += 1
-                    safe_print(f"⚠️ JSON parse failed ({json_fail_count}/3). Discarding and retrying...")
 
                     if json_fail_count >= 3:
                         break
@@ -382,6 +377,12 @@ class AgentService:
 
                 # Reset consecutive JSON fail counter on success
                 json_fail_count = 0
+
+                # Stream ONLY the validated, complete response to the card — and only the
+                # non-action sections (format_stream_json drops `action`, which gets its own
+                # UI section and otherwise collides with the web-search pill). The parent's
+                # pipe reader forwards this to the streaming pill.
+                safe_print(CLIAgentResponseFormatter.format_stream_json(normalized))
 
                 # Save TRUE agent memory snapshot
                 self._save_conversation_snapshot(messages, normalized, step_number)

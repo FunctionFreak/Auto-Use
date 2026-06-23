@@ -1101,6 +1101,14 @@ def send_cli_event_to_frontend(event_type, *args):
             webview_window.evaluate_js(
                 f"window.cliTaskEnd && window.cliTaskEnd('{task_id}', '{status}', '{summary}')"
             )
+        elif event_type == "todo_update":
+            # The coder agent's own todo list (cli_todo/todo.md) changed. Parse it the
+            # same way as the main agent's todo and forward to the live coder card.
+            task_id = _js_escape(args[0] if len(args) > 0 else "")
+            todo_payload = _js_escape(json.dumps(_parse_todo_md(args[1] if len(args) > 1 else "")))
+            webview_window.evaluate_js(
+                f"window.cliTaskTodo && window.cliTaskTodo('{task_id}', '{todo_payload}')"
+            )
         elif event_type == "minion_start":
             # parent_task_id is the spawning CLI agent's task_id; task_id is the minion's own.
             parent_task_id = _js_escape(args[0] if len(args) > 0 else "")
