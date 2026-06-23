@@ -6,16 +6,41 @@
    Compact ("small") and centered in the container.
    ===================================================================== */
 
-/* The stage: "Tool response" zone (extreme LEFT) | terminal card (centered) | "tracking
-   progress" zone (RIGHT). The card itself holds only the stream + todo + minion output. */
+/* The stage is now a COLUMN of up to 2 stacked agent units ("piped"). Each .cc-agent is one
+   coder agent's row: "Tool response" zone (LEFT) | terminal card (centered) | "tracking
+   progress" zone (RIGHT). */
 #cliContainer {
+    display: flex;
+    flex-direction: column;
+    padding: clamp(8px, 1.4vw, 16px);
+    overflow: hidden;                  /* clip the brief overlap while bands resize/slide */
+}
+/* one agent unit = the old horizontal stage. flex:1 1 0 makes every agent share the FULL panel
+   height equally — 1 fills, 2 halve, 3 third it — so they spread down the whole panel and are
+   never crammed at the top (percentage heights don't resolve reliably here, flex-grow does).
+   opacity/transform fade in a newly mounted unit (.entering, stripped on the next frame).
+   box-sizing so the divider padding stays inside each band's height. */
+#cliContainer .cc-agent {
+    box-sizing: border-box;
     display: flex;
     flex-direction: row;
     align-items: stretch;
     justify-content: center;
     gap: 14px;
-    padding: clamp(8px, 1.4vw, 16px);
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+    transition: opacity 0.4s ease,
+                transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
+/* a thin grey line CENTERED in the generous gap between stacked agents (margin above the line,
+   padding below it). No line above the first one. */
+#cliContainer .cc-agent + .cc-agent {
+    margin-top: 26px;
+    padding-top: 26px;
+    border-top: 1px solid rgba(120, 124, 132, 0.4);
+}
+#cliContainer .cc-agent.entering { opacity: 0; transform: translateY(16px); }
 /* terminal card pinned to the TOP of the middle zone (same line as "Tool response"), so the
    whole space below stays free for minions to grow into. */
 #cliContainer .cc-card-wrap { flex: 1 1 auto; min-width: 0; display: flex; align-items: flex-start; justify-content: center; }

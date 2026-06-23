@@ -20,13 +20,13 @@
    cli_await, then it slides up into the center. */
 #cliContainer {
     grid-column: 1 / -1;        /* full width, both columns */
-    grid-row: 1 / 3;            /* span both rows so it can center across the middle */
-    align-self: start;          /* anchored to the TOP of the grid (not centered) */
-    height: 58%;                /* a bit taller so more fits inside */
+    grid-row: 1 / 3;            /* span both rows */
+    align-self: stretch;        /* FILL the grid area — a definite height so stacked agents can
+                                   flex-fill it and spread down the whole panel (a percentage
+                                   height here didn't resolve, collapsing the panel to content). */
     z-index: 6;
     box-sizing: border-box;
-    border: 1.5px solid rgba(120, 124, 132, 0.55);   /* grey border only */
-    border-radius: var(--glass-radius);
+    border: none;                                   /* borderless — only the thin per-agent dividers show */
     background: transparent;                        /* transparent like the other zones */
     transform: translateY(110%);                   /* parked below (clipped) */
     opacity: 0;

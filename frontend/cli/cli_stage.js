@@ -14,11 +14,18 @@
 (function () {
     'use strict';
 
-    var MAX_CARDS = 1;                 // raise + add container slots to support more agents
-    var cards = new Map();             // task_id -> card (from window.CliCoderCard.create)
+    var MAX_VISIBLE = 3;               // at most 3 coder cards stacked ("piped") at once
+    var cards = new Map();             // task_id -> card (VISIBLE cards only)
+    var queue = [];                    // FIFO of { taskId, desc } waiting for a free slot
     var minionParent = new Map();      // minion_id -> parent task_id
 
     function getContainer() { return document.getElementById('cliContainer'); }
+    // 1 card -> full-size; 2 -> halves; 3 -> thirds (drives the height transition in CSS).
+    function syncLayout() {
+        var c = getContainer(); if (!c) return;
+        c.classList.toggle('n2', cards.size === 2);
+        c.classList.toggle('n3', cards.size === 3);
+    }
 
     function injectPanel() {
         var grid = document.getElementById('mainGrid');
@@ -35,9 +42,44 @@
     function clearAll() {
         var c = getContainer();
         cards.forEach(function (card) { if (card && card.dispose) card.dispose(); });
-        if (c) c.innerHTML = '';
+        if (c) { c.innerHTML = ''; c.classList.remove('n2', 'n3'); }
         cards.clear();
+        queue.length = 0;
         minionParent.clear();
+    }
+
+    // Mount one coder agent as a `.cc-agent` row (left tool-chain | center terminal | right
+    // scratchpad) appended BELOW any existing card, then fade/slide it in. Oldest stays on top.
+    function mountAgent(taskId, desc) {
+        var c = getContainer();
+        if (!c || !window.CliCoderCard || cards.has(taskId)) return;
+        var card = window.CliCoderCard.create(desc);
+        var unit = document.createElement('div');
+        unit.className = 'cc-agent entering';
+        if (card.chainEl) unit.appendChild(card.chainEl);     // "Tool response" — LEFT
+        var wrap = document.createElement('div');
+        wrap.className = 'cc-card-wrap';
+        wrap.appendChild(card.el);                            // terminal — CENTER
+        unit.appendChild(wrap);
+        if (card.trackEl) unit.appendChild(card.trackEl);     // "tracking progress" — RIGHT
+        card._unit = unit;
+        c.appendChild(unit);
+        cards.set(taskId, card);
+        syncLayout();
+        // strip .entering next frame so it transitions in (and after the .two height change lands)
+        if (window.requestAnimationFrame) requestAnimationFrame(function () { unit.classList.remove('entering'); });
+        else unit.classList.remove('entering');
+    }
+
+    // Remove a visible agent instantly (its task ended), then pull the next queued one (if any).
+    function unmountAgent(taskId) {
+        var card = cards.get(taskId);
+        if (!card) return;
+        if (card.dispose) card.dispose();
+        if (card._unit && card._unit.parentNode) card._unit.parentNode.removeChild(card._unit);
+        cards.delete(taskId);
+        syncLayout();
+        if (queue.length) { var next = queue.shift(); mountAgent(next.taskId, next.desc); }
     }
 
     function installHooks() {
@@ -53,32 +95,26 @@
             setTimeout(clearAll, 600);   // clear cards after the slide-down finishes
         };
 
-        // A coder agent starts → create its card. Bare "[minion] " task_starts are ignored.
+        // A coder agent starts → mount it if a slot is free, else queue it. Up to 2 show at once;
+        // the rest wait FIFO. Bare "[minion] " task_starts are ignored.
         window.cliTaskStart = function (taskId, desc) {
             if (typeof desc === 'string' && desc.indexOf('[minion] ') === 0) return;
-            if (cards.has(taskId) || cards.size >= MAX_CARDS) return;
-            var c = getContainer();
-            if (!c || !window.CliCoderCard) return;
-            var card = window.CliCoderCard.create(desc);
-            c.innerHTML = '';            // (single-card slot for now)
-            if (card.chainEl) c.appendChild(card.chainEl);   // "Tool response" zone — extreme LEFT
-            var wrap = document.createElement('div');
-            wrap.className = 'cc-card-wrap';
-            wrap.appendChild(card.el);                        // terminal card — centered
-            c.appendChild(wrap);
-            if (card.trackEl) c.appendChild(card.trackEl);    // "tracking progress" zone — RIGHT
-            cards.set(taskId, card);
+            if (cards.has(taskId)) return;                                   // already visible
+            for (var i = 0; i < queue.length; i++) if (queue[i].taskId === taskId) return;  // already queued
+            if (cards.size < MAX_VISIBLE) mountAgent(taskId, desc);
+            else queue.push({ taskId: taskId, desc: desc });
         };
         window.cliTaskLine = function (taskId, line, stream) {
-            var card = cards.get(taskId);
+            var card = cards.get(taskId);   // queued (unmounted) agents' lines are dropped until shown
             if (card) card.setLine(line);
         };
         // Todos are handled internally by the agent and intentionally NOT rendered in the UI.
         // The backend still emits todo_update events, so keep a no-op stub to swallow them.
         window.cliTaskTodo = function () {};
         window.cliTaskEnd = function (taskId, status, summary) {
-            var card = cards.get(taskId);
-            if (card) card.setDone(status, summary);
+            if (cards.has(taskId)) { unmountAgent(taskId); return; }   // instant vanish + pull next queued
+            // finished before it was ever shown → just drop it from the queue
+            for (var i = 0; i < queue.length; i++) if (queue[i].taskId === taskId) { queue.splice(i, 1); break; }
         };
 
         window.cliMinionStart = function (parentId, taskId, query) {

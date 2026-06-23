@@ -84,7 +84,8 @@
     <!-- dev control bar -->
     <div id="harnessBar">
         <b>CLI UI test</b>
-        <button id="btnReplay">▶ Replay</button>
+        <button id="btnReplay">▶ 1 agent</button>
+        <button id="btnMulti">▶ 4 agents</button>
         <span class="sep"></span>
         <button class="spd" data-spd="0.5">0.5×</button>
         <button class="spd on" data-spd="1">1×</button>
@@ -261,15 +262,84 @@
             document.getElementById('btnReplay').disabled = false;
         }
 
-        function replay() {
+        // ===================== MULTI-AGENT scenario (the 2-visible pipeline) =====================
+        // Drives 4 coder agents through ONE cli_await with staggered starts/ends so you can watch:
+        // A alone → A+B stacked → C,D queued → A ends (C slides in) → B ends (D slides in) →
+        // down to one (expand) → all done. Each agent streams a few generic coder packets.
+        async function runMulti() {
+            var token = ++cancelToken;
+            running = true;
+            document.getElementById('btnReplay').disabled = true;
+            document.getElementById('btnMulti').disabled = true;
+
+            status('full UI — entering cli_await…'); await sleep(1000);
+            if (token !== cancelToken) return;
+            if (window.cliAwaitStart) window.cliAwaitStart('test');
+            await sleep(800);
+
+            var A = 'ag-A-' + Date.now(), B = 'ag-B-' + Date.now(), C = 'ag-C-' + Date.now(), D = 'ag-D-' + Date.now();
+            var step = [
+                { type: 'shell', command: 'git status' },
+                { type: 'grep',  pattern: 'TODO', path: 'src' },
+                { type: 'view',  path: 'src/index.js', start: 1, end: 40 },
+                { type: 'write', path: 'src/index.js', line: 10, content: '// ...' },
+                { type: 'shell', command: 'npm test' }
+            ];
+            function pk(taskId, i, tok) { return streamCoder(taskId, { action: [step[i % step.length]] }, tok); }
+
+            status('agent A starts (1 card)');
+            window.cliTaskStart(A, 'Refactor the auth module');
+            await sleep(1500); await pk(A, 0, token); await sleep(1300);
+            if (token !== cancelToken) return;
+
+            status('agent B starts → stack to 2 (A slides up)');
+            window.cliTaskStart(B, 'Add tests for the payments API');
+            await sleep(1600); await pk(A, 1, token); await sleep(800); await pk(B, 0, token); await sleep(1300);
+            if (token !== cancelToken) return;
+
+            status('agent C mounts → 3 stacked; D QUEUED');
+            window.cliTaskStart(C, 'Update the API documentation');
+            window.cliTaskStart(D, 'Migrate the DB schema');
+            await sleep(900); await pk(A, 2, token); await sleep(800); await pk(B, 1, token); await sleep(800); await pk(C, 0, token); await sleep(1300);
+            if (token !== cancelToken) return;
+
+            status('A finishes → vanish, D slides in (B,C,D shown)');
+            if (window.cliTaskEnd) window.cliTaskEnd(A, 'complete', 'auth refactor done');
+            await sleep(1700); await pk(B, 2, token); await sleep(800); await pk(D, 0, token); await sleep(1300);
+            if (token !== cancelToken) return;
+
+            status('B finishes → down to 2 (C, D)');
+            if (window.cliTaskEnd) window.cliTaskEnd(B, 'complete', 'tests added');
+            await sleep(1700); await pk(C, 1, token); await sleep(800); await pk(D, 1, token); await sleep(1300);
+            if (token !== cancelToken) return;
+
+            status('C finishes → down to ONE (D), expands to full');
+            if (window.cliTaskEnd) window.cliTaskEnd(C, 'complete', 'docs updated');
+            await sleep(1900); await pk(D, 1, token); await sleep(1300);
+            if (token !== cancelToken) return;
+
+            status('D finishes → await_end (clear)');
+            if (window.cliTaskEnd) window.cliTaskEnd(D, 'complete', 'schema migrated');
+            await sleep(900);
+            if (window.cliAwaitEnd) window.cliAwaitEnd();
+
+            status('multi done ✓');
+            running = false;
+            document.getElementById('btnReplay').disabled = false;
+            document.getElementById('btnMulti').disabled = false;
+        }
+
+        function replayWith(fn) {
             cancelToken++;                              // abort any in-flight run
             if (window.cliAwaitEnd) window.cliAwaitEnd();   // slide down + clearAll (after 600ms)
             status('resetting…');
-            setTimeout(function () { run(); }, 950);
+            setTimeout(fn, 950);
         }
+        function replay() { replayWith(run); }
 
         // wire controls
-        document.getElementById('btnReplay').addEventListener('click', function () { if (!running) replay(); });
+        document.getElementById('btnReplay').addEventListener('click', function () { if (!running) replayWith(run); });
+        document.getElementById('btnMulti').addEventListener('click', function () { if (!running) replayWith(runMulti); });
         Array.prototype.forEach.call(document.querySelectorAll('.spd'), function (b) {
             b.addEventListener('click', function () {
                 SPEED = parseFloat(b.dataset.spd);
@@ -280,7 +350,11 @@
 
         // auto-start once cli_stage.js has installed its window.cli* hooks (it does so on a
         // macrotask after DOMContentLoaded — wait for window 'load' + a tick to be safe).
-        window.addEventListener('load', function () { setTimeout(run, 450); });
+        // ?multi=1 boots the 4-agent pipeline scenario instead of the single rich one.
+        window.addEventListener('load', function () {
+            var multi = /[?&]multi=1/.test(location.search);
+            setTimeout(multi ? runMulti : run, 450);
+        });
     })();
     </script>
 </body>
