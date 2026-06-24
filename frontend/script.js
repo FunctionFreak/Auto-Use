@@ -834,6 +834,17 @@ document.addEventListener('DOMContentLoaded', () => {
             imgElement.style.display = 'block'; // Show image when data arrives
         }
     };
+
+    // Clear the streamed screenshot — symmetric with updateAgentImage. Used when
+    // resetting the main view between chats/runs so a new chat never shows the
+    // previous run's screen.
+    window.clearAgentImage = () => {
+        const imgElement = document.querySelector('.stream-image');
+        if (imgElement) {
+            imgElement.removeAttribute('src');
+            imgElement.style.display = 'none';
+        }
+    };
     
     // Scratchpad/milestone streaming — the backend calls this once per entry
     // (~every 1s). It feeds the LIVE "tracking progress" stream in the top-right
@@ -918,6 +929,24 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     // Agent completion handler (called from Python when agent finishes naturally)
+    // Active chat session id (null => brand-new chat). Owned here so chat_input.js
+    // and chat.js can read/adopt it; the durable memory lives in the backend
+    // (Auto_Use/agent_conversation). A continued chat carries its id; a new chat
+    // adopts the id the backend mints on the first send.
+    if (typeof window.currentSessionId === 'undefined') window.currentSessionId = null;
+
+    // Empty-state hero ("Auto Use / Agent with million moves."): visible on a
+    // fresh/new chat (default at launch), hidden the moment a task is sent or a
+    // saved chat is reopened.
+    window.showWelcomeHero = () => {
+        const el = document.getElementById('welcomeHero');
+        if (el) el.classList.remove('hidden');
+    };
+    window.hideWelcomeHero = () => {
+        const el = document.getElementById('welcomeHero');
+        if (el) el.classList.add('hidden');
+    };
+
     window.agentComplete = () => {
         const stopBtnFrame = document.getElementById('stopBtnFrame');
         const agentStrip = document.getElementById('agentResponseStrip');
@@ -963,6 +992,11 @@ document.addEventListener('DOMContentLoaded', () => {
         // box to its ~2-line height. Owned by chat_input.js (single, idempotent teardown
         // shared with the manual-stop path); guarded in case it injects after this fires.
         if (window.chatInputRestoreIdle) window.chatInputRestoreIdle();
+
+        // The run just ended (success / error / stop all route through here) — the
+        // backend has saved this session, so refresh the sidebar history list to
+        // pick up the new title / last-done message (and surface a brand-new chat).
+        document.dispatchEvent(new CustomEvent('chats:refresh'));
     };
 
     // Agent failure handler (called from Python when the run ends in error or

@@ -185,6 +185,14 @@
     <!-- Transient top-center notification (driven by window.showToast) -->
     <div id="appToast" class="app-toast" role="status" aria-live="polite"></div>
 
+    <!-- Empty-state hero: centered "Auto Use / Agent with million moves." over the
+         main area. Shown on a fresh/new chat (default at launch + after New chat);
+         hidden the moment a task is sent or a saved chat is reopened. Toggled via
+         window.showWelcomeHero / window.hideWelcomeHero. -->
+    <div class="welcome-hero" id="welcomeHero" aria-hidden="true">
+        <div class="welcome-hero-title">Made to do...</div>
+    </div>
+
     <div class="main-grid" id="mainGrid"></div>
 
     <!-- Chat input (the bottom text box) is a component now — markup lives in

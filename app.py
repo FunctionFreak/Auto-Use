@@ -48,6 +48,11 @@ from pathlib import Path
 import webview
 from flask import Flask, jsonify, send_from_directory
 
+# Resumable chat memory (UI path only). Platform-agnostic, pure-stdlib module —
+# safe to import at top level. main.py / cli.py never import this, so they stay
+# direct one-shot entry points.
+from Auto_Use.agent_conversation.service import conversation
+
 # =============================================================================
 # Platform detection
 # =============================================================================
@@ -654,6 +659,11 @@ def write_settings(updates):
     except Exception:
         debug_exception("write_settings")
 
+# Resumable chat memory (UI path only) lives entirely in
+# Auto_Use.agent_conversation.service — the `conversation` singleton imported at
+# the top of this file. app.py only calls start_or_resume / save_run /
+# list_sessions / get_session / delete_session; it owns no memory logic itself.
+
 def get_provider_api_key(provider):
     """Get API key for a specific provider from file"""
     env_name = PROVIDER_KEY_MAP.get(provider)
@@ -1196,14 +1206,21 @@ def start_agent():
         provider = data.get('provider')
         model = data.get('model')
         task = data.get('task')
+        req_session_id = data.get('session_id')   # None / "new" / existing chat id
 
         if not all([provider, model, task]):
             return jsonify({'error': 'Missing provider, model, or task'}), 400
 
         api_key = get_provider_api_key(provider)
 
+        # ── Resolve the CHAT session via the conversation service ────────────
+        # Continuation -> loads the saved optimized history into prior_history;
+        # fresh start -> mints a new id (prior_history is None). All memory logic
+        # lives in Auto_Use.agent_conversation.service, not here.
+        chat_session_id, prior_history = conversation.start_or_resume(req_session_id, task)
+
         active_agent_stop_event = threading.Event()
-        active_agent_session_id = str(time.time())
+        active_agent_session_id = str(time.time())   # per-RUN guard (unchanged)
         current_session_id = active_agent_session_id
 
         def run_agent():
@@ -1282,6 +1299,7 @@ def start_agent():
             # process_request return value or an exception overrides it so the
             # UI shows the real result instead of always signaling completion.
             run_outcome = {"status": "success", "message": ""}
+            agent = None  # bound below; kept defined so the finally save is safe
             try:
                 AgentService = importlib.import_module(
                     f"Auto_Use.{PLATFORM_PKG}.agent.main_driver.service"
@@ -1299,6 +1317,7 @@ def start_agent():
                     tool_callback=send_flow_to_frontend,
                     api_key=api_key,
                     stop_event=stop_event,
+                    prior_history=prior_history,   # None for a fresh chat
                 )
 
                 monitor_thread = threading.Thread(target=monitor_milestones)
@@ -1319,6 +1338,26 @@ def start_agent():
                 run_outcome = {"status": "error", "message": str(agent_exc)}
             finally:
                 stop_event.set()
+
+                # ── Persist this run via the conversation service ───────────
+                # Runs for BOTH completion and stop, and BEFORE the window guard
+                # below, so memory is saved even if the window closed or a newer
+                # run superseded this one. The service optimizes the agent's final
+                # lists + writes a clean terminal "done message" (success OR any
+                # abnormal end). agent may be None if construction failed.
+                try:
+                    conversation.save_run(
+                        chat_session_id,
+                        getattr(agent, "assistant_messages", None),
+                        getattr(agent, "tool_responses", None),
+                        run_outcome.get("status", "success"),
+                        run_outcome.get("message", "") or "",
+                        task,
+                        getattr(agent, "last_messages", None),  # exact payload -> true memory log
+                    )
+                except Exception:
+                    debug_exception("persist chat session on finish")
+
                 if webview_window and current_session_id == active_agent_session_id:
                     try:
                         status = run_outcome.get("status", "success")
@@ -1350,7 +1389,9 @@ def start_agent():
         thread.daemon = True
         thread.start()
 
-        return jsonify({'status': 'started'})
+        # Return the chat session id so a brand-new chat's id reaches the
+        # frontend (it adopts it for the run-end save + future continuations).
+        return jsonify({'status': 'started', 'session_id': chat_session_id})
 
     except Exception as e:
         debug_exception("start_agent API")
@@ -1364,6 +1405,62 @@ def stop_agent():
         active_agent_stop_event.set()
         return jsonify({'status': 'stopped'})
     return jsonify({'status': 'no_agent_running'})
+
+@app.route('/api/chats', methods=['GET'])
+def list_chats():
+    """List saved chat sessions (newest-first) for the left-bar history list."""
+    try:
+        return jsonify(conversation.list_sessions())
+    except Exception:
+        debug_exception("list_chats")
+        return jsonify([])
+
+@app.route('/api/chats/<chat_id>', methods=['GET'])
+def get_chat(chat_id):
+    """Reopen payload: the session's name + last done message (the only thing the
+    reopen view shows, in the top-left container). No transcript is returned."""
+    try:
+        data = conversation.get_session(chat_id)
+        if not data:
+            return jsonify({'error': 'Not found'}), 404
+        return jsonify(data)
+    except Exception:
+        debug_exception("get_chat")
+        return jsonify({'error': 'Failed'}), 500
+
+@app.route('/api/chats/<chat_id>', methods=['DELETE'])
+def delete_chat(chat_id):
+    """Delete a saved chat session (folder + index entry). Idempotent."""
+    try:
+        conversation.delete_session(chat_id)
+        return jsonify({'status': 'deleted'})
+    except Exception:
+        debug_exception("delete_chat")
+        return jsonify({'error': 'Failed to delete'}), 500
+
+def _read_main_system_prompt():
+    """Best-effort read of the active platform's main_driver system prompt, so a
+    downloaded conversation log shows the same SYSTEM PROMPT block as a main.py
+    run. open() is patched in compiled builds to resolve embedded resources."""
+    try:
+        p = get_platform_use_path() / "agent" / "main_driver" / "system_prompt.md"
+        with open(p, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        return ""
+
+@app.route('/api/chats/<chat_id>/download', methods=['POST'])
+def download_chat(chat_id):
+    """Debug: write a session's saved memory as a human-readable conversation log
+    (.txt) to the user's Downloads folder and return the saved path."""
+    try:
+        path = conversation.export_to_downloads(chat_id, system_prompt=_read_main_system_prompt())
+        if not path:
+            return jsonify({'error': 'Nothing saved for this chat yet'}), 404
+        return jsonify({'status': 'saved', 'path': path})
+    except Exception:
+        debug_exception("download_chat")
+        return jsonify({'error': 'Failed to export'}), 500
 
 def start_server():
     # Windows build exposes the Flask server on 0.0.0.0 so the Telegram

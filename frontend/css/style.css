@@ -522,7 +522,9 @@ body.tg-occupied #zoneBottomRight {
 .app-toast {
     position: fixed;
     top: clamp(14px, 2.2vw, 24px);
-    left: 50%;
+    /* Centre over the main content area (aligned with the "Made to do" hero),
+       not the whole window — same geometry as the hero / settings panel. */
+    left: calc(50% + var(--left-bar-w) / 2);
     transform: translate(-50%, -8px);
     z-index: 25;
     max-width: min(90vw, 460px);
@@ -1301,6 +1303,51 @@ body.settings-open #chatWrapper {
     grid-template-columns: 1fr 1fr;
     grid-template-rows: 1.4fr 1fr;          /* top row bigger; tweakable */
     gap: clamp(10px, 1.5vw, 18px);
+}
+
+/* =====================================================================
+   Empty-state hero — centered "Auto Use / Agent with million moves." over
+   the main content area (same box as .main-grid). Shown on a fresh/new chat
+   (default at launch + after New chat); fades out the moment a task is sent
+   or a saved chat is reopened. Toggled by window.show/hideWelcomeHero.
+   ===================================================================== */
+.welcome-hero {
+    position: fixed;
+    left: calc(var(--left-bar-w) + clamp(10px, 2vw, 30px));
+    right: clamp(10px, 2vw, 30px);
+    top: clamp(30px, 4vw, 60px);
+    bottom: clamp(160px, 15vw, 196px);
+    z-index: 12;                /* just under the grid zones; pointer-transparent */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(6px, 0.7vw, 12px);
+    text-align: center;
+    pointer-events: none;
+    user-select: none;
+    transition: opacity 0.45s ease;
+}
+
+.welcome-hero.hidden {
+    opacity: 0;
+}
+
+.welcome-hero-title {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: clamp(34px, 5vw, 62px);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    /* Light, soft watermark feel (was too dark). */
+    color: rgba(125, 125, 125, 0.4);
+}
+
+.welcome-hero-tagline {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: clamp(14px, 1.5vw, 20px);
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    color: rgba(90, 90, 90, 0.62);
 }
 
 /* Temporary placeholder labels so the empty transparent zones are visible

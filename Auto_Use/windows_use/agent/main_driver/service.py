@@ -76,7 +76,7 @@ def _cleanup_scratchpad():
 class AgentService:
     """Service for Windows automation agent"""
     
-    def __init__(self, provider: str, model: str, save_conversation: bool = False, thinking: bool = True, frontend_callback=None, text_callback=None, web_callback=None, shell_callback=None, cli_callback=None, tool_callback=None, api_key: str = None, stop_event=None, external_terminal: bool = False):
+    def __init__(self, provider: str, model: str, save_conversation: bool = False, thinking: bool = True, frontend_callback=None, text_callback=None, web_callback=None, shell_callback=None, cli_callback=None, tool_callback=None, api_key: str = None, stop_event=None, external_terminal: bool = False, prior_history: Optional[dict] = None):
         """Initialize the Agent Service"""
         # Clean up scratchpad for a fresh start
         _cleanup_scratchpad()
@@ -151,7 +151,24 @@ class AgentService:
             
         # Start fresh each session
         self.interaction_count = 0
-        
+
+        # Resumable chat memory (UI path only). prior_history is an optimized
+        # snapshot from a PRIOR run of this session, built + loaded by
+        # Auto_Use.agent_conversation.service (ALL memory management lives there,
+        # not here). When present, process_request seeds the conversation lists
+        # from it so the agent "remembers" earlier turns. Scratchpad/todo are
+        # still wiped above — continuity comes ONLY from this memory, not files.
+        # The final lists are exposed on self so the conversation service can
+        # persist them after the run.
+        self.prior_history = prior_history if isinstance(prior_history, dict) else None
+        self.assistant_messages = []
+        self.tool_responses = []
+        # The exact final messages payload sent to the model (system + interleaved
+        # history + the live user message that re-injects user_request/todo/
+        # scratchpad/element_tree each step). Captured for the debug memory log so
+        # the download is the TRUE conversation, not a reconstruction.
+        self.last_messages = None
+
     def _load_system_prompt(self) -> str:
         """Load the system prompt from system_prompt.md file"""
         try:
@@ -388,7 +405,27 @@ class AgentService:
         # not-finished rather than silently looking like a completion.
         final_status = "incomplete"
         final_message = "Agent stopped before completing the task"
-        
+
+        # ---- Resumable memory seed (UI continuation) -------------------------
+        # If a prior optimized snapshot was supplied (continuing a saved chat),
+        # replay it into the two memory lists so the existing message-build loop
+        # re-emits the earlier conversation. Entries are ALREADY trimmed and
+        # tool_responses already compacted, so no re-processing. The saved memory
+        # ends with a terminal-note step, so on resume that note is the most-recent
+        # entry — which makes the loop replay EVERY real step's tool_response.
+        is_resumed = False
+        if self.prior_history:
+            seeded = self.prior_history.get("assistant_messages") or []
+            if seeded:
+                assistant_messages = list(seeded)
+                tool_responses = list(self.prior_history.get("tool_responses") or [])[:len(assistant_messages)]
+                tool_responses += [None] * (len(assistant_messages) - len(tool_responses))
+                is_resumed = True
+                is_first_iteration = False  # continuation, not a fresh dialogue
+                last_response = self.prior_history.get("done_message") or "Resuming previous session."
+                print(f"🧠 Resumed memory: {len(assistant_messages)} prior step(s) loaded")
+        # ----------------------------------------------------------------------
+
         # Print model info once at the start
         print(f"\n🔄 Processing with {self.llm_manager.get_model_name()}")
         self._emit_flow("run_start")   # tool-flow chain: clear + take over the demo
@@ -530,10 +567,14 @@ Respond with "action": [{"type": "hotkey", "value": "alt+y"}] to accept or "acti
                 except:
                     pass
                 
-                # Subsequent iterations - include last_response, todo_list
-                user_message = f"""<user_request>
+                # Subsequent iterations - include last_response, todo_list.
+                # On a RESUMED session, mark the request as <updated_user_request>
+                # so the agent knows this is a continuation of the same session
+                # (its prior steps are already in the replayed history above).
+                request_tag = "updated_user_request" if is_resumed else "user_request"
+                user_message = f"""<{request_tag}>
 {task}
-</user_request>
+</{request_tag}>
 
 <last_response>
 {last_response}
@@ -690,8 +731,14 @@ No image and element tree provided. Focus on digesting the web response below.
                     if tr:
                         messages.append({"role": "user", "content": f"<tool_response>\n{tr}\n</tool_response>"})
 
-            # Current user message (live screen + most recent <last_response>)
+            # Current user message (live screen + most recent <last_response>).
+            # The system prompt is added exactly once (above) — the resumable seed
+            # never carries a system prompt, so a continued session can't double it.
             messages.append({"role": "user", "content": user_message})
+
+            # Capture the exact payload for the debug memory log (the last
+            # iteration's value is retained — i.e. the agent's final true memory).
+            self.last_messages = messages
 
             # Apply prompt caching for OpenRouter/Anthropic (explicit cache_control).
             # messages[-1] = current user message (dynamic, never cache)
@@ -914,5 +961,11 @@ No image and element tree provided. Focus on digesting the web response below.
         elif final_status == "incomplete" and final_message and "stop" in final_message.lower():
             self._emit_flow("error", {"text": "agent interrupted"})
         self._emit_flow("run_end")   # tool-flow chain: run finished
+
+        # Expose the final conversation lists so the conversation service (NOT the
+        # agent) can optimize + persist them after the run. Memory management is
+        # kept entirely out of the agent. Return shape is unchanged.
+        self.assistant_messages = assistant_messages
+        self.tool_responses = tool_responses
 
         return {"status": final_status, "message": final_message}

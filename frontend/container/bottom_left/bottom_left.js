@@ -695,6 +695,9 @@
             treeEl.style.transition = '';
         }
         window.resetToolCount();
+        // Restore the pristine empty state: hide the "Tool response: N tools used"
+        // heading until the next run drives the chain again (run_start re-adds it).
+        if (zoneEl) zoneEl.classList.remove('flow-started');
     }
 
     /* ---------------- idle demo (loops when no run is active) ---------------- */

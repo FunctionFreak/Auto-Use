@@ -117,3 +117,8 @@ screen_record.py
 /Auto_Use/macOS_use/scratchpad
 /cli_minion_result
 /Auto_Use/windows_use/scratchpad/cli_minion
+
+# Resumable chat memory (UI) — runtime session data lives inside the package;
+# the code (service.py / __init__.py) is tracked, the saved chats are not.
+/Auto_Use/agent_conversation/index.json
+/Auto_Use/agent_conversation/chat_*/

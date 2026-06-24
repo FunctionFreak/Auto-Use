@@ -52,6 +52,9 @@
             const sel = window.getModelSelection ? window.getModelSelection() : {};
             if (!message || !sel.provider || !sel.model) return;
 
+            // The moment a task is sent, drop the empty-state hero.
+            if (window.hideWelcomeHero) window.hideWelcomeHero();
+
             const agentStrip = document.getElementById('agentResponseStrip');
             const agentText = document.getElementById('agentText');
             const sendBtnFrame = getSendFrame();
@@ -75,30 +78,34 @@
                 const welcomeEl = document.getElementById('welcomeOverlay');
                 if (welcomeEl) welcomeEl.classList.add('eyes-hidden');
 
-                // Start the live tracking-progress stream (top-right): reset prior entries.
+                // Start the live tracking-progress stream (top-right), then clear the
+                // previous run's visual outputs (shared with the New-chat button).
                 if (window.trackingProgress) window.trackingProgress.start();
-                const milestoneStream = document.getElementById('milestoneStream');
-                if (milestoneStream) milestoneStream.innerHTML = '';
-
-                // Reset the live todo card (bottom-right) — a new run starts with no plan
-                // until the agent writes one (backend also clears todo.md).
-                if (window.updateTodoList) window.updateTodoList({ objective: '', tasks: [] });
-                if (window.setWorkState) window.setWorkState('todo');
-
-                // Drop the previous run's "Agent Notes" so the screenshot area is live again.
-                if (window.hideAgentNotes) window.hideAgentNotes();
+                resetChatUi();
             }
 
             fetch('/api/start-agent', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ provider: sel.provider, model: sel.model, task: message })
+                // session_id threads the active chat: null/"new" => fresh start,
+                // an existing id => continue that saved session (agent resumes).
+                body: JSON.stringify({
+                    provider: sel.provider,
+                    model: sel.model,
+                    task: message,
+                    session_id: window.currentSessionId || null
+                })
             })
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'started') {
                     agentText.textContent = 'Agent running...';
                     chatInput.value = '';   // box is collapsed; restored on teardown
+                    // Adopt the backend's session id (a brand-new chat is minted
+                    // server-side) so the run-end save + future sends target it.
+                    if (data.session_id) window.currentSessionId = data.session_id;
+                    // Show the just-created chat in the sidebar immediately.
+                    document.dispatchEvent(new CustomEvent('chats:refresh'));
                 } else if (data.error) {
                     agentText.textContent = `Error: ${data.error}`;
                     restoreIdle();          // roll the orb morph + box back
@@ -136,6 +143,26 @@
         }
         // Expose so script.js's agentComplete() can morph back on natural completion.
         window.chatInputRestoreIdle = restoreIdle;
+
+        // Clear the previous run's visual outputs (milestones, todo card, agent
+        // notes). Shared by the send path AND the New-chat button (chat.js) so a
+        // fresh chat and a fresh run reset identically. Idempotent / guarded.
+        function resetChatUi() {
+            const milestoneStream = document.getElementById('milestoneStream');
+            if (milestoneStream) milestoneStream.innerHTML = '';
+            if (window.updateTodoList) window.updateTodoList({ objective: '', tasks: [] });
+            if (window.setWorkState) window.setWorkState('todo');
+            // Drop the previous run's "Agent Notes" so the screenshot area is live again.
+            if (window.hideAgentNotes) window.hideAgentNotes();
+            // Clear the previous run's screenshot + tool-response chain (and any
+            // web/shell overlay) so a fresh chat / new run starts on a clean canvas
+            // — no stale screen or "Tool response" steps bleeding into the next chat.
+            if (window.clearAgentImage) window.clearAgentImage();
+            if (window.toolFlow && window.toolFlow.reset) window.toolFlow.reset();
+            if (window.webSearchEnd) window.webSearchEnd();
+            if (window.shellEnd) window.shellEnd();
+        }
+        window.resetChatUi = resetChatUi;
 
         // Enter (without Shift) starts the agent; Shift+Enter inserts a newline.
         chatInput.addEventListener('keydown', (e) => {
