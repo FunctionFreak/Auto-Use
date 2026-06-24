@@ -15,11 +15,12 @@
     padding: clamp(8px, 1.4vw, 16px);
     overflow: hidden;                  /* clip the brief overlap while bands resize/slide */
 }
-/* one agent unit = the old horizontal stage. flex:1 1 0 makes every agent share the FULL panel
-   height equally — 1 fills, 2 halve, 3 third it — so they spread down the whole panel and are
-   never crammed at the top (percentage heights don't resolve reliably here, flex-grow does).
-   opacity/transform fade in a newly mounted unit (.entering, stripped on the next frame).
-   box-sizing so the divider padding stays inside each band's height. */
+/* one agent unit = the old horizontal stage. flex:1 0 auto sizes each agent to its CONTENT
+   (basis:auto → more minions = taller section) while grow:1 still fills the panel (no cramming)
+   and shrink:0 means a section never crushes its minions. As a minion row collapses (.leaving),
+   the content height shrinks and flex-basis:auto re-reads it each layout pass, so the section
+   and the grey dividers follow the collapse SMOOTHLY — no transition needed on the agent itself.
+   opacity/transform fade in a newly mounted unit (.entering, stripped on the next frame). */
 #cliContainer .cc-agent {
     box-sizing: border-box;
     display: flex;
@@ -27,7 +28,7 @@
     align-items: stretch;
     justify-content: center;
     gap: 14px;
-    flex: 1 1 0;
+    flex: 1 0 auto;
     min-height: 0;
     overflow: hidden;
     transition: opacity 0.4s ease,
@@ -47,12 +48,13 @@
 
 .coder-card {
     width: min(340px, 100%);
-    max-height: 100%;
+    /* no max-height/overflow cap: the card is content-height (top-aligned in .cc-card-wrap), so it
+       grows with its minion tree and the agent's flex-basis:auto reads that full height. The
+       terminal stays 5 lines (.cc-out-text fixed height); only the minion tree drives growth. */
     box-sizing: border-box;
     border-radius: 12px;
     background: transparent;                                /* fully blended — no border box */
     box-shadow: none;                                       /* border removed so the terminal blends in */
-    overflow: hidden;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
     display: flex;
     flex-direction: column;
@@ -61,7 +63,7 @@
 .coder-card .cc-body {
     flex: 1 1 auto;
     min-height: 0;
-    overflow: hidden;
+    overflow: visible;                                      /* don't clip the minion tree — it sets the card's height */
     padding: 9px 11px 8px;
     color: rgba(0, 0, 0, 0.82);
     font-size: 10px;
@@ -230,6 +232,16 @@
    into an L) AND the loader's orbiting glow (the "chopped" loader). Text clipping is scoped to
    .mline / .cc-line instead. */
 .coder-card .cc-mrow { position: relative; display: flex; flex-direction: column; color: rgba(0,0,0,0.7); min-width: 0; }
+/* a finished minion fades out AND collapses to 0 height so the rows below slide up into the
+   freed space; removed from the DOM on transitionend. overflow:hidden clips the line/elbow/L/
+   sub-chain as it shrinks; margin-bottom:-3px cancels the .cc-minions gap:3px so there's no
+   ghost gap. max-height is driven from JS (pinned px -> 0), NOT set here (inline would win). */
+.coder-card .cc-mrow.leaving {
+    overflow: hidden; opacity: 0; margin-bottom: -3px; pointer-events: none;
+    transition: max-height 0.32s cubic-bezier(0.25,0.8,0.25,1),
+                opacity 0.22s ease,
+                margin-bottom 0.32s cubic-bezier(0.25,0.8,0.25,1);
+}
 .coder-card .cc-mrow-head { min-height: 16px; display: flex; align-items: center; gap: 6px; }
 /* horizontal elbow from the trunk (left:0 of cc-minions) toward the head's loader (head center).
    width:16px spans the full trunk→row gap so the L visually meets the loader. */
@@ -254,11 +266,7 @@
 .coder-card .cc-loader > i { position: absolute; width: 100%; height: 100%; --delay: calc(var(--index) * 0.1s); animation: cc-orbit 1.5s var(--delay) ease-in-out infinite; opacity: calc(1 - (0.2 * var(--index))); }
 .coder-card .cc-loader > i::after { content: ""; position: absolute; top: 0; left: 0; width: var(--size-orbe); height: var(--size-orbe); background-color: #7c8088; box-shadow: 0 0 6px 0 rgba(120,124,132,0.6); border-radius: 50%; }
 
-/* done / error mark replacing a finished minion's loader */
-.coder-card .cc-mark { width: 11px; height: 11px; min-width: 11px; display: inline-flex; align-items: center; justify-content: center; position: relative; }
-.coder-card .cc-mark.done::after { content: ""; position: absolute; left: 4px; top: 0; width: 3px; height: 6.5px; box-sizing: border-box; border: solid #7c8088; border-width: 0 2px 2px 0; transform: rotate(45deg); }
-.coder-card .cc-mark.err { color: rgba(200,70,90,0.9); font-size: 10px; }
-.coder-card .cc-mark.err::after { content: "\2715"; }
+/* (a finished minion now fades out + collapses — see .cc-mrow.leaving — so there's no done mark) */
 
 /* ---- progress bar ---- */
 .coder-card .cc-progress { flex: 0 0 auto; margin: 0 11px 9px; height: 5px; border-radius: 999px; position: relative; overflow: hidden; background: rgba(0,0,0,0.06); border: 1px solid rgba(0,0,0,0.04); }

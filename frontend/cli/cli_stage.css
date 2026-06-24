@@ -37,6 +37,10 @@
 /* cli_await ON: panel slides up into the bottom row; ALL four zones push up & fade out
    (so the panel has the cleared space to itself). */
 body.cli-stage #cliContainer { transform: translateY(2%); opacity: 1; pointer-events: auto; }   /* small gap from the top; large open space below */
+/* graceful fallback: if many coders × many minions ever exceed the panel, scroll instead of
+   clipping (so all running minions stay reachable). Only while shown — the parked panel
+   (translateY 110%) keeps overflow:hidden so no scrollbar flashes off-screen. */
+body.cli-stage #cliContainer { overflow-y: auto; overflow-x: hidden; }
 body.cli-stage #zoneTopLeft,
 body.cli-stage #zoneTopRight,
 body.cli-stage #zoneBottomLeft,

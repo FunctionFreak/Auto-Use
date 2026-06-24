@@ -395,12 +395,34 @@
             if (minionParsers[id]) minionParsers[id](line);   // read `action` -> this minion's chain
         }
 
+        // The minion is done — DON'T wait for its streaming or show a mark. Immediately fade the
+        // whole row (line + L + tool sub-chain) and collapse its height to 0 so the rows below
+        // slide up; then remove it and re-anchor the trunk.
         function endMinion(id, status) {
             var row = findRow(id);
-            if (!row) return;
-            var loader = row.querySelector('.cc-loader');
-            var bad = (status === 'error' || status === 'stopped');
-            if (loader) loader.outerHTML = '<span class="cc-mark ' + (bad ? 'err' : 'done') + '"></span>';
+            if (!row || row.classList.contains('leaving')) return;   // idempotent (cliMinionEnd can repeat)
+
+            // stop streaming into a row that's leaving
+            if (minionStreams[id]) { minionStreams[id].dispose(); delete minionStreams[id]; }
+
+            // pin current height so max-height animates content-height -> 0 (no easing dead-zone)
+            row.style.maxHeight = row.offsetHeight + 'px';   // read forces reflow
+            if (window.requestAnimationFrame) {
+                requestAnimationFrame(function () { row.classList.add('leaving'); row.style.maxHeight = '0px'; });
+            } else { row.classList.add('leaving'); row.style.maxHeight = '0px'; }
+
+            var done = false;
+            function finish() {
+                if (done) return; done = true;
+                row.removeEventListener('transitionend', onEnd);
+                if (minionChains[id]) { minionChains[id].dispose(); delete minionChains[id]; }
+                delete minionParsers[id];
+                if (row.parentNode) row.parentNode.removeChild(row);
+                if (window.requestAnimationFrame) requestAnimationFrame(layoutTrunk); else layoutTrunk();
+            }
+            function onEnd(e) { if (e.target === row && e.propertyName === 'max-height') finish(); }
+            row.addEventListener('transitionend', onEnd);
+            setTimeout(finish, 420);   // safety if transitionend never fires (off-screen / unmounted)
         }
 
         // Web has its own globe icon in the tool chain now — no "searching the web…" hint in

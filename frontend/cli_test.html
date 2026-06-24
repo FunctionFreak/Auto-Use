@@ -86,6 +86,7 @@
         <b>CLI UI test</b>
         <button id="btnReplay">▶ 1 agent</button>
         <button id="btnMulti">▶ 4 agents</button>
+        <button id="btnMinions">▶ 4 minions</button>
         <span class="sep"></span>
         <button class="spd" data-spd="0.5">0.5×</button>
         <button class="spd on" data-spd="1">1×</button>
@@ -329,6 +330,74 @@
             document.getElementById('btnMulti').disabled = false;
         }
 
+        // ===================== 4-MINION scenario (fade-out + auto-size sections) =====================
+        // One coder spawns 4 concurrent minions (section grows tall, all visible), then they finish
+        // one at a time — each fades out + collapses, the rows below slide up, the section shrinks.
+        async function runMinions() {
+            var token = ++cancelToken;
+            running = true;
+            ['btnReplay', 'btnMulti', 'btnMinions'].forEach(function (i) { document.getElementById(i).disabled = true; });
+
+            status('full UI — entering cli_await…'); await sleep(1000);
+            if (token !== cancelToken) return;
+            if (window.cliAwaitStart) window.cliAwaitStart('test');
+            await sleep(800);
+
+            var T = 'coder-min-' + Date.now();
+            if (window.cliTaskStart) window.cliTaskStart(T, 'Analyze the codebase with parallel scouts');
+            await sleep(900);
+            await streamCoder(T, { action: [{ type: 'shell', command: 'ls -la' }] }, token); await sleep(800);
+            // a 2nd coder with NO minions — so you can see T's section GROW (and the divider get
+            // pushed down) as T's minions spawn, while this one stays short.
+            var B = 'coder-plain-' + Date.now();
+            if (window.cliTaskStart) window.cliTaskStart(B, 'Run the test suite');
+            await sleep(900);
+            await streamCoder(B, { action: [{ type: 'shell', command: 'npm test' }] }, token); await sleep(1000);
+
+            // launch 4 minions, staggered
+            var M = [];
+            var queries = [
+                'find all auth call-sites', 'map the route table', 'list DB models', 'scan for TODO/FIXME'
+            ];
+            for (var i = 0; i < 4; i++) {
+                if (token !== cancelToken) return;
+                var id = 'min-' + i + '-' + Date.now();
+                M.push(id);
+                status('minion ' + (i + 1) + ' launches');
+                if (window.cliMinionStart) window.cliMinionStart(T, id, queries[i]);
+                await sleep(700);
+            }
+            // give each minion a couple of tools so its sub-chain shows (section grows tall)
+            var mtool = [{ type: 'grep', pattern: 'x', path: 'src' }, { type: 'view', path: 'a.js', start: 1, end: 9 }, { type: 'glob', pattern: '*.js' }];
+            for (var r = 0; r < 3; r++) {
+                for (var m = 0; m < M.length; m++) {
+                    if (token !== cancelToken) return;
+                    await streamMinion(M[m], { thinking: 'T', memory: 's' + r, next_goal: 'scout', action: [mtool[(r + m) % mtool.length]] }, token);
+                    await sleep(350);
+                }
+                await sleep(700);
+            }
+
+            // finish them ONE AT A TIME → each fades out + collapses, rows below slide up
+            for (var k = 0; k < M.length; k++) {
+                if (token !== cancelToken) return;
+                status('minion ' + (k + 1) + ' done → fade out + collapse');
+                if (window.cliMinionEnd) window.cliMinionEnd(M[k], 'complete', 'done');
+                await sleep(1700);
+            }
+
+            status('all minions gone → section shrinks back');
+            await streamCoder(T, { action: [{ type: 'exit', value: 'analysis complete' }] }, token);
+            await sleep(900);
+            if (window.cliTaskEnd) window.cliTaskEnd(T, 'complete', 'All scouts reported in.');
+            await sleep(700);
+            if (window.cliAwaitEnd) window.cliAwaitEnd();
+
+            status('minions demo done ✓');
+            running = false;
+            ['btnReplay', 'btnMulti', 'btnMinions'].forEach(function (i) { document.getElementById(i).disabled = false; });
+        }
+
         function replayWith(fn) {
             cancelToken++;                              // abort any in-flight run
             if (window.cliAwaitEnd) window.cliAwaitEnd();   // slide down + clearAll (after 600ms)
@@ -340,6 +409,7 @@
         // wire controls
         document.getElementById('btnReplay').addEventListener('click', function () { if (!running) replayWith(run); });
         document.getElementById('btnMulti').addEventListener('click', function () { if (!running) replayWith(runMulti); });
+        document.getElementById('btnMinions').addEventListener('click', function () { if (!running) replayWith(runMinions); });
         Array.prototype.forEach.call(document.querySelectorAll('.spd'), function (b) {
             b.addEventListener('click', function () {
                 SPEED = parseFloat(b.dataset.spd);
@@ -352,8 +422,10 @@
         // macrotask after DOMContentLoaded — wait for window 'load' + a tick to be safe).
         // ?multi=1 boots the 4-agent pipeline scenario instead of the single rich one.
         window.addEventListener('load', function () {
-            var multi = /[?&]multi=1/.test(location.search);
-            setTimeout(multi ? runMulti : run, 450);
+            var boot = /[?&]minions=1/.test(location.search) ? runMinions
+                     : /[?&]multi=1/.test(location.search) ? runMulti
+                     : run;
+            setTimeout(boot, 450);
         });
     })();
     </script>
