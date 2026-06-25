@@ -49,7 +49,7 @@
 .memory-bar-track {
     position: relative;
     width: clamp(12px, 1.3vw, 18px);
-    height: clamp(170px, 26vh, 300px);
+    height: clamp(240px, 42vh, 480px);
     background: transparent;
     border-radius: 999px;
     overflow: hidden;

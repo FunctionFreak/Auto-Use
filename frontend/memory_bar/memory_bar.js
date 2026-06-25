@@ -7,7 +7,7 @@
 (function () {
     'use strict';
 
-    var CAP = 300000;
+    var CAP = 500000;
 
     function inject() {
         if (document.getElementById('memoryBar')) return; // already mounted

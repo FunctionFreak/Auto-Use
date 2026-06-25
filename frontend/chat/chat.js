@@ -74,7 +74,7 @@
                 }
                 // Restore the memory bar to this chat's saved token total + show it
                 // (the bar hides only for a brand-new chat).
-                if (window.updateMemoryBar) window.updateMemoryBar(data.tokens_used || 0, 300000);
+                if (window.updateMemoryBar) window.updateMemoryBar(data.tokens_used || 0, 500000);
                 if (window.showMemoryBar) window.showMemoryBar();
             })
             .catch(function () { /* non-fatal */ });

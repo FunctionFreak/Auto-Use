@@ -30,7 +30,7 @@ saved value), and the visual bar clamps at a CAP (300k for now).
 class MemoryTracker:
     """Accumulates exact token usage for a single chat (across iterations/runs)."""
 
-    CAP = 300_000
+    CAP = 500_000
 
     def __init__(self, initial_tokens: int = 0, cap: int = CAP):
         self.cap = int(cap or self.CAP)
