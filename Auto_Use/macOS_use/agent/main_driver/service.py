@@ -361,6 +361,29 @@ class AgentService:
             return res
         return compact(res)
 
+    def _backfill_web_findings(self, tool_response_str: str, findings: str) -> str:
+        """Replace a web step's 'refer to scratchpad' placeholder with the actual
+        numbered findings the agent distilled into the scratchpad on the digest
+        step. The scratchpad is wiped on the next user request, so this keeps the
+        distilled web info in durable conversation memory. Preserves the
+        surrounding shape (a single web result or a 'multiple' results list)."""
+        try:
+            data = json.loads(tool_response_str)
+        except Exception:
+            return tool_response_str
+
+        def fill(entry):
+            if isinstance(entry, dict) and entry.get("tool") == "web":
+                entry.pop("message", None)
+                entry["web_result"] = findings
+            return entry
+
+        if isinstance(data, dict) and data.get("action") == "multiple" and "results" in data:
+            data["results"] = [fill(r) for r in data["results"]]
+        else:
+            data = fill(data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
     def _trim_history_entry(self, entry: str) -> str:
         """Trim an OLDER history step for context: drop 'thinking', 'eval', and
         'action' (keep decision/memory/next_goal). Only the most recent step is kept
@@ -404,6 +427,8 @@ class AgentService:
         tool_responses = []      # Per-step tool result, aligned 1:1 with assistant_messages; replayed as user turns
         cli_await_result = None  # Stores cli_await result for next iteration's light message
         pending_web_response = None  # Stores web tool response for light digest iteration
+        web_memory_index = None  # tool_responses slot of the web step to backfill with the digest's scratchpad
+        is_web_digest = False    # True only on the iteration that digests a web result into the scratchpad
         json_fail_count = 0  # Track consecutive JSON parse failures (max 3 before exit)
         # Final outcome reported to the caller. Defaults to "incomplete" so any
         # loop exit that doesn't explicitly set success/error is reported as
@@ -446,7 +471,8 @@ class AgentService:
                 break
 
             step_number += 1
-            
+            is_web_digest = False  # set True below only when this iteration digests a web result
+
             # Max step limit - prevent infinite loops
             if step_number > 100:
                 print("\n🛑 Max step limit reached (100). Exiting agent loop.")
@@ -655,9 +681,11 @@ No image and element tree provided. Focus on digesting the web response below.
 
                     image_sent = False
                     annotated_image_base64 = None
-                    
-                    # Clear flag after consumption
+
+                    # Clear flag after consumption; mark this as the web-digest step so its
+                    # scratchpad response can be folded into the web memory below.
                     pending_web_response = None
+                    is_web_digest = True
                 else:
                     # Normal iteration - include full context
                     cli_status = self.controller.get_cli_agent_status()
@@ -880,6 +908,9 @@ No image and element tree provided. Focus on digesting the web response below.
                             
                             if web_results_list:
                                 pending_web_response = "<tool>\n" + "\n".join(web_results_list) + "\n</tool>"
+                                # Remember this web step's memory slot so the NEXT (digest)
+                                # iteration can backfill it with the scratchpad findings.
+                                web_memory_index = len(tool_responses) - 1
                                 print(f"🌐 Web results captured for digest iteration")
                             else:
                                 pending_web_response = None
@@ -905,6 +936,26 @@ No image and element tree provided. Focus on digesting the web response below.
                                     self._tool_response_for_memory(action_result),
                                     indent=2, ensure_ascii=False
                                 )
+
+                            # Web-result memory: on the digest step, fold the numbered
+                            # scratchpad findings the agent JUST wrote into the original web
+                            # step's tool_response — replacing the 'refer to scratchpad'
+                            # pointer. The scratchpad is wiped on the next user request, so
+                            # this keeps the distilled web info in durable conversation memory.
+                            if (is_web_digest and web_memory_index is not None
+                                    and 0 <= web_memory_index < len(tool_responses)
+                                    and tool_responses[web_memory_index]):
+                                entries = [
+                                    str(a.get("value", "")).strip()
+                                    for a in (agent_response.get("action") or [])
+                                    if isinstance(a, dict) and a.get("type") == "scratchpad" and a.get("value")
+                                ]
+                                if entries:
+                                    numbered = "\n".join(f"{i + 1}. {e}" for i, e in enumerate(entries))
+                                    tool_responses[web_memory_index] = self._backfill_web_findings(
+                                        tool_responses[web_memory_index], numbered
+                                    )
+                                web_memory_index = None
 
                             # Wait before next scan (default 3 seconds, unless wait action was used)
                             wait_time = 3.0  # Default wait

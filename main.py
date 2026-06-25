@@ -33,7 +33,7 @@ MODEL = "gemini-3.5-flash" #refer to the model name correctly from model_list.tx
 # Your task here
 task = """
 
-one the and play anything on youtube. and make a google sheet of netflix 10 year revenue.
+what si the price of apple stock then play youtube  video 
 
 """
 
