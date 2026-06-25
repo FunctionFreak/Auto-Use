@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory loader</title>
+<style>
+  /* Tweak these to taste */
+  :root {
+    --bar-width: 64px;
+    --bar-height: 320px;
+    --track-color: transparent; /* see-through track */
+    --fill-color: #9ca3af;      /* flat light grey fill */
+    --bar-radius: 999px;        /* rounded ends; set to 0 for hard corners */
+    --outline-width: 2px;       /* thin outer line of the bar */
+
+    /* Cycle = rise 1.6s + hold 5s + fall 1.6s = 8.2s.
+       If you change these, recompute the % stops in the keyframes below. */
+    --cycle: 8.2s;
+
+    --logo-color: #9ca3af;      /* grey, matches the bar */
+    --mem-red: #cf5b5b;         /* soft red, not too bright */
+    --breath: 4s;               /* breathing speed of the lines */
+    --logo-size: 64px;
+    --stack-gap: 30px;          /* space between logo and bar */
+  }
+
+  html, body {
+    height: 100%;
+    margin: 0;
+  }
+
+  /* Transparent so it drops straight into the QWebEngine overlay */
+  body {
+    background: transparent;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--stack-gap);
+  }
+
+  /* ---- Memory logo: labelled chip with legs top & bottom ---- */
+  .logo {
+    width: var(--logo-size);
+    height: auto;
+    color: var(--logo-color);
+  }
+
+  /* The word turns red while the bar is held full */
+  .logo text {
+    fill: var(--logo-color);
+    animation: memColor var(--cycle) ease-in-out infinite;
+  }
+
+  /* All the legs breathe grey <-> soft red */
+  .legs line {
+    stroke: var(--logo-color);
+    animation: breathe var(--breath) ease-in-out infinite;
+  }
+
+  /* ---- Loader ---- */
+  /* The TRACK. overflow:hidden clips the fill to the rounded ends. */
+  .bar {
+    position: relative;
+    width: var(--bar-width);
+    height: var(--bar-height);
+    background: var(--track-color);
+    border-radius: var(--bar-radius);
+    overflow: hidden;
+  }
+
+  /* The thin outer line, solid at the bottom and faded out toward the top. */
+  .bar::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    box-sizing: border-box;
+    border: var(--outline-width) solid var(--logo-color);
+    border-radius: inherit;
+    pointer-events: none;
+    -webkit-mask: linear-gradient(to top, #000 0%, #000 45%, transparent 100%);
+            mask: linear-gradient(to top, #000 0%, #000 45%, transparent 100%);
+  }
+
+  /* Rises, holds full for 5s, then drains — loops forever. */
+  .fill {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    height: 0%;
+    background: var(--fill-color);
+    animation: fill var(--cycle) ease-in-out infinite;
+  }
+
+  @keyframes fill {
+    0%    { height: 0%; }     /* empty */
+    19.5% { height: 100%; }   /* filled (1.6s) */
+    80.5% { height: 100%; }   /* hold full for 5s */
+    100%  { height: 0%; }     /* drain back down (1.6s) */
+  }
+
+  @keyframes memColor {
+    0%, 17%   { fill: var(--logo-color); }  /* grey while filling */
+    23%       { fill: var(--mem-red); }     /* red once full */
+    79%       { fill: var(--mem-red); }     /* stays red through the hold */
+    85%, 100% { fill: var(--logo-color); }  /* grey again as it drains */
+  }
+
+  @keyframes breathe {
+    0%, 100% { stroke: var(--logo-color); }
+    50%      { stroke: var(--mem-red); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .fill { animation: none; height: 60%; }
+    .logo text { animation: none; }
+    .legs line { animation: none; }
+  }
+</style>
+</head>
+<body>
+  <svg class="logo" viewBox="0 0 160 96" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Memory">
+    <!-- legs, top and bottom -->
+    <g class="legs" stroke="currentColor" stroke-width="3.5" stroke-linecap="round">
+      <line x1="40"  y1="13" x2="40"  y2="28"/>
+      <line x1="60"  y1="13" x2="60"  y2="28"/>
+      <line x1="80"  y1="13" x2="80"  y2="28"/>
+      <line x1="100" y1="13" x2="100" y2="28"/>
+      <line x1="120" y1="13" x2="120" y2="28"/>
+      <line x1="40"  y1="68" x2="40"  y2="83"/>
+      <line x1="60"  y1="68" x2="60"  y2="83"/>
+      <line x1="80"  y1="68" x2="80"  y2="83"/>
+      <line x1="100" y1="68" x2="100" y2="83"/>
+      <line x1="120" y1="68" x2="120" y2="83"/>
+    </g>
+    <!-- rounded rectangle body -->
+    <rect x="20" y="28" width="120" height="40" rx="12"
+          stroke="currentColor" stroke-width="3.5" stroke-linejoin="round"/>
+    <!-- label -->
+    <text x="80" y="48" text-anchor="middle" dominant-baseline="central"
+          font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif"
+          font-size="20" font-weight="400" letter-spacing="0.5">Memory</text>
+  </svg>
+
+  <div class="bar">
+    <div class="fill"></div>
+  </div>
+</body>
+</html>

@@ -54,6 +54,8 @@
 
             // The moment a task is sent, drop the empty-state hero.
             if (window.hideWelcomeHero) window.hideWelcomeHero();
+            // ...and reveal the memory bar (only shown while the agent runs).
+            if (window.showMemoryBar) window.showMemoryBar();
 
             const agentStrip = document.getElementById('agentResponseStrip');
             const agentText = document.getElementById('agentText');

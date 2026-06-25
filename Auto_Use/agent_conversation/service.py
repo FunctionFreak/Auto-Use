@@ -118,20 +118,23 @@ class ConversationService:
         except Exception:
             logger.exception("write index.json")
 
-    def _touch_index(self, session_id, *, title=None, last_done_message=None) -> dict:
+    def _touch_index(self, session_id, *, title=None, last_done_message=None,
+                     tokens_used=None) -> dict:
         """Create-or-update one index entry. created_at + title are set ONCE
         (title never overwritten, so the original objective stays the label);
-        updated_at + last_done_message refresh whenever provided."""
+        updated_at + last_done_message + tokens_used refresh whenever provided."""
         index = self._read_index()
         now = int(time.time())
         entry = index.get(str(session_id)) or {
             "title": None, "created_at": now,
-            "updated_at": now, "last_done_message": "",
+            "updated_at": now, "last_done_message": "", "tokens_used": 0,
         }
         if title and not entry.get("title"):
             entry["title"] = title
         if last_done_message is not None:
             entry["last_done_message"] = last_done_message
+        if tokens_used is not None:
+            entry["tokens_used"] = int(tokens_used or 0)
         entry["updated_at"] = now
         index[str(session_id)] = entry
         self._write_index(index)
@@ -245,7 +248,7 @@ class ConversationService:
         return sid, None
 
     def save_run(self, session_id, assistant_messages, tool_responses, status,
-                 message, task, last_messages=None):
+                 message, task, last_messages=None, tokens_used=None):
         """Persist a finished run + refresh index meta. Writes TWO things:
           - conversation.json  — the lean resume seed (assistant/tool turns).
           - memory_log.txt      — the TRUE debug memory: the exact final payload
@@ -280,6 +283,7 @@ class ConversationService:
                 session_id,
                 title=self._title_from_task(prior_task or task),  # no-op if already set
                 last_done_message=done_message,
+                tokens_used=tokens_used,  # cumulative chat tokens for the memory bar
             )
             return done_message
         except Exception:
@@ -335,15 +339,16 @@ class ConversationService:
         return items
 
     def get_session(self, session_id):
-        """{id, name, last_done_message} for the reopen view, or None if unknown.
-        The full transcript is intentionally NOT returned — reopen shows only the
-        last done message."""
+        """{id, name, last_done_message, tokens_used} for the reopen view, or None
+        if unknown. The full transcript is intentionally NOT returned — reopen
+        shows only the last done message (+ the memory-bar token total)."""
         meta = self._read_index().get(str(session_id))
         if not meta:
             return None
         return {
             "id": str(session_id),
             "name": meta.get("title") or "New chat",
+            "tokens_used": int(meta.get("tokens_used", 0) or 0),
             "last_done_message": meta.get("last_done_message", ""),
         }
 

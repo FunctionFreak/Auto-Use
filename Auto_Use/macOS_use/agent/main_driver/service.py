@@ -76,7 +76,7 @@ def _cleanup_scratchpad():
 class AgentService:
     """Service for Windows automation agent"""
     
-    def __init__(self, provider: str, model: str, save_conversation: bool = False, thinking: bool = True, frontend_callback=None, text_callback=None, web_callback=None, shell_callback=None, cli_callback=None, tool_callback=None, api_key: str = None, stop_event=None, external_terminal: bool = False, prior_history: Optional[dict] = None):
+    def __init__(self, provider: str, model: str, save_conversation: bool = False, thinking: bool = True, frontend_callback=None, text_callback=None, web_callback=None, shell_callback=None, cli_callback=None, tool_callback=None, token_callback=None, api_key: str = None, stop_event=None, external_terminal: bool = False, prior_history: Optional[dict] = None):
         """Initialize the Agent Service"""
         # Clean up scratchpad for a fresh start
         _cleanup_scratchpad()
@@ -113,6 +113,11 @@ class AgentService:
         # The per-turn tools come straight from the parsed action block (this driver),
         # so the controller needs no per-action plumbing.
         self.tool_callback = tool_callback
+
+        # Memory bar: called after each LLM call with the provider's exact token
+        # usage (llm_manager.last_usage). The agent only forwards — accumulation +
+        # persistence live in app.py / memory_compression.
+        self.token_callback = token_callback
 
         # Initialize Controller with provider and actual API model name (pass api_key for CLI agent subprocess)
         self.controller = ControllerView(provider=provider, model=self.llm_manager.get_model_name(), web_callback=web_callback, shell_callback=shell_callback, cli_callback=cli_callback, api_key=api_key, stop_event=stop_event, external_terminal=external_terminal)
@@ -802,7 +807,14 @@ No image and element tree provided. Focus on digesting the web response below.
 
                 # Get raw response from LLM - pass annotated image
                 raw_response = self.llm_manager.send_request(messages, annotated_image_base64)
-                
+
+                # Memory bar: forward this call's exact token usage (input+output).
+                if self.token_callback:
+                    try:
+                        self.token_callback(self.llm_manager.last_usage)
+                    except Exception:
+                        pass
+
                 # CRITICAL Check Stop AFTER LLM (discards result if stopped while waiting)
                 if self.stop_event and self.stop_event.is_set():
                     print("\n🛑 Agent stopped by user (response discarded).")

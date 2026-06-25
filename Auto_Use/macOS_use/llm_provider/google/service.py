@@ -128,12 +128,17 @@ class GoogleProvider:
             )
             
             # Normalize to OpenAI-style format
+            um = getattr(response, "usage_metadata", None)
             return {
                 "choices": [{
                     "message": {
                         "content": response.text
                     }
-                }]
+                }],
+                "usage": {
+                    "input_tokens": getattr(um, "prompt_token_count", 0) or 0,
+                    "output_tokens": getattr(um, "candidates_token_count", 0) or 0,
+                } if um else {},
             }
         except Exception as e:
             raise Exception(f"Google Gemini API request failed: {str(e)}")

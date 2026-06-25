@@ -450,6 +450,10 @@ class LLMManager:
         else:
             self.schema = AGENT_OUTPUT_SCHEMA
         
+        # Most recent send_request's normalized token usage (input/output/total).
+        # Captured as a side effect so callers (e.g. the memory bar) can read it
+        # without changing send_request's return shape.
+        self.last_usage = {}
         self.provider_instance = self._initialize_provider()
         
     def _initialize_provider(self):
@@ -525,6 +529,16 @@ class LLMManager:
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
     
+    def _normalize_usage(self, u):
+        """Normalize a provider usage dict to {input_tokens, output_tokens,
+        total_tokens}, tolerating both key styles (Anthropic-style input/output and
+        OpenAI-style prompt/completion). Empty/missing -> zeros."""
+        u = u or {}
+        inp = int(u.get("input_tokens", u.get("prompt_tokens", 0)) or 0)
+        out = int(u.get("output_tokens", u.get("completion_tokens", 0)) or 0)
+        tot = int(u.get("total_tokens", 0) or 0) or (inp + out)
+        return {"input_tokens": inp, "output_tokens": out, "total_tokens": tot}
+
     def send_request(self, messages: list, annotated_screenshot_base64: Optional[str] = None):
         """Send request to the selected provider with idempotent retries."""
         last_error = None
@@ -537,6 +551,7 @@ class LLMManager:
                 response = self.provider_instance.send_request(
                     attempt_messages, self.model, annotated_screenshot_base64
                 )
+                self.last_usage = self._normalize_usage(response.get("usage"))
                 return response['choices'][0]['message']['content']
             except Exception as e:
                 last_error = e
@@ -579,6 +594,7 @@ class LLMManager:
                 response = self.provider_instance.send_request(
                     copy.deepcopy(messages), self.model, annotated_screenshot_base64
                 )
+                self.last_usage = self._normalize_usage(response.get("usage"))
                 return response['choices'][0]['message']['content']
             except Exception as fallback_e:
                 print(f"❌ CLI Agent: Fallback {self.display_name} also failed: {fallback_e}")

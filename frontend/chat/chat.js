@@ -72,6 +72,10 @@
                 if (window.showAgentNotes) {
                     window.showAgentNotes(JSON.stringify(msg ? [msg] : []));
                 }
+                // Restore the memory bar to this chat's saved token total + show it
+                // (the bar hides only for a brand-new chat).
+                if (window.updateMemoryBar) window.updateMemoryBar(data.tokens_used || 0, 300000);
+                if (window.showMemoryBar) window.showMemoryBar();
             })
             .catch(function () { /* non-fatal */ });
     }
@@ -158,6 +162,8 @@
     function startNewChat() {
         window.currentSessionId = null;          // fresh start: no memory loaded
         if (window.resetChatUi) window.resetChatUi();
+        if (window.resetMemoryBar) window.resetMemoryBar();     // empty the memory bar
+        if (window.hideMemoryBar) window.hideMemoryBar();       // hide it (only new chat hides)
         if (window.showWelcomeHero) window.showWelcomeHero();   // bring back the hero
         var input = document.querySelector('.chat-input');
         if (input) { input.disabled = false; input.focus(); }

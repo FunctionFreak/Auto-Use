@@ -111,13 +111,14 @@ class PerplexityProvider:
                             break
                     if text_content:
                         break
-            
+
             return {
                 "choices": [{
                     "message": {
                         "content": text_content
                     }
-                }]
+                }],
+                "usage": result.get("usage", {}),
             }
             
         except requests.exceptions.RequestException as e:

@@ -52,6 +52,8 @@ from flask import Flask, jsonify, send_from_directory
 # safe to import at top level. main.py / cli.py never import this, so they stay
 # direct one-shot entry points.
 from Auto_Use.agent_conversation.service import conversation
+# Per-chat token tracker for the far-right memory bar. Platform-agnostic stdlib.
+from Auto_Use.memory_compression.memory_tracker import MemoryTracker
 
 # =============================================================================
 # Platform detection
@@ -1219,6 +1221,25 @@ def start_agent():
         # lives in Auto_Use.agent_conversation.service, not here.
         chat_session_id, prior_history = conversation.start_or_resume(req_session_id, task)
 
+        # ── Memory bar: per-chat cumulative token tracker ───────────────────
+        # Seed from the chat's saved total so a continuation resumes the bar from
+        # where it left off. The callback accumulates each call's exact usage and
+        # pushes the running total to the far-right memory bar.
+        prior_tokens = (conversation.get_session(chat_session_id) or {}).get("tokens_used", 0)
+        token_tracker = MemoryTracker(initial_tokens=prior_tokens)
+
+        def send_token_to_frontend(usage):
+            global webview_window
+            if not webview_window:
+                return
+            try:
+                p = token_tracker.record(usage)
+                webview_window.evaluate_js(
+                    f"window.updateMemoryBar && window.updateMemoryBar({p['used']}, {p['cap']})"
+                )
+            except Exception:
+                debug_exception("send_token_to_frontend")
+
         active_agent_stop_event = threading.Event()
         active_agent_session_id = str(time.time())   # per-RUN guard (unchanged)
         current_session_id = active_agent_session_id
@@ -1315,6 +1336,7 @@ def start_agent():
                     shell_callback=send_shell_status_to_frontend,
                     cli_callback=send_cli_event_to_frontend,
                     tool_callback=send_flow_to_frontend,
+                    token_callback=send_token_to_frontend,
                     api_key=api_key,
                     stop_event=stop_event,
                     prior_history=prior_history,   # None for a fresh chat
@@ -1354,6 +1376,7 @@ def start_agent():
                         run_outcome.get("message", "") or "",
                         task,
                         getattr(agent, "last_messages", None),  # exact payload -> true memory log
+                        tokens_used=token_tracker.total,        # cumulative chat tokens for the bar
                     )
                 except Exception:
                     debug_exception("persist chat session on finish")
