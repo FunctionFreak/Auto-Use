@@ -71,14 +71,17 @@
     gap: 8px;                  /* bullet -> text */
 }
 
-/* vertical line SEGMENT above each entry (centred at x=8, same as the bullet).
-   Drawn when top_right.js adds .line-in (scaleY transition = line "coming down"). */
+/* vertical line for each entry (centred at x=8, same as the bullet). Spans the
+   gap ABOVE the entry PLUS the entry's own full height, so it runs from this
+   dot down to the next dot — segments tile perfectly even when an entry's text
+   wraps to multiple lines (the old gap-only height left a break beside wrapped
+   text). Drawn when top_right.js adds .line-in (scaleY = line "coming down"). */
 .br-item::before {
     content: "";
     position: absolute;
     left: 7.5px;
     top: calc(-1 * var(--tf-gap));
-    height: var(--tf-gap);
+    height: calc(100% + var(--tf-gap));
     width: 1px;
     background: var(--tf-line);
     transform: scaleY(0);
