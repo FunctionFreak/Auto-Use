@@ -86,10 +86,13 @@
 .br-item::after {
     content: "";
     position: absolute;
-    left: 7.5px;
+    /* The dot sits in a 16px slot at the item's left, so its centre is at x=8px.
+       Anchor the 1px line at x=8 and pull it back half its width with translateX
+       so it's centred EXACTLY on the dot — left:7.5px would pixel-snap a hair off. */
+    left: 8px;
     width: 1px;
     background: var(--tf-line);
-    transform: scaleY(0);
+    transform: translateX(-50%) scaleY(0);
     transform-origin: top;
     transition: transform 0.45s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
@@ -102,12 +105,12 @@
     height: calc(100% - 14px);
 }
 .br-item.line-in::before,
-.br-item.line-in::after { transform: scaleY(1); }
+.br-item.line-in::after { transform: translateX(-50%) scaleY(1); }
 /* the newest (last) entry has no NEXT dot yet — keep its BELOW segment collapsed
    so no line dangles under the last dot. Equal specificity to the .line-in rule
    but placed AFTER it, so it wins; when a newer entry appends this stops matching
    and the segment animates in (the transition is preserved). */
-.br-item:last-child::after { transform: scaleY(0); }
+.br-item:last-child::after { transform: translateX(-50%) scaleY(0); }
 
 /* small FILLED dot, centred on the line (16px slot so its centre sits at x=8).
    Revealed when the segment reaches it (.icon-in). */

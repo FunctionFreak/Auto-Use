@@ -338,6 +338,7 @@
     let shellTerminalContainer = null;
     let shellCmdText = null;
     let shellLoader = null;
+    let shellProgress = null;
     let shellOutLine = null;
     let shellOutText = null;
 
@@ -345,6 +346,7 @@
         shellTerminalContainer = document.getElementById('shellTerminalContainer');
         shellCmdText = document.getElementById('shellCmdText');
         shellLoader = document.getElementById('shellLoader');
+        shellProgress = document.getElementById('shellProgress');
         shellOutLine = document.getElementById('shellOutLine');
         shellOutText = document.getElementById('shellOutText');
     };
@@ -404,6 +406,7 @@
         if (shellOutText) { shellOutText.textContent = ''; shellOutText.classList.remove('sh-shimmer'); }
         if (shellOutLine) { shellOutLine.classList.remove('show', 'fail'); }
         if (shellLoader) { shellLoader.classList.remove('show'); }
+        if (shellProgress) { shellProgress.classList.remove('show'); }
     };
 
     // Swap the shell terminal in/out over the screenshot (#shellPanel overlay).
@@ -424,6 +427,7 @@
         // command char-by-char; once typed, let it SHIMMER while we await the result.
         shellCmdFull = command || 'executing…';
         if (shellLoader) shellLoader.classList.add('show');
+        if (shellProgress) shellProgress.classList.add('show');   // coder-style loading bar while running
         if (shellCmdText) {
             shellCmdStream = streamChars(shellCmdText, shellCmdFull, () => {
                 shellCmdText.classList.add('sh-shimmer');
@@ -440,6 +444,7 @@
         if (shellCmdStream) { shellCmdStream.stop(); shellCmdStream = null; }
         if (shellCmdText) { shellCmdText.textContent = shellCmdFull; shellCmdText.classList.remove('sh-shimmer'); }
         if (shellLoader) shellLoader.classList.remove('show');
+        if (shellProgress) shellProgress.classList.remove('show');   // loading done
 
         const text = output
             ? (output.length > 120 ? output.substring(0, 120) + '…' : output)
