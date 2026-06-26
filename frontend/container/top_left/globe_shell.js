@@ -331,75 +331,79 @@
     window.webSearchEnd = () => { setGlobePanel(false); fadeScreenshot(false); };
 
     /* ============================================================
-       SHELL TERMINAL  (faded, enlarged behind the chain)
+       SHELL TERMINAL  (coder-card style — transparent `>` cmd + dot loader,
+       then an L-connector down to the output that comes back)
        ============================================================ */
     // Resolved lazily (top_left.html is fetch-injected) — re-query on each event.
     let shellTerminalContainer = null;
     let shellCmdText = null;
-    let shellStreamLine = null;
-    let shellStreamText = null;
-    let shellStatusLine = null;
-    let shellStatusTag = null;
-    let shellStatusText = null;
-    let shellTermTitle = null;
-    let shellCursor = null;
-    let shellProgress = null;
+    let shellLoader = null;
+    let shellOutLine = null;
+    let shellOutText = null;
 
     const resolveShellEls = () => {
         shellTerminalContainer = document.getElementById('shellTerminalContainer');
         shellCmdText = document.getElementById('shellCmdText');
-        shellStreamLine = document.getElementById('shellStreamLine');
-        shellStreamText = document.getElementById('shellStreamText');
-        shellStatusLine = document.getElementById('shellStatusLine');
-        shellStatusTag = document.getElementById('shellStatusTag');
-        shellStatusText = document.getElementById('shellStatusText');
-        shellTermTitle = document.getElementById('shellTermTitle');
-        shellCursor = document.getElementById('shellCursor');
-        shellProgress = document.getElementById('shellProgress');
+        shellLoader = document.getElementById('shellLoader');
+        shellOutLine = document.getElementById('shellOutLine');
+        shellOutText = document.getElementById('shellOutText');
     };
 
-    let shellStreamTimeout = null;
-    let shellTextInterval = null;
-    let shellResultInterval = null;
+    let shellCmdStream = null;     // active command stream handle ({ stop })
+    let shellOutStream = null;     // active output stream handle
+    let shellCmdFull = '';         // full command text (to force-complete on result)
 
-    const streamTextInto = (element, text, scrollContainer, onDone) => {
+    // Smooth char-by-char streamer — a port of coder_card.js makeLineStreamer's
+    // per-letter fade: each character is appended as a span that fades opacity
+    // 0→1, a new one every SH_STAGGER ms, so the leading edge is a soft fade-in
+    // wave (NOT a chunky substring jump). On done the spans are flattened back to
+    // plain text so the caller can apply the shimmer cleanly. Returns { stop }.
+    // FAST, coder-paced: reveal SH_STEP chars per SH_STAGGER tick (browser timers
+    // clamp to a few ms, so batching is how you get real speed), each char fading
+    // in over SH_CHAR_FADE — same per-letter fade mechanic as coder_card.js, same
+    // brisk cadence (STEP 5 / 4ms / 30ms), not the earlier sluggish 1-char/22ms.
+    const SH_STEP = 5;          // chars revealed per tick
+    const SH_STAGGER = 4;       // ms between ticks
+    const SH_CHAR_FADE = 30;    // ms opacity 0→1 per letter
+    const streamChars = (element, text, onDone) => {
         element.textContent = '';
-        let idx = 0;
-        const step = Math.max(1, Math.floor(text.length / 60));
-        const id = setInterval(() => {
-            idx += step;
-            if (idx >= text.length) {
-                idx = text.length;
-                clearInterval(id);
-                if (onDone) onDone();
+        const chars = Array.from(String(text));   // codepoint-safe (emoji/surrogates)
+        let i = 0;
+        let timer = null;
+        const tick = () => {
+            for (let n = 0; n < SH_STEP; n++) {
+                if (i >= chars.length) {
+                    element.textContent = element.textContent;   // flatten spans → plain text
+                    timer = null;
+                    if (onDone) onDone();
+                    return;
+                }
+                const span = document.createElement('span');
+                span.className = 'sh-char';
+                span.textContent = chars[i];
+                span.style.opacity = '0';
+                span.style.transition = 'opacity ' + SH_CHAR_FADE + 'ms ease-out';
+                element.appendChild(span);
+                // First char shows instantly (no empty flash); the rest fade in.
+                if (i === 0) span.style.opacity = '1';
+                else requestAnimationFrame(() => { span.style.opacity = '1'; });
+                i++;
             }
-            element.textContent = text.substring(0, idx);
-            if (scrollContainer) scrollContainer.scrollTop = scrollContainer.scrollHeight;
-        }, 25);
-        return id;
+            timer = setTimeout(tick, SH_STAGGER);
+        };
+        tick();
+        return { stop: () => { if (timer) { clearTimeout(timer); timer = null; } } };
     };
 
     const resetShellTerminal = () => {
         resolveShellEls();
-        if (shellStreamLine) { shellStreamLine.classList.remove('visible'); }
-        if (shellStatusLine) { shellStatusLine.classList.remove('visible'); }
-
-        if (shellTermTitle) shellTermTitle.textContent = 'Shell';
-        if (shellCmdText) shellCmdText.textContent = 'autouse.';
-        if (shellStreamText) shellStreamText.textContent = '';
-        if (shellStatusText) shellStatusText.textContent = 'running';
-
-        if (shellStatusTag) {
-            shellStatusTag.className = 'tag run';
-            shellStatusTag.textContent = '●';
-        }
-
-        if (shellCursor) shellCursor.style.display = '';
-        if (shellProgress) shellProgress.style.display = '';
-
-        if (shellStreamTimeout) { clearTimeout(shellStreamTimeout); shellStreamTimeout = null; }
-        if (shellTextInterval) { clearInterval(shellTextInterval); shellTextInterval = null; }
-        if (shellResultInterval) { clearInterval(shellResultInterval); shellResultInterval = null; }
+        if (shellCmdStream) { shellCmdStream.stop(); shellCmdStream = null; }
+        if (shellOutStream) { shellOutStream.stop(); shellOutStream = null; }
+        shellCmdFull = '';
+        if (shellCmdText) { shellCmdText.textContent = ''; shellCmdText.classList.remove('sh-shimmer'); }
+        if (shellOutText) { shellOutText.textContent = ''; shellOutText.classList.remove('sh-shimmer'); }
+        if (shellOutLine) { shellOutLine.classList.remove('show', 'fail'); }
+        if (shellLoader) { shellLoader.classList.remove('show'); }
     };
 
     // Swap the shell terminal in/out over the screenshot (#shellPanel overlay).
@@ -412,54 +416,43 @@
         resetShellTerminal();
         if (!shellTerminalContainer) return;
 
-        if (shellTermTitle) shellTermTitle.textContent = label || 'Shell';
-        if (shellCmdText) shellCmdText.textContent = 'autouse.';
-
         fadeScreenshot(true);
         setShellPanel(true);
 
-        setTimeout(() => {
-            if (shellStreamLine) {
-                shellStreamLine.classList.add('visible');
-                shellTextInterval = streamTextInto(
-                    shellStreamText,
-                    command || 'executing...',
-                    shellStreamLine
-                );
-            }
-        }, 300);
-
-        setTimeout(() => {
-            if (shellStatusLine) shellStatusLine.classList.add('visible');
-        }, 600);
+        // Small coder spinner sits at the HEAD (right after `>`) the whole time the
+        // command runs — never floats out to the wrapped line's end. Type the
+        // command char-by-char; once typed, let it SHIMMER while we await the result.
+        shellCmdFull = command || 'executing…';
+        if (shellLoader) shellLoader.classList.add('show');
+        if (shellCmdText) {
+            shellCmdStream = streamChars(shellCmdText, shellCmdFull, () => {
+                shellCmdText.classList.add('sh-shimmer');
+            });
+        }
     };
 
     window.shellResult = (status, output) => {
         resolveShellEls();
         if (!shellTerminalContainer) return;
 
-        if (shellCursor) shellCursor.style.display = 'none';
-        if (shellProgress) shellProgress.style.display = 'none';
+        // Command finished running — force-complete its stream (show the full
+        // command even if the result beat the typewriter), drop the shimmer + loader.
+        if (shellCmdStream) { shellCmdStream.stop(); shellCmdStream = null; }
+        if (shellCmdText) { shellCmdText.textContent = shellCmdFull; shellCmdText.classList.remove('sh-shimmer'); }
+        if (shellLoader) shellLoader.classList.remove('show');
 
-        const displayOutput = output ? (output.length > 80 ? output.substring(0, 80) + '...' : output) : '';
+        const text = output
+            ? (output.length > 120 ? output.substring(0, 120) + '…' : output)
+            : (status === 'success' ? 'done' : 'failed');
 
-        if (status === 'success') {
-            if (shellStatusTag) {
-                shellStatusTag.className = 'tag ok';
-                shellStatusTag.textContent = '✓';
-            }
-            if (shellStatusText) {
-                shellResultInterval = streamTextInto(shellStatusText, displayOutput || 'completed', shellStatusLine);
-            }
-        } else {
-            if (shellStatusTag) {
-                shellStatusTag.className = 'tag fail';
-                shellStatusTag.textContent = '✗';
-            }
-            if (shellStatusText) {
-                shellStatusText.style.color = 'rgba(70, 70, 70, 0.95)';
-                shellResultInterval = streamTextInto(shellStatusText, displayOutput || 'failed', shellStatusLine);
-            }
+        // Reveal the L-connected output line and type the result in — char-by-char
+        // too, but WITHOUT shimmer (the shimmer is the command's running indicator).
+        if (shellOutLine) {
+            shellOutLine.classList.toggle('fail', status !== 'success');
+            shellOutLine.classList.add('show');
+        }
+        if (shellOutText) {
+            shellOutStream = streamChars(shellOutText, text);
         }
     };
 
@@ -467,9 +460,6 @@
         resolveShellEls();
         setShellPanel(false);
         fadeScreenshot(false);
-        setTimeout(() => {
-            if (shellStatusText) shellStatusText.style.color = '';
-            resetShellTerminal();
-        }, 700);
+        setTimeout(resetShellTerminal, 700);
     };
 })();

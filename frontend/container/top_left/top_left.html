@@ -14,22 +14,19 @@
         <div id="mainGlobeContainer"></div>
     </div>
     <div class="work-overlay" id="shellPanel" aria-hidden="true">
-        <div class="shell-terminal-card" id="shellTerminalContainer">
-            <div class="shell-term-bar">
-                <div class="shell-term-title" id="shellTermTitle">Shell</div>
+        <!-- Coder-card style: a transparent `>` command line (streams + shimmers
+             with a dot loader while it runs), then an L-connector down to the
+             output line that comes back. Driven by globe_shell.js shell*(). -->
+        <div class="shell-term" id="shellTerminalContainer">
+            <div class="sh-cmd-line">
+                <span class="sh-p">&gt;</span>
+                <span class="sh-loader" id="shellLoader" aria-hidden="true">
+                    <i style="--index:0"></i><i style="--index:1"></i><i style="--index:2"></i><i style="--index:3"></i><i style="--index:4"></i>
+                </span>
+                <span class="sh-cmd-text" id="shellCmdText"></span>
             </div>
-            <div class="shell-term-body" id="shellTermBody">
-                <div class="line visible"><b>$</b> <span id="shellCmdText"></span></div>
-                <div class="line" id="shellStreamLine"><span class="muted">› </span><span id="shellStreamText"></span></div>
-                <div class="line" id="shellStatusLine">
-                    <span class="tag run" id="shellStatusTag">●</span>
-                    <span id="shellStatusText">running</span>
-                    <span class="cursor" id="shellCursor" aria-hidden="true"></span>
-                </div>
-                <div class="shell-progress" id="shellProgress">
-                    <span class="fill"></span>
-                    <span class="glint" aria-hidden="true"></span>
-                </div>
+            <div class="sh-out-line" id="shellOutLine">
+                <span class="sh-out-text" id="shellOutText"></span>
             </div>
         </div>
     </div>

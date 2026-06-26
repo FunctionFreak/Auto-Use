@@ -71,24 +71,43 @@
     gap: 8px;                  /* bullet -> text */
 }
 
-/* vertical line for each entry (centred at x=8, same as the bullet). Spans the
-   gap ABOVE the entry PLUS the entry's own full height, so it runs from this
-   dot down to the next dot — segments tile perfectly even when an entry's text
-   wraps to multiple lines (the old gap-only height left a break beside wrapped
-   text). Drawn when top_right.js adds .line-in (scaleY = line "coming down"). */
-.br-item::before {
+/* vertical connector line, drawn in TWO segments (both at x=7.5, same as the
+   bullet) with a clean GAP around the dot — the line stops just ABOVE the circle
+   and resumes just BELOW it, instead of running through it. The dot sits in a
+   16px slot at the item top, so its 8px circle spans +4..+12 (centre +8); the
+   gap is +2..+14 (a ~2px margin each side).
+     ::before = ABOVE segment — from the gap above the entry down to just above
+                the dot. Tiles with the previous entry's BELOW segment.
+     ::after  = BELOW segment — from just below the dot down to the entry's
+                bottom (alongside wrapped text), meeting the next entry's ABOVE
+                segment. So segments connect dot→dot but never cross a dot.
+   Both draw when top_right.js adds .line-in (scaleY = line "coming down"). */
+.br-item::before,
+.br-item::after {
     content: "";
     position: absolute;
     left: 7.5px;
-    top: calc(-1 * var(--tf-gap));
-    height: calc(100% + var(--tf-gap));
     width: 1px;
     background: var(--tf-line);
     transform: scaleY(0);
     transform-origin: top;
     transition: transform 0.45s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
-.br-item.line-in::before { transform: scaleY(1); }
+.br-item::before {                                   /* above the dot */
+    top: calc(-1 * var(--tf-gap));
+    height: calc(var(--tf-gap) + 2px);
+}
+.br-item::after {                                    /* below the dot */
+    top: 14px;
+    height: calc(100% - 14px);
+}
+.br-item.line-in::before,
+.br-item.line-in::after { transform: scaleY(1); }
+/* the newest (last) entry has no NEXT dot yet — keep its BELOW segment collapsed
+   so no line dangles under the last dot. Equal specificity to the .line-in rule
+   but placed AFTER it, so it wins; when a newer entry appends this stops matching
+   and the segment animates in (the transition is preserved). */
+.br-item:last-child::after { transform: scaleY(0); }
 
 /* small FILLED dot, centred on the line (16px slot so its centre sits at x=8).
    Revealed when the segment reaches it (.icon-in). */
