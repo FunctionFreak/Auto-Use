@@ -337,7 +337,7 @@
     // Resolved lazily (top_left.html is fetch-injected) — re-query on each event.
     let shellTerminalContainer = null;
     let shellCmdText = null;
-    let shellLoader = null;
+    let shellCmdLine = null;
     let shellProgress = null;
     let shellOutLine = null;
     let shellOutText = null;
@@ -345,7 +345,7 @@
     const resolveShellEls = () => {
         shellTerminalContainer = document.getElementById('shellTerminalContainer');
         shellCmdText = document.getElementById('shellCmdText');
-        shellLoader = document.getElementById('shellLoader');
+        shellCmdLine = document.getElementById('shellCmdLine');
         shellProgress = document.getElementById('shellProgress');
         shellOutLine = document.getElementById('shellOutLine');
         shellOutText = document.getElementById('shellOutText');
@@ -405,7 +405,7 @@
         if (shellCmdText) { shellCmdText.textContent = ''; shellCmdText.classList.remove('sh-shimmer'); }
         if (shellOutText) { shellOutText.textContent = ''; shellOutText.classList.remove('sh-shimmer'); }
         if (shellOutLine) { shellOutLine.classList.remove('show', 'fail'); }
-        if (shellLoader) { shellLoader.classList.remove('show'); }
+        if (shellCmdLine) { shellCmdLine.classList.remove('running'); }
         if (shellProgress) { shellProgress.classList.remove('show'); }
     };
 
@@ -426,7 +426,7 @@
         // command runs — never floats out to the wrapped line's end. Type the
         // command char-by-char; once typed, let it SHIMMER while we await the result.
         shellCmdFull = command || 'executing…';
-        if (shellLoader) shellLoader.classList.add('show');
+        if (shellCmdLine) shellCmdLine.classList.add('running');  // blinking cursor dot after `>`
         if (shellProgress) shellProgress.classList.add('show');   // coder-style loading bar while running
         if (shellCmdText) {
             shellCmdStream = streamChars(shellCmdText, shellCmdFull, () => {
@@ -443,7 +443,7 @@
         // command even if the result beat the typewriter), drop the shimmer + loader.
         if (shellCmdStream) { shellCmdStream.stop(); shellCmdStream = null; }
         if (shellCmdText) { shellCmdText.textContent = shellCmdFull; shellCmdText.classList.remove('sh-shimmer'); }
-        if (shellLoader) shellLoader.classList.remove('show');
+        if (shellCmdLine) shellCmdLine.classList.remove('running');
         if (shellProgress) shellProgress.classList.remove('show');   // loading done
 
         const text = output
