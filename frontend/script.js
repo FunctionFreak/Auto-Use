@@ -644,6 +644,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Save button (API Keys)
         settingsSaveBtn.addEventListener('click', () => {
             const savePromises = [];
+            const savedProviders = [];   // providers whose key was just added (for auto-select)
             document.querySelectorAll('.settings-provider-row').forEach(row => {
                 const input = row.querySelector('.settings-provider-input');
                 const provider = row.dataset.provider;
@@ -660,6 +661,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         .then(() => {
                             sealProviderRow(row);
                             apiKeys[provider] = true;
+                            savedProviders.push(provider);
                         })
                     );
                 }
@@ -669,6 +671,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 .then(() => {
                     // Newly-keyed providers are now selectable — re-gate the dropdown.
                     populateProviderSelect();
+                    // Key exists => model selection should now be possible. If the user
+                    // hadn't picked a provider yet, auto-select the one they just keyed so
+                    // the chat model drop-up unlocks immediately (no separate provider step).
+                    if (!selectedProvider && savedProviders.length) {
+                        setProvider(savedProviders[0]);
+                    }
                     resetSettingsToMenu();
                     if (selectedProvider && selectedModel) {
                         const isVertex = selectedModel.includes('vertex');

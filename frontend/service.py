@@ -537,9 +537,12 @@ def write_api_keys(keys):
         debug_exception("write_api_keys")
 
 
-# Persisted last-used selection (provider + model), in the per-user app-data dir.
+# Persisted last-used selection (provider + model). Lives alongside the chat
+# conversations — same folder the conversation service uses (conversation.root():
+# Auto_Use/agent_conversation/ in dev, <exe>/Auto_Use/agent_conversation/ when
+# compiled) — so all per-user UI state sits in one place.
 def get_settings_file():
-    return app_data_dir() / "settings.json"
+    return conversation.root() / "settings.json"
 
 
 def read_settings():
