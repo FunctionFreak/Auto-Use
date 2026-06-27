@@ -119,22 +119,31 @@ class ConversationService:
             logger.exception("write index.json")
 
     def _touch_index(self, session_id, *, title=None, last_done_message=None,
-                     tokens_used=None) -> dict:
+                     context_tokens=None, context_cap=None) -> dict:
         """Create-or-update one index entry. created_at + title are set ONCE
         (title never overwritten, so the original objective stays the label);
-        updated_at + last_done_message + tokens_used refresh whenever provided."""
+        updated_at + last_done_message + context_tokens/context_cap refresh
+        whenever provided.
+
+        context_tokens is the memory bar's LATEST context size (not a sum) and
+        context_cap is the fixed memory budget the bar fills toward (MemoryTracker
+        MEMORY_CAP = 300k — NOT the model context window) — together they let a
+        reopened chat restore the bar to where memory was."""
         index = self._read_index()
         now = int(time.time())
         entry = index.get(str(session_id)) or {
             "title": None, "created_at": now,
-            "updated_at": now, "last_done_message": "", "tokens_used": 0,
+            "updated_at": now, "last_done_message": "",
+            "context_tokens": 0, "context_cap": 0,
         }
         if title and not entry.get("title"):
             entry["title"] = title
         if last_done_message is not None:
             entry["last_done_message"] = last_done_message
-        if tokens_used is not None:
-            entry["tokens_used"] = int(tokens_used or 0)
+        if context_tokens is not None:
+            entry["context_tokens"] = int(context_tokens or 0)
+        if context_cap is not None:
+            entry["context_cap"] = int(context_cap or 0)
         entry["updated_at"] = now
         index[str(session_id)] = entry
         self._write_index(index)
@@ -248,7 +257,8 @@ class ConversationService:
         return sid, None
 
     def save_run(self, session_id, assistant_messages, tool_responses, status,
-                 message, task, last_messages=None, tokens_used=None):
+                 message, task, last_messages=None, context_tokens=None,
+                 context_cap=None):
         """Persist a finished run + refresh index meta. Writes TWO things:
           - conversation.json  — the lean resume seed (assistant/tool turns).
           - memory_log.txt      — the TRUE debug memory: the exact final payload
@@ -283,7 +293,8 @@ class ConversationService:
                 session_id,
                 title=self._title_from_task(prior_task or task),  # no-op if already set
                 last_done_message=done_message,
-                tokens_used=tokens_used,  # cumulative chat tokens for the memory bar
+                context_tokens=context_tokens,  # latest context size for the memory bar
+                context_cap=context_cap,        # fixed 300k memory budget (MEMORY_CAP)
             )
             return done_message
         except Exception:
@@ -339,16 +350,20 @@ class ConversationService:
         return items
 
     def get_session(self, session_id):
-        """{id, name, last_done_message, tokens_used} for the reopen view, or None
-        if unknown. The full transcript is intentionally NOT returned — reopen
-        shows only the last done message (+ the memory-bar token total)."""
+        """{id, name, last_done_message, context_tokens, context_cap} for the
+        reopen view, or None if unknown. The full transcript is intentionally NOT
+        returned — reopen shows only the last done message (+ the memory-bar
+        latest context size and its cap). Legacy rows that only carried the old
+        cumulative `tokens_used` are ignored (context_tokens defaults to 0, so the
+        bar starts empty and the next run corrects it)."""
         meta = self._read_index().get(str(session_id))
         if not meta:
             return None
         return {
             "id": str(session_id),
             "name": meta.get("title") or "New chat",
-            "tokens_used": int(meta.get("tokens_used", 0) or 0),
+            "context_tokens": int(meta.get("context_tokens", 0) or 0),
+            "context_cap": int(meta.get("context_cap", 0) or 0),
             "last_done_message": meta.get("last_done_message", ""),
         }
 

@@ -531,13 +531,31 @@ class LLMManager:
     
     def _normalize_usage(self, u):
         """Normalize a provider usage dict to {input_tokens, output_tokens,
-        total_tokens}, tolerating both key styles (Anthropic-style input/output and
-        OpenAI-style prompt/completion). Empty/missing -> zeros."""
+        total_tokens, context_tokens}, tolerating both key styles (Anthropic-style
+        input/output and OpenAI-style prompt/completion). Empty/missing -> zeros.
+
+        context_tokens is the TRUE size of the prompt actually sent this turn — the
+        memory-bar number. A cached token still occupies the context window, so we
+        add the cache classes back: input_tokens + cache_read + cache_creation.
+        This is exact for every provider:
+          - Anthropic: input_tokens EXCLUDES cache, so the cache fields are added.
+          - OpenAI/Google/Perplexity/OpenRouter/Groq: prompt_tokens already INCLUDES
+            cached tokens and the Anthropic cache keys are absent (0), so this
+            collapses to the full prompt count — no double-count.
+        """
         u = u or {}
         inp = int(u.get("input_tokens", u.get("prompt_tokens", 0)) or 0)
         out = int(u.get("output_tokens", u.get("completion_tokens", 0)) or 0)
         tot = int(u.get("total_tokens", 0) or 0) or (inp + out)
-        return {"input_tokens": inp, "output_tokens": out, "total_tokens": tot}
+        cache_read = int(u.get("cache_read_input_tokens", 0) or 0)
+        cache_create = int(u.get("cache_creation_input_tokens", 0) or 0)
+        context_tokens = inp + cache_read + cache_create
+        return {
+            "input_tokens": inp,
+            "output_tokens": out,
+            "total_tokens": tot,
+            "context_tokens": context_tokens,
+        }
 
     def send_request(self, messages: list, annotated_screenshot_base64: Optional[str] = None):
         """Send request to the selected provider with idempotent retries."""

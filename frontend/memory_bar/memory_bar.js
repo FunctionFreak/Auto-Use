@@ -1,13 +1,19 @@
-// Memory bar component — injects the far-right vertical token gauge into <body>
+// Memory bar component — injects the far-right vertical context gauge into <body>
 // (fixed, background, pointer-transparent), and exposes the backend hooks:
-//   window.updateMemoryBar(used, cap)  — set the fill height (% of cap, clamped);
-//                                         the backend calls this each LLM call.
+//   window.updateMemoryBar(used, cap)  — set the fill height to used/cap (the
+//                                         MAIN agent's current context size vs the
+//                                         fixed 300k memory budget). The backend
+//                                         calls this each LLM call; the value goes
+//                                         UP as history grows and DOWN when the
+//                                         runtime memory optimization strips it.
 //   window.resetMemoryBar()            — back to 0 (a brand-new chat).
 // Same self-contained fetch-inject pattern as left_bar.js / chat.js.
 (function () {
     'use strict';
 
-    var CAP = 500000;
+    // Fixed memory budget the bar fills toward; the backend passes the same cap.
+    // 300k = headroom for the future memory-compression system.
+    var CAP = 300000;
 
     function inject() {
         if (document.getElementById('memoryBar')) return; // already mounted

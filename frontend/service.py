@@ -1139,11 +1139,17 @@ def start_agent():
         # ── Resolve the CHAT session via the conversation service ────────────
         chat_session_id, prior_history = conversation.start_or_resume(req_session_id, task)
 
-        # ── Memory bar: per-chat cumulative token tracker, seeded from saved total
-        prior_tokens = (conversation.get_session(chat_session_id) or {}).get("tokens_used", 0)
-        token_tracker = MemoryTracker(initial_tokens=prior_tokens)
+        # ── Memory bar: current memory fullness for the MAIN agent, shown against
+        # the fixed 300k budget (MemoryTracker.MEMORY_CAP — headroom for the future
+        # memory-compression system). Seed from the chat's last saved context size
+        # so a reopened chat restores where memory was.
+        _sess = conversation.get_session(chat_session_id) or {}
+        token_tracker = MemoryTracker(initial_context=_sess.get("context_tokens", 0))
 
         def send_token_to_frontend(usage):
+            # Cosmetic gauge ONLY — updates the visual memory bar each LLM call.
+            # It never gates the agent: the run does not stop when the bar fills
+            # (the agent keeps working past 300k / 1M); the bar just reads full.
             global webview_window
             if not webview_window:
                 return
@@ -1284,7 +1290,8 @@ def start_agent():
                         run_outcome.get("message", "") or "",
                         task,
                         getattr(agent, "last_messages", None),  # exact payload -> true memory log
-                        tokens_used=token_tracker.total,        # cumulative chat tokens for the bar
+                        context_tokens=token_tracker.current,   # latest context size for the bar
+                        context_cap=token_tracker.cap,          # fixed 300k memory budget
                     )
                 except Exception:
                     debug_exception("persist chat session on finish")
@@ -1351,7 +1358,8 @@ def list_chats():
 
 @app.route('/api/chats/<chat_id>', methods=['GET'])
 def get_chat(chat_id):
-    """Reopen payload: name + last done message + tokens_used for the chat."""
+    """Reopen payload: name + last done message + context_tokens/context_cap (the
+    memory bar's last context size and its fixed 300k budget) for the chat."""
     try:
         data = conversation.get_session(chat_id)
         if not data:

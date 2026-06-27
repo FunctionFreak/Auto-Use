@@ -72,9 +72,9 @@
                 if (window.showAgentNotes) {
                     window.showAgentNotes(JSON.stringify(msg ? [msg] : []));
                 }
-                // Restore the memory bar to this chat's saved token total + show it
-                // (the bar hides only for a brand-new chat).
-                if (window.updateMemoryBar) window.updateMemoryBar(data.tokens_used || 0, 500000);
+                // Restore the memory bar to this chat's last context size + cap and
+                // show it (the bar hides only for a brand-new chat).
+                if (window.updateMemoryBar) window.updateMemoryBar(data.context_tokens || 0, data.context_cap || 300000);
                 if (window.showMemoryBar) window.showMemoryBar();
             })
             .catch(function () { /* non-fatal */ });

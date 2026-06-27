@@ -19,9 +19,10 @@
 
 """Memory compression / accounting for the agent.
 
-For now this package hosts MemoryTracker, which measures the EXACT token
-consumption of a chat (the live "memory bar" gauge). Memory-compression logic
-that keeps that consumption down will live here too.
+For now this package hosts MemoryTracker, which measures the MAIN agent's current
+context-window fullness (the live "memory bar" gauge) — the exact size of the
+latest prompt sent, including cached tokens. Memory-compression logic that keeps
+that fullness down will live here too.
 """
 
 from .memory_tracker import MemoryTracker
