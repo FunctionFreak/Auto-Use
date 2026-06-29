@@ -20,10 +20,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    const llmWrapper = document.getElementById('llmWrapper');
-    const currentSelection = llmWrapper.querySelector('.current-selection');
-    const selectionText = currentSelection.querySelector('.selection-text');
-    const dropdownOptions = document.getElementById('dropdownOptions');
+    // Provider/model selection moved out of the floating button into
+    // Settings → Model Selection (two dropdowns). See the selection logic below.
 
     // API Key Management - existence flags only (true/null), never actual keys
     const apiKeys = {
@@ -35,266 +33,331 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
 
-    // 1. Click to toggle the dropdown list
-    llmWrapper.addEventListener('click', () => {
-        if (llmWrapper.classList.contains('expanded')) {
-            // Collapse: Reset height to initial (let CSS transition handle it)
-            llmWrapper.style.height = '';
-            llmWrapper.classList.remove('expanded');
-            dropdownOptions.querySelectorAll('.active-provider').forEach(el => el.classList.remove('active-provider'));
-        } else {
-            // Expand: measure the wrapper's children directly so the height
-            // adapts to whatever the current header looks like (including the
-            // taller "selected model + brain icon" state after the first
-            // selection). Using offsetHeight of the two children skips the
-            // wrapper's own padding, which `box-sizing: content-box` adds back
-            // on top of any inline `height` we set — that mismatch was the
-            // empty-space bug on the second open.
-            llmWrapper.classList.add('expanded');
-            const headerEl = llmWrapper.querySelector('.glass-button-content');
-            const headerH  = headerEl ? headerEl.offsetHeight : 0;
-            const optionsH = dropdownOptions.offsetHeight;
-            llmWrapper.style.height = `${headerH + optionsH}px`;
-        }
-    });
-
-    // 2. Close dropdown when clicking outside
-    document.addEventListener('click', (e) => {
-        if (!llmWrapper.contains(e.target) && llmWrapper.classList.contains('expanded')) {
-            llmWrapper.style.height = '';
-            llmWrapper.classList.remove('expanded');
-            dropdownOptions.querySelectorAll('.active-provider').forEach(el => el.classList.remove('active-provider'));
-        }
-    });
-
-    // Store selected provider and model
+    // ============================================
+    // PROVIDER / MODEL SELECTION (Settings → Model Selection)
+    // Two dropdowns: pick a provider, then a model. The chosen pair is stored
+    // in selectedProvider/selectedModel and drives /api/start-agent.
+    // ============================================
     let selectedProvider = null;
     let selectedModel = null;
+    let providersData = [];   // [{ id, name, models: [{ id, display_name, reasoning_support }] }]
 
-    // Function to complete model selection (after API key is confirmed)
-    const completeModelSelection = (option, providerName, modelId) => {
-        // Get the model name (text content without the icon)
-        const modelName = option.cloneNode(true);
-        const iconSvg = modelName.querySelector('.model-icon');
-        
-        // Extract just the text
-        let modelText = modelName.textContent.trim();
-        
-        // Store the selection
-        selectedProvider = providerName;
-        selectedModel = modelId;
-        
-        // Clear current selection and add new content
-        currentSelection.innerHTML = '';
-        
-        // Add the model name text
-        const textSpan = document.createElement('span');
-        textSpan.className = 'selection-text';
-        textSpan.textContent = modelText;
-        currentSelection.appendChild(textSpan);
-        
-        // If the original option had an icon, add it to the selection
-        if (iconSvg) {
-            const iconClone = iconSvg.cloneNode(true);
-            iconClone.classList.add('selection-icon');
-            currentSelection.appendChild(iconClone);
-        }
+    // Query the chat input on demand (it's declared later in this closure).
+    const getChatInput = () => document.querySelector('.chat-input');
 
-        // Input stays locked — handleModelSelection controls unlock based on key status
-        // (do not enable here)
+    // The chat-box drop-up (model picker) — wired on 'chatinput:ready' below.
+    let chatDropdown = null;
 
-        // Close the dropdown
-        llmWrapper.style.height = '';
-        llmWrapper.classList.remove('expanded');
-        
-        console.log(`Selected: ${selectedProvider} / ${selectedModel}`);
+    // Expose the live (provider, model) selection so the chat-input wiring
+    // (chat_input/chat_input.js) can read it. setProvider/setModel are the writers.
+    window.getModelSelection = () => ({ provider: selectedProvider, model: selectedModel });
+
+    // Small transient top-center notification (e.g. "Please set the provider in Settings").
+    let _toastTimer = null;
+    window.showToast = (message, ms = 4000) => {
+        const el = document.getElementById('appToast');
+        if (!el || !message) return;
+        el.textContent = message;
+        el.classList.add('active');
+        clearTimeout(_toastTimer);
+        _toastTimer = setTimeout(() => el.classList.remove('active'), ms);
     };
 
-    // Function to handle model selection (checks for API key first)
-    const handleModelSelection = (option, providerName) => {
-        const modelId = option.dataset.modelId;
-        
-        // Always complete model selection (update UI, store selection)
-        completeModelSelection(option, providerName, modelId);
-        
-        // Vertex models — check vertex config instead of API key
-        const isVertex = modelId && modelId.includes('vertex');
-        if (isVertex) {
-            fetch('/api/vertex/status')
-                .then(res => res.json())
-                .then(data => {
-                    if (data.project_id) {
-                        chatInput.disabled = false;
-                        chatInput.placeholder = 'Type your task...';
-                    } else {
-                        chatInput.disabled = true;
-                        chatInput.placeholder = 'Configure GCP Vertex in Settings first...';
-                        if (settingsOverlay) {
-                            loadKeyStatus();
-                            showSettingsView('apikeys');
-                            settingsOverlay.classList.add('active');
-                        }
-                    }
-                })
-                .catch(err => console.error('Failed to check vertex status:', err));
+    // Persist the choice so it auto-loads next launch (selection only — keys stay
+    // server-side). Partial: send just {provider}, just {model}, or both.
+    const persistSelection = (updates) => {
+        fetch('/api/last-selection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updates)
+        }).catch(() => { /* non-fatal */ });
+    };
+
+    // Enable/disable the chat textarea (queried lazily — chat_input.js injects it).
+    const gateInput = (enabled, placeholder) => {
+        const ci = getChatInput();
+        if (!ci) return;
+        ci.disabled = !enabled;
+        if (placeholder) ci.placeholder = placeholder;
+    };
+
+    // Models of the active provider (drives the chat drop-up menu).
+    const activeProviderModels = () => {
+        const p = providersData.find(x => x.id === selectedProvider);
+        return (p && p.models) || [];
+    };
+
+    // Sync the chat drop-up: fill it with the active provider's models, and set its
+    // label — the chosen model's name, else the provider name, else "select model".
+    const refreshChatDropdown = () => {
+        if (!chatDropdown) return;
+        const models = activeProviderModels();
+        chatDropdown.setItems(models.map(m => ({
+            value: m.id, label: m.display_name, reasoning: m.reasoning_support
+        })));
+        chatDropdown.setDisabled(!selectedProvider);   // kept clickable via CSS so it can toast
+        if (selectedModel && models.some(m => m.id === selectedModel)) {
+            chatDropdown.select(selectedModel);          // label = model name
+        } else if (selectedProvider) {
+            chatDropdown.setPlaceholder(selectedProvider);   // label = provider name
+        } else {
+            chatDropdown.setPlaceholder('select model');
+        }
+    };
+
+    // Gate the chat input on whether the provider's key (or Vertex config, for
+    // vertex models) is present; toast + reveal key rows if missing.
+    const gateOnConfig = (providerId, modelId) => {
+        if (!providerId || !modelId) { gateInput(false, 'Select a model…'); return; }
+        if (modelId.includes('vertex')) {
+            fetch('/api/vertex/status').then(r => r.json()).then(data => {
+                if (data.project_id) { gateInput(true, 'Type your task...'); }
+                else { gateInput(false, 'Configure GCP Vertex in Settings first...'); loadKeyStatus(); if (window.showToast) window.showToast('Configure GCP Vertex in Settings'); }
+            }).catch(() => {});
             return;
         }
-        
-        // Then check if key exists
-        fetch('/api/keys/status')
-            .then(res => res.json())
-            .then(status => {
-                if (status[providerName]) {
-                    // Key exists — unlock input
-                    chatInput.disabled = false;
-                    chatInput.placeholder = 'Type your task...';
+        fetch('/api/keys/status').then(r => r.json()).then(status => {
+            if (status[providerId]) { gateInput(true, 'Type your task...'); }
+            else { gateInput(false, 'Add the API key in Settings first...'); loadKeyStatus(); if (window.showToast) window.showToast('Add the ' + providerId + ' API key in Settings'); }
+        }).catch(() => {});
+    };
+
+    // Provider chosen in Settings: clear the model, persist, refresh the drop-up,
+    // and keep the input disabled until a model is picked.
+    const setProvider = (providerId) => {
+        selectedProvider = providerId || null;
+        selectedModel = null;
+        persistSelection({ provider: selectedProvider, model: null });
+        refreshChatDropdown();
+        gateInput(false, providerId ? 'Select a model…' : 'Select a model in Settings to start...');
+        if (providerId) {
+            fetch('/api/keys/status').then(r => r.json()).then(s => {
+                if (!s[providerId]) { loadKeyStatus(); if (window.showToast) window.showToast('Add the ' + providerId + ' API key in Settings'); }
+            }).catch(() => {});
+        }
+    };
+
+    // Model chosen in the chat drop-up: persist, relabel the drop-up, gate the input.
+    const setModel = (modelId) => {
+        selectedModel = modelId || null;
+        persistSelection({ model: selectedModel });
+        if (chatDropdown && selectedModel) chatDropdown.select(selectedModel);
+        gateOnConfig(selectedProvider, selectedModel);
+    };
+
+    // On launch: load the saved provider/model and apply it, or prompt if unusable.
+    const restoreSelection = () => {
+        fetch('/api/last-selection').then(r => r.json()).then(sel => {
+            sel = sel || {};
+            const known = providersData.find(p => p.id === sel.provider);
+            if (!sel.provider || !known) {                 // nothing usable saved
+                refreshChatDropdown();                     // "select model"
+                if (window.showToast) window.showToast('Please set the provider in Settings');
+                return;
+            }
+            fetch('/api/keys/status').then(r => r.json()).then(status => {
+                // Apply the saved selection ONLY if the provider still has a key (or, for
+                // google, Vertex is configured). A keyless provider can't be selected, so a
+                // saved-but-now-keyless one reverts to "select model" + a disabled input.
+                const finalize = (available) => {
+                    if (!available) {
+                        selectedProvider = null;
+                        selectedModel = null;
+                        if (providerDropdown) providerDropdown.setPlaceholder('Select a provider…');
+                        refreshChatDropdown();
+                        gateInput(false, 'Add the API key in Settings first...');
+                        if (window.showToast) window.showToast('Add the ' + (known.name || sel.provider) + ' API key in Settings');
+                        return;
+                    }
+                    selectedProvider = sel.provider;
+                    if (providerDropdown) providerDropdown.select(sel.provider);
+                    const models = known.models || [];
+                    if (sel.model && models.some(m => m.id === sel.model)) selectedModel = sel.model;
+                    refreshChatDropdown();
+                    if (selectedModel) gateOnConfig(sel.provider, selectedModel);
+                    else gateInput(false, 'Select a model…');
+                };
+
+                if (status[sel.provider]) {
+                    finalize(true);
+                } else if (sel.provider === 'google') {
+                    // Google can also be enabled via Vertex (no direct API key).
+                    fetch('/api/vertex/status').then(r => r.json())
+                        .then(d => finalize(!!d.project_id)).catch(() => finalize(false));
                 } else {
-                    // No key — keep input locked, open settings
-                    chatInput.disabled = true;
-                    chatInput.placeholder = 'Add API key in Settings first...';
-                    if (settingsOverlay) {
-                        loadKeyStatus();
-                        showSettingsView('apikeys');
-                        settingsOverlay.classList.add('active');
-                    }
+                    finalize(false);
                 }
-            })
-            .catch(err => {
-                console.error('Failed to check key status:', err);
-            });
+            }).catch(() => { refreshChatDropdown(); });
+        }).catch(() => { refreshChatDropdown(); });
     };
 
-    // Function to render providers and models
-    const renderProviders = (providers) => {
-        dropdownOptions.innerHTML = '';
+    // Build the brain SVG icon (same #icon-brain symbol the old dropdown used)
+    // for models that support reasoning. Native <select> can't hold SVG — which
+    // is why these are custom dropdowns.
+    const brainIcon = () => {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.classList.add('model-icon');
+        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+        use.setAttribute('href', '#icon-brain');
+        svg.appendChild(use);
+        return svg;
+    };
 
-        if (!providers || providers.length === 0) {
-            const errorDiv = document.createElement('div');
-            errorDiv.className = 'provider-item';
-            errorDiv.innerHTML = '<span>No providers found</span>';
-            dropdownOptions.appendChild(errorDiv);
-            return;
-        }
+    // Lightweight custom dropdown. items: [{ value, label, reasoning }].
+    const makeDropdown = (rootId, onChange) => {
+        const root = document.getElementById(rootId);
+        if (!root) return null;
+        const trigger = root.querySelector('.model-dropdown-trigger');
+        const valueEl = root.querySelector('.model-dropdown-value');
+        const menu = root.querySelector('.model-dropdown-menu');
+        let value = '';
 
-        providers.forEach(provider => {
-            const providerItem = document.createElement('div');
-            providerItem.className = 'provider-item';
+        // Clicks inside the menu (its padding, the scrollbar) must NOT bubble to the
+        // document close-handler — only choosing an option closes the dropdown. Without
+        // this, interacting with the scrollbar collapses the list.
+        if (menu) menu.addEventListener('click', (e) => e.stopPropagation());
 
-            const providerNameSpan = document.createElement('span');
-            providerNameSpan.textContent = provider.name;
-            providerItem.appendChild(providerNameSpan);
+        // Wheel/trackpad scrolling: WebKit (the WKWebView host) refuses to natively
+        // async-scroll this overflow menu because it sits inside a position:fixed +
+        // transform + backdrop-filter subtree, so long lists (e.g. OpenRouter's ~17
+        // models) looked frozen and the top items were unreachable. Programmatic
+        // scrollTop DOES work there, so drive it ourselves from the wheel event (which
+        // real trackpad/wheel input fires regardless). No-op when nothing overflows, so
+        // the short settings provider list is unaffected.
+        if (menu) menu.addEventListener('wheel', (e) => {
+            if (menu.scrollHeight <= menu.clientHeight) return;
+            const step = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+            menu.scrollTop += step;
+            e.preventDefault();
+        }, { passive: false });
 
-            // Show sub-menu on hover, keep last hovered one visible
-            providerItem.addEventListener('mouseenter', () => {
-                dropdownOptions.querySelectorAll('.provider-item.active-provider').forEach(el => {
-                    el.classList.remove('active-provider');
-                });
-                providerItem.classList.add('active-provider');
-            });
-
-            const subMenu = document.createElement('div');
-            subMenu.className = 'sub-menu';
-
-            const subMenuCard = document.createElement('div');
-            subMenuCard.className = 'sub-menu-card';
-
-            // Add glass effects
-            subMenuCard.innerHTML = `
-                <div class="liquidGlass-effect-btn"></div>
-                <div class="liquidGlass-tint-btn"></div>
-                <div class="liquidGlass-shine-btn"></div>
-            `;
-
-            const subMenuContent = document.createElement('div');
-            subMenuContent.className = 'sub-menu-content';
-
-            provider.models.forEach(model => {
-                const modelOption = document.createElement('div');
-                modelOption.className = 'model-option';
-                modelOption.dataset.modelId = model.id; // Store ID for backend use
-
-                const modelNameText = document.createTextNode(model.display_name);
-                modelOption.appendChild(modelNameText);
-
-                if (model.reasoning_support) {
-                    const svgIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-                    svgIcon.classList.add('model-icon');
-                    const useElement = document.createElementNS("http://www.w3.org/2000/svg", "use");
-                    useElement.setAttribute('href', '#icon-brain');
-                    svgIcon.appendChild(useElement);
-                    modelOption.appendChild(svgIcon);
-                }
-
-                // Add click listener
-                modelOption.addEventListener('click', (e) => {
-                    e.stopPropagation(); // Prevent wrapper toggle
-                    handleModelSelection(modelOption, provider.id);
-                });
-
-                subMenuContent.appendChild(modelOption);
-            });
-
-            subMenuCard.appendChild(subMenuContent);
-            subMenu.appendChild(subMenuCard);
-            providerItem.appendChild(subMenu);
-            dropdownOptions.appendChild(providerItem);
+        trigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (root.classList.contains('disabled')) return;
+            const willOpen = !root.classList.contains('open');
+            document.querySelectorAll('.model-dropdown.open').forEach(d => d.classList.remove('open'));
+            if (willOpen) root.classList.add('open');
         });
+
+        const api = {
+            get value() { return value; },
+            setDisabled(d) { root.classList.toggle('disabled', !!d); },
+            setPlaceholder(text) {
+                value = '';
+                valueEl.innerHTML = '';
+                valueEl.textContent = text;
+                valueEl.classList.add('placeholder');
+            },
+            setItems(items) {
+                menu.innerHTML = '';
+                if (!items.length) {
+                    const empty = document.createElement('div');
+                    empty.className = 'model-dropdown-empty';
+                    empty.textContent = 'None';
+                    menu.appendChild(empty);
+                    return;
+                }
+                items.forEach(it => {
+                    const opt = document.createElement('div');
+                    opt.className = 'model-dropdown-option' + (it.disabled ? ' model-dropdown-option--disabled' : '');
+                    opt.dataset.value = it.value;
+                    const label = document.createElement('span');
+                    label.className = 'model-dropdown-option-label';
+                    label.textContent = it.label;
+                    opt.appendChild(label);
+                    if (it.disabled) {
+                        // Show why it can't be picked (e.g. no API key).
+                        const hint = document.createElement('span');
+                        hint.className = 'model-dropdown-option-hint';
+                        hint.textContent = it.hint || 'unavailable';
+                        opt.appendChild(hint);
+                    } else if (it.reasoning) {
+                        opt.appendChild(brainIcon());
+                    }
+                    opt.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        // A disabled option (no key) can't be selected — toast the disclaimer
+                        // and keep the menu open so the rest stay visible.
+                        if (it.disabled) {
+                            if (window.showToast && it.disabledMsg) window.showToast(it.disabledMsg);
+                            return;
+                        }
+                        api.select(it.value);
+                        root.classList.remove('open');
+                        if (onChange) onChange(it.value);
+                    });
+                    menu.appendChild(opt);
+                });
+            },
+            select(v) {
+                value = v || '';
+                let chosen = null;
+                menu.querySelectorAll('.model-dropdown-option').forEach(o => {
+                    const match = o.dataset.value === String(v);
+                    o.classList.toggle('selected', match);
+                    if (match) chosen = o;
+                });
+                if (chosen) {
+                    valueEl.innerHTML = '';
+                    const label = document.createElement('span');
+                    label.textContent = chosen.querySelector('.model-dropdown-option-label').textContent;
+                    valueEl.appendChild(label);
+                    const icon = chosen.querySelector('.model-icon');
+                    if (icon) valueEl.appendChild(icon.cloneNode(true));
+                    valueEl.classList.remove('placeholder');
+                }
+            },
+        };
+        return api;
     };
 
-    // Initialize fetching data
+    const providerDropdown = makeDropdown('providerDropdown', (providerId) => {
+        if (providerId) setProvider(providerId);   // model is now chosen in the chat drop-up
+    });
+
+    // Close any open dropdown when clicking elsewhere.
+    document.addEventListener('click', () => {
+        document.querySelectorAll('.model-dropdown.open').forEach(d => d.classList.remove('open'));
+    });
+
+    // Populate the Provider dropdown from providersData, restoring any current
+    // selection so reopening Settings shows the active choice. Providers with NO API
+    // key are shown greyed + non-selectable (clicking one toasts a disclaimer) so the
+    // user can't pick a model — and thus can't start the agent — without a key. Kept in
+    // sync with apiKeys, which loadKeyStatus / save / delete refresh.
+    const populateProviderSelect = () => {
+        if (!providerDropdown) return;
+        providerDropdown.setItems(providersData.map(p => ({
+            value: p.id,
+            label: p.name,
+            reasoning: false,
+            disabled: !apiKeys[p.id],
+            hint: 'API key needed',
+            disabledMsg: 'Add the ' + p.name + ' API key in Settings first',
+        })));
+        if (selectedProvider) providerDropdown.select(selectedProvider);
+        else providerDropdown.setPlaceholder(providersData.length ? 'Select a provider…' : 'No providers found');
+    };
+
+    // Fetch providers and populate the dropdowns.
     const loadData = () => {
         fetch('/api/providers')
             .then(response => response.json())
             .then(providers => {
-                renderProviders(providers);
+                providersData = Array.isArray(providers) ? providers : [];
+                populateProviderSelect();
+                restoreSelection();   // auto-load the last provider/model on launch
             })
             .catch(err => {
-                console.error("Failed to load providers:", err);
-                renderProviders([]);
+                console.error('Failed to load providers:', err);
+                providersData = [];
+                populateProviderSelect();
+                restoreSelection();
             });
     };
 
-    // Position settings button dynamically next to LLM button
-    const settingsBtnEl = document.getElementById('settingsBtn');
-    const positionSettingsBtn = () => {
-        if (!settingsBtnEl || !llmWrapper) return;
-        const rect = llmWrapper.getBoundingClientRect();
-        settingsBtnEl.style.left = (rect.right + 10) + 'px';
-    };
-
-    // Reposition on load, resize, and after any selection change
-    positionSettingsBtn();
-    window.addEventListener('resize', positionSettingsBtn);
-
-    // Observe LLM button size/position changes (e.g. after model selection or layout switch)
-    const resizeObserver = new ResizeObserver(positionSettingsBtn);
-    resizeObserver.observe(llmWrapper);
-
-    // While the LLM wrapper's `left` is animating (chat box slide-in/out),
-    // re-read its position every frame so the settings cog tracks it
-    // smoothly. Without this rAF loop the cog only moves on transitionend
-    // and visibly snaps at the end of the 0.5s slide.
-    let _settingsTrackRAF = 0;
-    const trackSettingsBtnPosition = () => {
-        const tick = () => {
-            positionSettingsBtn();
-            _settingsTrackRAF = requestAnimationFrame(tick);
-        };
-        if (!_settingsTrackRAF) _settingsTrackRAF = requestAnimationFrame(tick);
-    };
-    const stopTrackingSettingsBtn = () => {
-        if (_settingsTrackRAF) {
-            cancelAnimationFrame(_settingsTrackRAF);
-            _settingsTrackRAF = 0;
-        }
-        positionSettingsBtn();
-    };
-
-    const isLeftTransition = (e) => e.propertyName === 'left' && e.target === llmWrapper;
-    llmWrapper.addEventListener('transitionrun',    (e) => { if (isLeftTransition(e)) trackSettingsBtnPosition();   });
-    llmWrapper.addEventListener('transitionstart',  (e) => { if (isLeftTransition(e)) trackSettingsBtnPosition();   });
-    llmWrapper.addEventListener('transitionend',    (e) => { if (isLeftTransition(e)) stopTrackingSettingsBtn();    });
-    llmWrapper.addEventListener('transitioncancel', (e) => { if (isLeftTransition(e)) stopTrackingSettingsBtn();    });
+    // The settings button now lives in the left bar footer (settings/ component),
+    // so it no longer needs JS positioning next to the LLM button.
 
     // Load immediately
     loadData();
@@ -306,16 +369,33 @@ document.addEventListener('DOMContentLoaded', () => {
             Object.keys(status).forEach(provider => {
                 apiKeys[provider] = status[provider] ? true : null;
             });
+            populateProviderSelect();   // re-gate the provider dropdown now keys are known
         })
         .catch(err => console.error('Failed to load key status:', err));
+
+    // Wire the chat-box drop-up (model picker) once chat_input.js injects it. It
+    // reuses makeDropdown; picking a model calls setModel. Clicking it with no
+    // provider set nudges the user to Settings.
+    const wireChatDropdown = () => {
+        if (chatDropdown) return;
+        chatDropdown = makeDropdown('chatModelDropdown', (modelId) => { if (modelId) setModel(modelId); });
+        if (!chatDropdown) return;
+        const trig = document.querySelector('#chatModelDropdown .model-dropdown-trigger');
+        if (trig) trig.addEventListener('click', () => {
+            if (!selectedProvider && window.showToast) window.showToast('Please set the provider in Settings');
+        });
+        refreshChatDropdown();   // sync label/menu from any already-restored selection
+    };
+    if (document.querySelector('#chatModelDropdown')) wireChatDropdown();
+    else document.addEventListener('chatinput:ready', wireChatDropdown);
 
     // ============================================
     // SETTINGS PANEL - Open / Close
     // ============================================
-    const settingsBtn = document.getElementById('settingsBtn');
     const settingsOverlay = document.getElementById('settingsOverlay');
     const settingsSaveBtn = document.getElementById('settingsSaveBtn');
     const settingsMenuView = document.getElementById('settingsMenuView');
+    const settingsModelView = document.getElementById('settingsModelView');
     const settingsApikeysView = document.getElementById('settingsApikeysView');
     const settingsRemoteView = document.getElementById('settingsRemoteView');
 
@@ -354,6 +434,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         unsealProviderRow(row);
                     }
                 });
+                // Mirror into apiKeys so the provider dropdown gates correctly, then re-gate.
+                document.querySelectorAll('.settings-provider-row').forEach(row => {
+                    const provider = row.dataset.provider;
+                    apiKeys[provider] = status[provider] ? true : null;
+                });
+                populateProviderSelect();
                 // If Google has no API key, check if Vertex is configured instead
                 if (!status['google']) {
                     fetch('/api/vertex/status')
@@ -366,6 +452,9 @@ document.addEventListener('DOMContentLoaded', () => {
                                     const input = googleRow.querySelector('.settings-provider-input');
                                     if (input) input.placeholder = 'Vertex AI configured';
                                 }
+                                // Vertex counts as "google available" for provider gating.
+                                apiKeys['google'] = true;
+                                populateProviderSelect();
                             }
                         })
                         .catch(() => {});
@@ -390,20 +479,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 unsealProviderRow(row);
                 // Clear in-memory flag
                 apiKeys[provider] = null;
-                // Lock input and reset if deleted key belongs to the active provider
+                // Lock input and reset if deleted key belongs to the active provider —
+                // the chat box reverts to "select model" and the agent can't start.
                 if (provider === selectedProvider) {
-                    chatInput.disabled = true;
-                    chatInput.value = '';
-                    chatInput.placeholder = 'Select a model to start...';
                     selectedProvider = null;
                     selectedModel = null;
-                    // Reset LLM button to default
-                    currentSelection.innerHTML = '';
-                    const defaultSpan = document.createElement('span');
-                    defaultSpan.className = 'selection-text';
-                    defaultSpan.textContent = 'LLM Provider';
-                    currentSelection.appendChild(defaultSpan);
+                    persistSelection({ provider: null, model: null });
+                    gateInput(false, 'Select a model in Settings to start...');
+                    const ci = getChatInput(); if (ci) ci.value = '';
+                    refreshChatDropdown();      // chat drop-up back to "select model"
                 }
+                // Always re-gate the provider dropdown so the now-keyless provider greys out.
+                populateProviderSelect();
             })
             .catch(err => console.error('Failed to delete key:', err));
         });
@@ -483,8 +570,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 vertexOverlay.classList.remove('active');
                 // Unlock chat input if a Vertex model is currently selected
                 if (selectedModel && selectedModel.includes('vertex')) {
-                    chatInput.disabled = false;
-                    chatInput.placeholder = 'Type your task...';
+                    gateInput(true, 'Type your task...');
                 }
             })
             .catch(err => console.error('Failed to save vertex config:', err));
@@ -495,46 +581,50 @@ document.addEventListener('DOMContentLoaded', () => {
     fetch('/api/vertex/status')
         .then(res => res.json())
         .then(data => {
-            if (data.project_id && gcpVertexBtn) {
-                gcpVertexBtn.classList.add('configured');
+            if (data.project_id) {
+                if (gcpVertexBtn) gcpVertexBtn.classList.add('configured');
+                // Vertex configured counts as "google available" for provider gating.
+                apiKeys['google'] = true;
+                populateProviderSelect();
             }
         })
         .catch(() => {});
 
     // Helper: switch settings view
-    const showSettingsView = (viewName) => {
-        settingsMenuView.classList.remove('active');
-        settingsApikeysView.classList.remove('active');
-        settingsRemoteView.classList.remove('active');
-        if (viewName === 'apikeys') settingsApikeysView.classList.add('active');
-        else if (viewName === 'remote') settingsRemoteView.classList.add('active');
-        else settingsMenuView.classList.add('active');
-    };
+    // Flat layout: all sections are always visible, so view-switching is a no-op.
+    // (Kept as a function so existing callers don't need changing.)
+    const showSettingsView = () => {};
 
     // Helper: reset to menu view when closing
     const resetSettingsToMenu = () => {
         settingsOverlay.classList.remove('active');
+        document.body.classList.remove('settings-open');  // restores the chat text box
         // Reset to menu after transition completes
         setTimeout(() => showSettingsView('menu'), 300);
     };
 
-    if (settingsBtn && settingsOverlay) {
-        settingsBtn.addEventListener('click', () => {
+    if (settingsOverlay) {
+        // The settings button now lives in the left bar (settings/ component);
+        // it emits 'open-settings'. The overlay + its data loaders stay here.
+        document.addEventListener('open-settings', () => {
+            // Flat layout: populate every section up front (no menu/nesting).
             loadKeyStatus();
-            showSettingsView('menu');
+            populateProviderSelect();
+            loadRemoteStatus();
             settingsOverlay.classList.add('active');
+            document.body.classList.add('settings-open');  // hides the chat text box
         });
 
-        // Close button on menu view
-        document.getElementById('settingsCloseBtn').addEventListener('click', () => {
-            resetSettingsToMenu();
-        });
+        // (No ✕ close button — the footer Cancel closes the panel.)
 
         // Menu item navigation
         document.querySelectorAll('.settings-menu-item').forEach(item => {
             item.addEventListener('click', () => {
                 const view = item.dataset.view;
-                if (view === 'apikeys') {
+                if (view === 'modelselect') {
+                    showSettingsView('modelselect');
+                    populateProviderSelect();
+                } else if (view === 'apikeys') {
                     loadKeyStatus();
                     showSettingsView('apikeys');
                 } else if (view === 'remote') {
@@ -554,6 +644,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Save button (API Keys)
         settingsSaveBtn.addEventListener('click', () => {
             const savePromises = [];
+            const savedProviders = [];   // providers whose key was just added (for auto-select)
             document.querySelectorAll('.settings-provider-row').forEach(row => {
                 const input = row.querySelector('.settings-provider-input');
                 const provider = row.dataset.provider;
@@ -570,6 +661,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         .then(() => {
                             sealProviderRow(row);
                             apiKeys[provider] = true;
+                            savedProviders.push(provider);
                         })
                     );
                 }
@@ -577,6 +669,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
             Promise.all(savePromises)
                 .then(() => {
+                    // Newly-keyed providers are now selectable — re-gate the dropdown.
+                    populateProviderSelect();
+                    // Key exists => model selection should now be possible. If the user
+                    // hadn't picked a provider yet, auto-select the one they just keyed so
+                    // the chat model drop-up unlocks immediately (no separate provider step).
+                    if (!selectedProvider && savedProviders.length) {
+                        setProvider(savedProviders[0]);
+                    }
                     resetSettingsToMenu();
                     if (selectedProvider && selectedModel) {
                         const isVertex = selectedModel.includes('vertex');
@@ -584,18 +684,11 @@ document.addEventListener('DOMContentLoaded', () => {
                             fetch('/api/vertex/status')
                                 .then(res => res.json())
                                 .then(data => {
-                                    if (data.project_id) {
-                                        chatInput.disabled = false;
-                                        chatInput.placeholder = 'Type your task...';
-                                    } else {
-                                        chatInput.disabled = true;
-                                        chatInput.placeholder = 'Configure GCP Vertex in Settings first...';
-                                    }
+                                    gateInput(!!data.project_id, data.project_id ? 'Type your task...' : 'Configure GCP Vertex in Settings first...');
                                 })
                                 .catch(() => {});
                         } else if (apiKeys[selectedProvider]) {
-                            chatInput.disabled = false;
-                            chatInput.placeholder = 'Type your task...';
+                            gateInput(true, 'Type your task...');
                         }
                     }
                 })
@@ -605,58 +698,45 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
         });
 
+        // Right-side panel footer: Cancel closes; Save commits the current view
+        // (saves API keys when on that view) then closes.
+        const settingsCancelBtn = document.getElementById('settingsCancelBtn');
+        const settingsSaveBarBtn = document.getElementById('settingsSaveBarBtn');
+        if (settingsCancelBtn) {
+            settingsCancelBtn.addEventListener('click', () => resetSettingsToMenu());
+        }
+        if (settingsSaveBarBtn) {
+            settingsSaveBarBtn.addEventListener('click', () => {
+                // Flat layout: API-key inputs are always present, so just commit
+                // any entered keys; the save handler closes via resetSettingsToMenu.
+                settingsSaveBtn.click();
+            });
+        }
+
         // Remote Connection — guided Telegram pairing
         const remoteSetup = document.getElementById('remoteSetup');
-        const remoteConnected = document.getElementById('remoteConnected');
-        const remoteBotName = document.getElementById('remoteBotName');
-        const remoteDisconnectBtn = document.getElementById('remoteDisconnectBtn');
-        const remoteTelegramBtn = document.getElementById('remoteTelegramBtn');
-        const remoteTelegramForm = document.getElementById('remoteTelegramForm');
-        const remoteConnectBtn = document.getElementById('remoteConnectBtn');
-        const remoteDeleteTokenBtn = document.getElementById('remoteDeleteTokenBtn');
+        const remoteToggleBtn = document.getElementById('remoteToggleBtn');
         const remoteInstructions = document.getElementById('remoteInstructions');
         const telegramPromptOverlay = document.getElementById('telegramPromptOverlay');
         const telegramPromptOk = document.getElementById('telegramPromptOk');
+        let telegramConnected = false;
 
-        function loadRemoteStatus() {
-            fetch('/api/telegram/status')
-                .then(res => res.json())
-                .then(data => {
-                    // Always keep the Telegram service button visible and
-                    // expandable. When already paired, just grey out the
-                    // Connect button inside the form rather than swapping
-                    // to a different panel.
-                    remoteSetup.style.display = 'flex';
-                    if (remoteConnected) remoteConnected.style.display = 'none';
-
-                    if (data.connected) {
-                        if (remoteConnectBtn) {
-                            remoteConnectBtn.disabled = true;
-                            remoteConnectBtn.textContent = data.bot_username
-                                ? '✓ Already paired (@' + data.bot_username + ')'
-                                : '✓ Already paired';
-                        }
-                        if (remoteDeleteTokenBtn) remoteDeleteTokenBtn.style.display = 'inline-block';
-                        if (remoteInstructions) remoteInstructions.style.display = 'none';
-                    } else {
-                        if (remoteConnectBtn) {
-                            remoteConnectBtn.disabled = false;
-                            remoteConnectBtn.textContent = 'Connect';
-                        }
-                        if (remoteDeleteTokenBtn) remoteDeleteTokenBtn.style.display = 'none';
-                        if (remoteTelegramForm) remoteTelegramForm.style.display = 'none';
-                        if (remoteInstructions) remoteInstructions.style.display = 'none';
-                    }
-                })
-                .catch(() => {});
+        // One button that transforms: "Connect" when not paired, "Disconnect"
+        // (red) when paired.
+        function updateRemoteToggle() {
+            if (!remoteToggleBtn) return;
+            remoteToggleBtn.disabled = false;
+            remoteToggleBtn.textContent = telegramConnected ? 'Disconnect' : 'Connect';
+            remoteToggleBtn.classList.toggle('disconnect', telegramConnected);
         }
 
-        if (remoteTelegramBtn) {
-            remoteTelegramBtn.addEventListener('click', () => {
-                if (!remoteTelegramForm) return;
-                const isHidden = remoteTelegramForm.style.display === 'none' || !remoteTelegramForm.style.display;
-                remoteTelegramForm.style.display = isHidden ? 'flex' : 'none';
-            });
+        function loadRemoteStatus() {
+            if (remoteSetup) remoteSetup.style.display = 'flex';
+            if (remoteInstructions) remoteInstructions.style.display = 'none';
+            fetch('/api/telegram/status')
+                .then(res => res.json())
+                .then(data => { telegramConnected = !!data.connected; updateRemoteToggle(); })
+                .catch(() => { telegramConnected = false; updateRemoteToggle(); });
         }
 
         // 3-2-1 countdown shown in the "AutoUse helper" popup while the helper
@@ -704,17 +784,27 @@ document.addEventListener('DOMContentLoaded', () => {
             if (telegramPromptPopup) telegramPromptPopup.classList.remove('counting');
         }
 
-        if (remoteConnectBtn) {
-            remoteConnectBtn.addEventListener('click', () => {
-                remoteConnectBtn.disabled = true;
-                if (telegramPromptOverlay) telegramPromptOverlay.classList.add('active');
-                startTelegramCountdown();
-                fetch('/api/telegram/connect', { method: 'POST' })
-                    .catch(() => {})
-                    .finally(() => {
-                        remoteConnectBtn.disabled = false;
-                        if (remoteInstructions) remoteInstructions.style.display = 'block';
-                    });
+        if (remoteToggleBtn) {
+            remoteToggleBtn.addEventListener('click', () => {
+                if (telegramConnected) {
+                    // Acts as Disconnect — remove the token.
+                    remoteToggleBtn.disabled = true;
+                    fetch('/api/telegram/disconnect', { method: 'POST' })
+                        .then(() => loadRemoteStatus())
+                        .catch(() => {})
+                        .finally(() => { remoteToggleBtn.disabled = false; });
+                } else {
+                    // Acts as Connect — start the pairing flow.
+                    remoteToggleBtn.disabled = true;
+                    if (telegramPromptOverlay) telegramPromptOverlay.classList.add('active');
+                    startTelegramCountdown();
+                    fetch('/api/telegram/connect', { method: 'POST' })
+                        .catch(() => {})
+                        .finally(() => {
+                            remoteToggleBtn.disabled = false;
+                            if (remoteInstructions) remoteInstructions.style.display = 'block';
+                        });
+                }
             });
         }
 
@@ -728,24 +818,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     telegramPromptOverlay.classList.remove('active');
                     stopTelegramCountdown();
                 }
-            });
-        }
-
-        if (remoteDisconnectBtn) {
-            remoteDisconnectBtn.addEventListener('click', () => {
-                fetch('/api/telegram/disconnect', { method: 'POST' })
-                    .then(() => loadRemoteStatus())
-                    .catch(() => {});
-            });
-        }
-
-        if (remoteDeleteTokenBtn) {
-            remoteDeleteTokenBtn.addEventListener('click', () => {
-                remoteDeleteTokenBtn.disabled = true;
-                fetch('/api/telegram/disconnect', { method: 'POST' })
-                    .then(() => loadRemoteStatus())
-                    .catch(() => {})
-                    .finally(() => { remoteDeleteTokenBtn.disabled = false; });
             });
         }
 
@@ -770,41 +842,25 @@ document.addEventListener('DOMContentLoaded', () => {
             imgElement.style.display = 'block'; // Show image when data arrives
         }
     };
+
+    // Clear the streamed screenshot — symmetric with updateAgentImage. Used when
+    // resetting the main view between chats/runs so a new chat never shows the
+    // previous run's screen.
+    window.clearAgentImage = () => {
+        const imgElement = document.querySelector('.stream-image');
+        if (imgElement) {
+            imgElement.removeAttribute('src');
+            imgElement.style.display = 'none';
+        }
+    };
     
-    // Milestone streaming — letter by letter, stacking vertically. Each
-    // char gets its own opacity-fade-in span so the line types out
-    // smoothly (matching the Telegram banner's typewriter feel).
+    // Scratchpad/milestone streaming — the backend calls this once per entry
+    // (~every 1s). It feeds the LIVE "tracking progress" stream in the top-right
+    // cell (container/top_right), which types each entry on a circle-bullet line
+    // and fades away when the run ends. (The old #milestoneStream node was
+    // orphaned/hidden; this is the visible home now.)
     window.streamMilestone = (text) => {
-        const milestoneStream = document.getElementById('milestoneStream');
-        if (!milestoneStream) return;
-
-        const milestoneLine = document.createElement('div');
-        milestoneLine.className = 'milestone-line';
-        milestoneStream.appendChild(milestoneLine);
-
-        // Array.from splits by code point so emoji (🧠 / 🎯 / ✅) stay intact.
-        const chars = Array.from(text);
-        let i = 0;
-        const CHAR_DELAY_MS = 5;
-        const FADE_MS = 60;
-
-        const streamChar = () => {
-            if (i >= chars.length) return;
-            const span = document.createElement('span');
-            span.textContent = chars[i];
-            span.style.opacity = '0';
-            span.style.transition = 'opacity ' + FADE_MS + 'ms ease-out';
-            milestoneLine.appendChild(span);
-            requestAnimationFrame(() => { span.style.opacity = '1'; });
-
-            // Auto-scroll keeps the newest line pinned to the bottom.
-            milestoneStream.parentElement.scrollTop = milestoneStream.parentElement.scrollHeight;
-
-            i++;
-            setTimeout(streamChar, CHAR_DELAY_MS);
-        };
-
-        streamChar();
+        if (window.trackingProgress) window.trackingProgress.push(text);
     };
 
     // Letter-by-letter streaming for agent text in the response strip.
@@ -814,6 +870,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Telegram banner's pager behavior, just inside a single-line strip
     // instead of a pill).
     let streamingTimeout = null;
+    // Lets the chat-input stop handler (chat_input/chat_input.js) cancel an in-flight
+    // agent-text stream without owning the timer (script.js stays the single owner).
+    window.stopStreaming = () => {
+        if (streamingTimeout) { clearTimeout(streamingTimeout); streamingTimeout = null; }
+    };
     window.streamAgentText = (text) => {
         const agentText = document.getElementById('agentText');
         const agentStrip = document.getElementById('agentResponseStrip');
@@ -829,8 +890,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // Array.from preserves emoji as single tokens.
         const chars = Array.from(text);
         let i = 0;
-        const CHAR_DELAY_MS = 4;
-        const FADE_MS = 60;
+        const CHAR_DELAY_MS = 0;       // near-instant tick (browser clamps the minimum)
+        const CHARS_PER_TICK = 6;      // append several chars per tick → very fast typing
+        const FADE_MS = 45;
 
         // Start with a clean strip — previous step's text would otherwise
         // be measured into the new overflow check.
@@ -846,189 +908,53 @@ document.addEventListener('DOMContentLoaded', () => {
             return span;
         };
 
+        // Pump a batch of chars per tick (fast), checking overflow per char so
+        // the strip still wraps to a fresh line at its right edge.
         const streamChar = () => {
-            if (i >= chars.length) return;
+            let n = 0;
+            while (n < CHARS_PER_TICK && i < chars.length) {
+                appendCharFade(chars[i]);
 
-            const span = appendCharFade(chars[i]);
-
-            // Sync layout read forces reflow → we see whether this char
-            // pushed past the strip's right edge. If yes (and it isn't
-            // the only char), clear the strip and re-place this char at
-            // the left edge of a fresh line.
-            if (agentText.scrollWidth > agentText.clientWidth + 0.5) {
-                if (agentText.childElementCount === 1) {
-                    // Single char wider than the strip — accept and move on
-                    // so we don't loop forever.
-                    i++;
-                    streamingTimeout = setTimeout(streamChar, CHAR_DELAY_MS);
-                    return;
+                // Sync layout read forces reflow → did this char push past the
+                // strip's right edge? If so (and it isn't the only char), clear
+                // the strip and re-place this char at the left of a fresh line.
+                if (agentText.scrollWidth > agentText.clientWidth + 0.5) {
+                    if (agentText.childElementCount === 1) {
+                        i++; n++;                 // single oversized char — accept and move on
+                        continue;
+                    }
+                    agentText.textContent = '';
+                    while (i < chars.length && /\s/.test(chars[i])) i++;  // skip leading whitespace
+                    continue;                     // re-process chars[i] on the fresh line
                 }
-                agentText.textContent = '';
-                // Skip leading whitespace so the new line doesn't open
-                // with a hanging space.
-                while (i < chars.length && /\s/.test(chars[i])) i++;
-                streamChar();
-                return;
-            }
 
-            i++;
-            streamingTimeout = setTimeout(streamChar, CHAR_DELAY_MS);
+                i++; n++;
+            }
+            if (i < chars.length) streamingTimeout = setTimeout(streamChar, CHAR_DELAY_MS);
         };
 
         streamChar();
     };
 
-
-    // 4. Auto-resize Chat Input
-    const chatInput = document.querySelector('.chat-input');
-    
-    if (chatInput) {
-        // Function to adjust height
-        const adjustHeight = () => {
-            // Reset height to auto to get the correct scrollHeight
-            chatInput.style.height = 'auto';
-            
-            // Calculate new height (clamped by CSS max-height)
-            const newHeight = Math.min(chatInput.scrollHeight, 150); // 150px matches CSS max-height
-            
-            // Apply new height, respecting minimum
-            chatInput.style.height = `${Math.max(newHeight, 44)}px`; // 44px matches CSS min-height base
-        };
-
-        // Event listeners for auto-resize
-        chatInput.addEventListener('input', adjustHeight);
-        
-        // Initial adjustment
-        adjustHeight();
-
-        // 5. Handle Enter key to start agent
-        chatInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault(); // Prevent default newline
-                
-                const message = chatInput.value.trim();
-                if (message && selectedProvider && selectedModel) {
-                    // Show Agent Response Strip
-                    const agentStrip = document.getElementById('agentResponseStrip');
-                    const agentText = document.getElementById('agentText');
-                    // Stop-agent orb is embedded from pc_button.html (iframe)
-                    const stopBtnFrame = document.getElementById('stopBtnFrame');
-                    
-                    if (agentStrip) {
-                        agentStrip.classList.add('active');
-                        // Disable input
-                        chatInput.disabled = true;
-                        chatInput.classList.add('agent-active');
-                        agentText.textContent = 'Starting agent...';
-
-                        // Show Stop Button (tell the embedded orb to appear)
-                        if (stopBtnFrame) {
-                            stopBtnFrame.classList.add('active');
-                            stopBtnFrame.contentWindow.postMessage('pcbtn:show', '*');
-                        }
-
-                        // Switch to split layout
-                        document.getElementById('imageStreamContainer').classList.add('agent-visible');
-                        document.getElementById('chatWrapper').classList.add('split-layout');
-                        document.getElementById('llmWrapper').classList.add('split-layout');
-
-                        // Hide eyes only, keep glow
-                        const welcomeEl = document.getElementById('welcomeOverlay');
-                        if (welcomeEl) welcomeEl.classList.add('eyes-hidden');
-
-                        // Clear milestone stream for fresh start
-                        const milestoneStream = document.getElementById('milestoneStream');
-                        if (milestoneStream) {
-                            milestoneStream.innerHTML = '';
-                        }
-                    }
-                    
-                    // Send request to start agent
-                    fetch('/api/start-agent', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            provider: selectedProvider,
-                            model: selectedModel,
-                            task: message
-                        })
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.status === 'started') {
-                            agentText.textContent = 'Agent running...';
-                            // Clear input after successful start
-                            chatInput.value = '';
-                            adjustHeight();
-                        } else if (data.error) {
-                            agentText.textContent = `Error: ${data.error}`;
-                            // Re-enable input on error
-                            chatInput.disabled = false;
-                            if (stopBtnFrame) {
-                                stopBtnFrame.classList.remove('active');
-                                stopBtnFrame.contentWindow.postMessage('pcbtn:hide', '*');
-                            }
-                        }
-                    })
-                    .catch(err => {
-                        console.error('Failed to start agent:', err);
-                        agentText.textContent = 'Failed to start agent';
-                        // Re-enable input on error
-                        chatInput.disabled = false;
-                        if (stopBtnFrame) {
-                            stopBtnFrame.classList.remove('active');
-                            stopBtnFrame.contentWindow.postMessage('pcbtn:hide', '*');
-                        }
-                    });
-                }
-            }
-        });
-        
-        // 6. Handle Stop Button Click — the orb lives in the pc_button.html iframe and
-        //    posts 'pcbtn:clicked' back to us (and plays its own pop-vanish animation).
-        const stopBtnFrame = document.getElementById('stopBtnFrame');
-        window.addEventListener('message', (e) => {
-            if (e.data !== 'pcbtn:clicked') return;
-
-            // Stop streaming immediately
-            if (streamingTimeout) {
-                clearTimeout(streamingTimeout);
-                streamingTimeout = null;
-            }
-
-            const agentText = document.getElementById('agentText');
-            if (agentText) agentText.textContent = 'Stopping agent...';
-
-            // The orb iframe already plays the pop-vanish; just drop its pointer-events.
-            if (stopBtnFrame) stopBtnFrame.classList.remove('active');
-
-            // Force-close any active tool animations immediately
-            if (window.webSearchEnd) window.webSearchEnd();
-            if (window.shellEnd) window.shellEnd();
-
-            fetch('/api/stop-agent', { method: 'POST' })
-                .then(res => res.json())
-                .then(data => {
-                    console.log('Agent stop requested:', data);
-                    const agentStrip = document.getElementById('agentResponseStrip');
-                    if (agentStrip) agentStrip.classList.remove('active');
-
-                    // Revert to centered layout
-                    document.getElementById('imageStreamContainer').classList.remove('agent-visible');
-                    document.getElementById('chatWrapper').classList.remove('split-layout');
-                    document.getElementById('llmWrapper').classList.remove('split-layout');
-
-                    chatInput.disabled = false;
-                    chatInput.classList.remove('agent-active');
-                    chatInput.focus();
-                })
-                .catch(err => console.error('Error stopping agent:', err));
-        });
-    }
-    
     // Agent completion handler (called from Python when agent finishes naturally)
+    // Active chat session id (null => brand-new chat). Owned here so chat_input.js
+    // and chat.js can read/adopt it; the durable memory lives in the backend
+    // (Auto_Use/agent_conversation). A continued chat carries its id; a new chat
+    // adopts the id the backend mints on the first send.
+    if (typeof window.currentSessionId === 'undefined') window.currentSessionId = null;
+
+    // Empty-state hero ("Auto Use / Agent with million moves."): visible on a
+    // fresh/new chat (default at launch), hidden the moment a task is sent or a
+    // saved chat is reopened.
+    window.showWelcomeHero = () => {
+        const el = document.getElementById('welcomeHero');
+        if (el) el.classList.remove('hidden');
+    };
+    window.hideWelcomeHero = () => {
+        const el = document.getElementById('welcomeHero');
+        if (el) el.classList.add('hidden');
+    };
+
     window.agentComplete = () => {
         const stopBtnFrame = document.getElementById('stopBtnFrame');
         const agentStrip = document.getElementById('agentResponseStrip');
@@ -1049,14 +975,19 @@ document.addEventListener('DOMContentLoaded', () => {
         // Force-close any active tool animations immediately
         if (window.webSearchEnd) window.webSearchEnd();
         if (window.shellEnd) window.shellEnd();
+        if (window.trackingProgress) window.trackingProgress.end();   // fade the tracking-progress stream out
+
+        // Agent finished. If it called `done` but left a task still spinning (it
+        // never marked it complete), freeze the list and ✕ those tasks so the
+        // spinner doesn't rotate forever. Delayed briefly so the run's FINAL todo
+        // update (an all-done state pushed right as it ends) can land first — if
+        // every task ends up done, markTodoInterrupted no-ops.
+        setTimeout(function () {
+            if (window.markTodoInterrupted) window.markTodoInterrupted();
+        }, 500);
 
         // Hide Strip
         if (agentStrip) agentStrip.classList.remove('active');
-
-        // Revert to centered layout
-        document.getElementById('imageStreamContainer').classList.remove('agent-visible');
-        document.getElementById('chatWrapper').classList.remove('split-layout');
-        document.getElementById('llmWrapper').classList.remove('split-layout');
 
         // Enable Input
         if (chatInput) {
@@ -1064,6 +995,16 @@ document.addEventListener('DOMContentLoaded', () => {
             chatInput.classList.remove('agent-active');
             chatInput.focus();
         }
+
+        // Morph the composer back to idle: re-show the grey send orb and re-expand the
+        // box to its ~2-line height. Owned by chat_input.js (single, idempotent teardown
+        // shared with the manual-stop path); guarded in case it injects after this fires.
+        if (window.chatInputRestoreIdle) window.chatInputRestoreIdle();
+
+        // The run just ended (success / error / stop all route through here) — the
+        // backend has saved this session, so refresh the sidebar history list to
+        // pick up the new title / last-done message (and surface a brand-new chat).
+        document.dispatchEvent(new CustomEvent('chats:refresh'));
     };
 
     // Agent failure handler (called from Python when the run ends in error or
@@ -1086,324 +1027,25 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     // ============================================
-    // GLOBE ANIMATION FOR WEB SEARCH
+    // BOTTOM-RIGHT WORK STATE — todo only. (The old web globe / shell states were
+    // removed; the globe + shell now live in container/top_left/globe_shell.*.)
+    // setWorkState keeps the todo list as the single state of this cell; it's still
+    // used on run reset.
     // ============================================
-    
-    const mainGlobeContainer = document.getElementById('mainGlobeContainer');
-    const imageStreamContainer = document.getElementById('imageStreamContainer');
-    
-    let globeInitialized = false;
-    let globeScene, globeCamera, globeRenderer, globeEarth, globeNetworkGroup;
-    let globeParticles, globeLineMesh, globeActivePackets;
-    let globeAnimationId = null;
-    
-    const initMainGlobe = () => {
-        if (globeInitialized || !mainGlobeContainer) return;
-        globeInitialized = true;
-        
-        // Get container dimensions for responsive sizing
-        const containerRect = mainGlobeContainer.getBoundingClientRect();
-        const size = Math.min(containerRect.width, containerRect.height) * 0.9;
-        
-        // Scene setup - transparent background
-        globeScene = new THREE.Scene();
-        
-        globeCamera = new THREE.PerspectiveCamera(45, 1, 1, 1000);
-        globeCamera.position.z = 12;
-        
-        globeRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        globeRenderer.setClearColor(0x000000, 0);
-        globeRenderer.setSize(size, size);
-        globeRenderer.setPixelRatio(window.devicePixelRatio);
-        mainGlobeContainer.appendChild(globeRenderer.domElement);
-        
-        // Texture generation helpers
-        const getX = (lon) => (lon + 180) * (4096 / 360);
-        const getY = (lat) => ((-lat) + 90) * (2048 / 180);
-        
-        const drawContinentsPath = (ctx) => {
-            ctx.beginPath();
-            const drawPoly = (coords) => {
-                ctx.moveTo(getX(coords[0][0]), getY(coords[0][1]));
-                for (let i = 1; i < coords.length; i++) {
-                    ctx.lineTo(getX(coords[i][0]), getY(coords[i][1]));
-                }
-            };
-            drawPoly([[-77, 8], [-75, 11], [-60, 10], [-50, 5], [-35, -5], [-35, -10], [-39, -20], [-40, -30], [-55, -55], [-70, -55], [-75, -50], [-73, -40], [-71, -30], [-75, -20], [-81, -5], [-77, 8]]);
-            drawPoly([[-165, 65], [-120, 70], [-90, 75], [-70, 70], [-60, 60], [-55, 52], [-75, 35], [-80, 25], [-82, 9], [-95, 18], [-105, 20], [-125, 35], [-125, 45], [-130, 50], [-165, 65]]);
-            drawPoly([[-50, 60], [-40, 65], [-30, 80], [-60, 80], [-50, 60]]);
-            drawPoly([[-15, 35], [10, 37], [30, 31], [40, 15], [51, 11], [45, -10], [40, -15], [35, -30], [20, -35], [10, -5], [5, 5], [-10, 5], [-17, 15], [-15, 35]]);
-            drawPoly([[43, -25], [50, -15], [49, -12], [44, -22]]);
-            drawPoly([[-10, 36], [-9, 43], [0, 50], [10, 55], [25, 70], [40, 65], [35, 45], [25, 35], [15, 40], [10, 45], [5, 42], [-10, 36]]);
-            drawPoly([[-5, 50], [2, 51], [0, 58], [-6, 56]]);
-            drawPoly([[40, 65], [60, 75], [100, 75], [170, 70], [140, 50], [130, 40], [120, 30], [120, 20], [110, 10], [100, 15], [90, 22], [80, 5], [70, 10], [60, 25], [50, 30], [40, 45], [40, 65]]);
-            drawPoly([[130, 32], [138, 36], [142, 40], [140, 45], [135, 35]]);
-            drawPoly([[100, 0], [110, -5], [140, -5], [150, -10], [130, 0]]);
-            drawPoly([[113, -25], [130, -12], [145, -10], [153, -25], [150, -38], [135, -35], [115, -35], [113, -25]]);
-            drawPoly([[166, -45], [174, -35], [178, -38], [168, -47]]);
-            ctx.closePath();
-        };
-        
-        // Color texture
-        const createColorTexture = () => {
-            const canvas = document.createElement('canvas');
-            canvas.width = 4096; canvas.height = 2048;
-            const ctx = canvas.getContext('2d');
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, 4096, 2048);
-            ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
-            ctx.shadowBlur = 30;
-            ctx.fillStyle = '#dcdcdc';
-            ctx.strokeStyle = '#555555';
-            ctx.lineWidth = 4;
-            ctx.lineJoin = 'round';
-            drawContinentsPath(ctx);
-            ctx.fill();
-            ctx.stroke();
-            ctx.globalCompositeOperation = 'source-atop';
-            for (let i = 0; i < 2000; i++) {
-                const x = Math.random() * 4096;
-                const y = Math.random() * 2048;
-                const r = 5 + Math.random() * 20;
-                ctx.fillStyle = 'rgba(200, 200, 200, 0.1)';
-                ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
-            }
-            ctx.shadowColor = 'transparent';
-            ctx.strokeStyle = '#cccccc';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            for(let x = 0; x < 4096; x += 60) { ctx.moveTo(x, 0); ctx.lineTo(x, 2048); }
-            for(let y = 0; y < 2048; y += 60) { ctx.moveTo(0, y); ctx.lineTo(4096, y); }
-            ctx.stroke();
-            return new THREE.CanvasTexture(canvas);
-        };
-        
-        // Height texture
-        const createHeightTexture = () => {
-            const canvas = document.createElement('canvas');
-            canvas.width = 4096; canvas.height = 2048;
-            const ctx = canvas.getContext('2d');
-            ctx.fillStyle = '#000000';
-            ctx.fillRect(0, 0, 4096, 2048);
-            ctx.save();
-            drawContinentsPath(ctx);
-            ctx.clip();
-            ctx.fillStyle = '#808080';
-            ctx.fillRect(0, 0, 4096, 2048);
-            for (let i = 0; i < 10000; i++) {
-                const x = Math.random() * 4096;
-                const y = Math.random() * 2048;
-                const radius = 5 + Math.random() * 30;
-                const shade = Math.floor(100 + Math.random() * 155);
-                const grad = ctx.createRadialGradient(x, y, 0, x, y, radius);
-                grad.addColorStop(0, `rgba(${shade}, ${shade}, ${shade}, 0.5)`);
-                grad.addColorStop(1, `rgba(${shade}, ${shade}, ${shade}, 0)`);
-                ctx.fillStyle = grad;
-                ctx.beginPath();
-                ctx.arc(x, y, radius, 0, Math.PI*2);
-                ctx.fill();
-            }
-            ctx.strokeStyle = '#e0e0e0';
-            ctx.lineWidth = 2;
-            drawContinentsPath(ctx);
-            ctx.stroke();
-            ctx.restore();
-            return new THREE.CanvasTexture(canvas);
-        };
-        
-        // Earth
-        const earthGeo = new THREE.SphereGeometry(4, 128, 128);
-        const earthMat = new THREE.MeshPhongMaterial({
-            map: createColorTexture(),
-            displacementMap: createHeightTexture(),
-            displacementScale: 0.5,
-            displacementBias: 0,
-            color: 0xffffff,
-            specular: 0x333333,
-            shininess: 8
+    const setWorkState = (state) => {
+        const map = { todo: 'todoState' };
+        Object.keys(map).forEach((k) => {
+            const el = document.getElementById(map[k]);
+            if (el) el.classList.toggle('is-active', k === state);
         });
-        globeEarth = new THREE.Mesh(earthGeo, earthMat);
-        globeScene.add(globeEarth);
-        
-        // Atmosphere
-        const atmGeo = new THREE.SphereGeometry(4.2, 64, 64);
-        const atmMat = new THREE.MeshBasicMaterial({
-            color: 0x888888,
-            transparent: true,
-            opacity: 0.05,
-            side: THREE.BackSide
-        });
-        const atmosphere = new THREE.Mesh(atmGeo, atmMat);
-        globeScene.add(atmosphere);
-        
-        // Network
-        const particlesCount = 100;
-        const connectionDistance = 2.5;
-        const sphereRadius = 4.4;
-        
-        globeNetworkGroup = new THREE.Group();
-        globeScene.add(globeNetworkGroup);
-        
-        const packetColors = [0x222222, 0x333333, 0x111111];
-        const particleGeo = new THREE.SphereGeometry(0.04, 8, 8);
-        globeParticles = [];
-        
-        for (let i = 0; i < particlesCount; i++) {
-            const phi = Math.acos(-1 + (2 * i) / particlesCount);
-            const theta = Math.sqrt(particlesCount * Math.PI) * phi;
-            const greyVal = 0.5 + Math.random() * 0.3;
-            const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(greyVal, greyVal, greyVal) });
-            const mesh = new THREE.Mesh(particleGeo, mat);
-            mesh.position.setFromSphericalCoords(sphereRadius, phi, theta);
-            mesh.position.x += (Math.random() - 0.5) * 0.2;
-            mesh.position.y += (Math.random() - 0.5) * 0.2;
-            mesh.position.z += (Math.random() - 0.5) * 0.2;
-            mesh.userData = {
-                velocity: new THREE.Vector3((Math.random() - 0.5) * 0.005, (Math.random() - 0.5) * 0.005, (Math.random() - 0.5) * 0.005),
-                packetColor: packetColors[Math.floor(Math.random() * packetColors.length)]
-            };
-            globeNetworkGroup.add(mesh);
-            globeParticles.push(mesh);
-        }
-        
-        const lineMaterial = new THREE.LineBasicMaterial({ color: 0x999999, transparent: true, opacity: 0.2 });
-        globeLineMesh = new THREE.LineSegments(new THREE.BufferGeometry(), lineMaterial);
-        globeNetworkGroup.add(globeLineMesh);
-        
-        // Packets
-        const packetGeo = new THREE.BufferGeometry();
-        const packetMat = new THREE.PointsMaterial({
-            size: 0.16,
-            vertexColors: true,
-            transparent: true,
-            opacity: 0.9,
-            map: (() => {
-                const canvas = document.createElement('canvas');
-                canvas.width = 32; canvas.height = 32;
-                const ctx = canvas.getContext('2d');
-                ctx.beginPath();
-                ctx.arc(16, 16, 14, 0, Math.PI * 2);
-                ctx.fillStyle = 'white';
-                ctx.fill();
-                return new THREE.CanvasTexture(canvas);
-            })()
-        });
-        const packetSystem = new THREE.Points(packetGeo, packetMat);
-        globeNetworkGroup.add(packetSystem);
-        globeActivePackets = [];
-        
-        // Lighting
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
-        globeScene.add(ambientLight);
-        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        dirLight.position.set(20, 10, 20);
-        globeScene.add(dirLight);
-        const rimLight = new THREE.DirectionalLight(0xeeeeee, 0.3);
-        rimLight.position.set(-10, 10, -20);
-        globeScene.add(rimLight);
-        
-        // Animation loop
-        const animateGlobe = () => {
-            globeAnimationId = requestAnimationFrame(animateGlobe);
-            
-            globeEarth.rotation.y += 0.003;
-            globeNetworkGroup.rotation.y += 0.0032;
-            
-            const linePositions = [];
-            const connections = [];
-            
-            globeParticles.forEach((p) => {
-                p.position.add(p.userData.velocity);
-                p.position.normalize().multiplyScalar(sphereRadius);
-            });
-            
-            for (let i = 0; i < globeParticles.length; i++) {
-                for (let j = i + 1; j < globeParticles.length; j++) {
-                    const dist = globeParticles[i].position.distanceTo(globeParticles[j].position);
-                    if (dist < connectionDistance) {
-                        linePositions.push(
-                            globeParticles[i].position.x, globeParticles[i].position.y, globeParticles[i].position.z,
-                            globeParticles[j].position.x, globeParticles[j].position.y, globeParticles[j].position.z
-                        );
-                        connections.push({ start: globeParticles[i].position, end: globeParticles[j].position, color: globeParticles[i].userData.packetColor });
-                    }
-                }
-            }
-            
-            globeLineMesh.geometry.dispose();
-            const lineGeo = new THREE.BufferGeometry();
-            lineGeo.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
-            globeLineMesh.geometry = lineGeo;
-            
-            for (let k = 0; k < 5; k++) {
-                if (Math.random() > 0.5 && connections.length > 0) {
-                    const route = connections[Math.floor(Math.random() * connections.length)];
-                    globeActivePackets.push({ start: route.start, end: route.end, progress: 0, speed: 0.01 + Math.random() * 0.02, color: new THREE.Color(route.color) });
-                }
-            }
-            
-            const packetPositions = [];
-            const packetColorsArr = [];
-            
-            for (let i = globeActivePackets.length - 1; i >= 0; i--) {
-                const pkt = globeActivePackets[i];
-                pkt.progress += pkt.speed;
-                if (pkt.progress >= 1) { globeActivePackets.splice(i, 1); continue; }
-                const x = THREE.MathUtils.lerp(pkt.start.x, pkt.end.x, pkt.progress);
-                const y = THREE.MathUtils.lerp(pkt.start.y, pkt.end.y, pkt.progress);
-                const z = THREE.MathUtils.lerp(pkt.start.z, pkt.end.z, pkt.progress);
-                packetPositions.push(x, y, z);
-                packetColorsArr.push(pkt.color.r, pkt.color.g, pkt.color.b);
-            }
-            
-            packetGeo.setAttribute('position', new THREE.Float32BufferAttribute(packetPositions, 3));
-            packetGeo.setAttribute('color', new THREE.Float32BufferAttribute(packetColorsArr, 3));
-            
-            globeRenderer.render(globeScene, globeCamera);
-        };
-        
-        animateGlobe();
-        
-        // Resize handler for responsive globe
-        const handleGlobeResize = () => {
-            if (!globeRenderer || !globeCamera || !mainGlobeContainer) return;
-            
-            const containerRect = mainGlobeContainer.getBoundingClientRect();
-            const newSize = Math.min(containerRect.width, containerRect.height) * 0.9;
-            
-            globeRenderer.setSize(newSize, newSize);
-            globeCamera.updateProjectionMatrix();
-        };
-        
-        window.addEventListener('resize', handleGlobeResize);
     };
-    
-    // Web search animation - show globe, slide entire container down
-    window.webSearchStart = () => {
-        if (!mainGlobeContainer || !imageStreamContainer) return;
-        
-        initMainGlobe();
-        mainGlobeContainer.classList.add('visible');
-        imageStreamContainer.classList.add('web-active');
-        
-        // Trigger resize check after visibility transition
-        setTimeout(() => {
-            if (globeRenderer && globeCamera && mainGlobeContainer) {
-                const containerRect = mainGlobeContainer.getBoundingClientRect();
-                const newSize = Math.min(containerRect.width, containerRect.height) * 0.9;
-                globeRenderer.setSize(newSize, newSize);
-                globeCamera.updateProjectionMatrix();
-            }
-        }, 100);
-    };
-    
-    // End web search animation - fade globe, slide container back up
-    window.webSearchEnd = () => {
-        if (!mainGlobeContainer || !imageStreamContainer) return;
-        
-        mainGlobeContainer.classList.remove('visible');
-        imageStreamContainer.classList.remove('web-active');
-    };
+    // Exposed so the chat-input wiring (chat_input/chat_input.js) can reset this
+    // cell to 'todo' when a run starts.
+    window.setWorkState = setWorkState;
+
+    // Web globe + shell terminal now live in container/top_left/globe_shell.js —
+    // they swap in over the screenshot while their tool runs. The backend hooks
+    // window.webSearchStart/End and window.shellStart/Result/End are defined there.
 
     // ============================================
     // TELEGRAM "OCCUPIED" OVERLAY
@@ -1419,164 +1061,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (telegramTaskOverlay) telegramTaskOverlay.classList.remove('active');
     };
 
-    // ============================================
-    // SHELL TERMINAL ANIMATION
-    // ============================================
-    
-    const shellTerminalContainer = document.getElementById('shellTerminalContainer');
-    const shellCmdText = document.getElementById('shellCmdText');
-    const shellStreamLine = document.getElementById('shellStreamLine');
-    const shellStreamText = document.getElementById('shellStreamText');
-    const shellStatusLine = document.getElementById('shellStatusLine');
-    const shellStatusTag = document.getElementById('shellStatusTag');
-    const shellStatusText = document.getElementById('shellStatusText');
-    const shellTermTitle = document.getElementById('shellTermTitle');
-    const shellCursor = document.getElementById('shellCursor');
-    const shellProgress = document.getElementById('shellProgress');
-    
-    let shellStreamTimeout = null;
-    let shellTextInterval = null;
-    let shellResultInterval = null;
-
-    const streamTextInto = (element, text, scrollContainer, onDone) => {
-        element.textContent = '';
-        let idx = 0;
-        const step = Math.max(1, Math.floor(text.length / 60));
-        const id = setInterval(() => {
-            idx += step;
-            if (idx >= text.length) {
-                idx = text.length;
-                clearInterval(id);
-                if (onDone) onDone();
-            }
-            element.textContent = text.substring(0, idx);
-            if (scrollContainer) scrollContainer.scrollTop = scrollContainer.scrollHeight;
-        }, 25);
-        return id;
-    };
-
-    const resetShellTerminal = () => {
-        // Reset all lines to hidden
-        if (shellStreamLine) { shellStreamLine.classList.remove('visible'); }
-        if (shellStatusLine) { shellStatusLine.classList.remove('visible'); }
-        
-        // Reset content
-        if (shellTermTitle) shellTermTitle.textContent = 'Shell';
-        if (shellCmdText) shellCmdText.textContent = 'autouse.';
-        if (shellStreamText) shellStreamText.textContent = '';
-        if (shellStatusText) shellStatusText.textContent = 'running';
-        
-        // Reset tag to running state
-        if (shellStatusTag) {
-            shellStatusTag.className = 'tag run';
-            shellStatusTag.textContent = '●';
-        }
-        
-        // Show cursor and progress
-        if (shellCursor) shellCursor.style.display = '';
-        if (shellProgress) shellProgress.style.display = '';
-        
-        // Clear any pending stream timeout / intervals
-        if (shellStreamTimeout) {
-            clearTimeout(shellStreamTimeout);
-            shellStreamTimeout = null;
-        }
-        if (shellTextInterval) {
-            clearInterval(shellTextInterval);
-            shellTextInterval = null;
-        }
-        if (shellResultInterval) {
-            clearInterval(shellResultInterval);
-            shellResultInterval = null;
-        }
-    };
-    
-    // Shell start: terminal card appears, screenshot slides down
-    window.shellStart = (command, label) => {
-        if (!shellTerminalContainer || !imageStreamContainer) return;
-
-        resetShellTerminal();
-
-        // Set the terminal title (Shell or AppleScript)
-        if (shellTermTitle) shellTermTitle.textContent = label || 'Shell';
-
-        // Set the command text
-        if (shellCmdText) shellCmdText.textContent = 'autouse.';
-        
-        // Show container + push screenshot down
-        shellTerminalContainer.classList.add('visible');
-        imageStreamContainer.classList.add('shell-active');
-        
-        // Animate stream line after short delay — stream text progressively
-        setTimeout(() => {
-            if (shellStreamLine) {
-                shellStreamLine.classList.add('visible');
-                shellTextInterval = streamTextInto(
-                    shellStreamText,
-                    command || 'executing...',
-                    shellStreamLine
-                );
-            }
-        }, 300);
-
-        // Show running status after short delay
-        setTimeout(() => {
-            if (shellStatusLine) shellStatusLine.classList.add('visible');
-        }, 600);
-    };
-    
-    // Shell result: show success or failure
-    window.shellResult = (status, output) => {
-        if (!shellTerminalContainer) return;
-        
-        // Hide cursor and progress bar
-        if (shellCursor) shellCursor.style.display = 'none';
-        if (shellProgress) shellProgress.style.display = 'none';
-        
-        // Truncate output for display (keep it short)
-        const displayOutput = output ? (output.length > 80 ? output.substring(0, 80) + '...' : output) : '';
-        
-        if (status === 'success') {
-            if (shellStatusTag) {
-                shellStatusTag.className = 'tag ok';
-                shellStatusTag.textContent = '✓';
-            }
-            if (shellStatusText) {
-                shellResultInterval = streamTextInto(
-                    shellStatusText,
-                    displayOutput || 'completed',
-                    shellStatusLine
-                );
-            }
-        } else {
-            if (shellStatusTag) {
-                shellStatusTag.className = 'tag fail';
-                shellStatusTag.textContent = '✗';
-            }
-            if (shellStatusText) {
-                shellStatusText.style.color = 'rgba(70, 70, 70, 0.95)';
-                shellResultInterval = streamTextInto(
-                    shellStatusText,
-                    displayOutput || 'failed',
-                    shellStatusLine
-                );
-            }
-        }
-    };
-    
-    // Shell end: terminal card fades out, screenshot slides back up
-    window.shellEnd = () => {
-        if (!shellTerminalContainer || !imageStreamContainer) return;
-
-        shellTerminalContainer.classList.remove('visible');
-        imageStreamContainer.classList.remove('shell-active');
-
-        // Reset color after fade out completes
-        setTimeout(() => {
-            if (shellStatusText) shellStatusText.style.color = '';
-            resetShellTerminal();
-        }, 700);
-    };
+    // (shell terminal moved to container/top_left/globe_shell.js — swaps over the screenshot)
 
     // =====================================================================
     // CLI streaming UI — pills for parallel CLI subprocesses during cli_await.
@@ -2083,16 +1568,13 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const chatWrapper = document.getElementById('chatWrapper');
-    // llmWrapper is already declared higher up (line ~23) — reuse that.
 
-    // Whether split-layout was on the chat/llm wrappers when cli-await began,
+    // Whether split-layout was on the chat wrapper when cli-await began,
     // so cliAwaitEnd can restore them to that state cleanly.
     let _cliPrevSplit = false;
 
     window.cliAwaitStart = (reason) => {
         console.log('[cli] await_start', reason);
-        // Slide out the screenshot panel.
-        if (imageStreamContainer) imageStreamContainer.classList.remove('agent-visible');
         // Drop split-layout so the chat box snaps back to its initial big
         // centered state (the base .chat-container-wrapper rule wins). This
         // is what the user wants: full-width chat box during cli_await.
@@ -2101,8 +1583,7 @@ document.addEventListener('DOMContentLoaded', () => {
             chatWrapper.classList.remove('split-layout');
             chatWrapper.classList.add('cli-mode');
         }
-        if (llmWrapper) llmWrapper.classList.remove('split-layout');
-        document.body.classList.add('cli-mode');  // hides LLM dropdown + settings cog
+        document.body.classList.add('cli-mode');  // hides settings cog
     };
 
     window.cliAwaitEnd = () => {
@@ -2111,10 +1592,7 @@ document.addEventListener('DOMContentLoaded', () => {
             chatWrapper.classList.remove('cli-mode');
             if (_cliPrevSplit) chatWrapper.classList.add('split-layout');
         }
-        if (llmWrapper && _cliPrevSplit) llmWrapper.classList.add('split-layout');
         document.body.classList.remove('cli-mode');
-        // Restore the screenshot panel.
-        if (imageStreamContainer) imageStreamContainer.classList.add('agent-visible');
         // Clear pills after the fade-out finishes (matches the 0.4s transition).
         setTimeout(() => {
             if (!cliStreamList) return;

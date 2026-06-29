@@ -76,7 +76,7 @@ def _cleanup_scratchpad():
 class AgentService:
     """Service for Windows automation agent"""
     
-    def __init__(self, provider: str, model: str, save_conversation: bool = False, thinking: bool = True, frontend_callback=None, text_callback=None, web_callback=None, shell_callback=None, cli_callback=None, api_key: str = None, stop_event=None, external_terminal: bool = False):
+    def __init__(self, provider: str, model: str, save_conversation: bool = False, thinking: bool = True, frontend_callback=None, text_callback=None, web_callback=None, shell_callback=None, cli_callback=None, tool_callback=None, token_callback=None, api_key: str = None, stop_event=None, external_terminal: bool = False, prior_history: Optional[dict] = None):
         """Initialize the Agent Service"""
         # Clean up scratchpad for a fresh start
         _cleanup_scratchpad()
@@ -106,6 +106,18 @@ class AgentService:
 
         # Store CLI callback for streaming CLI agent subprocess output to the frontend
         self.cli_callback = cli_callback
+
+        # Store tool-flow callback for the bottom "Tool response" chain animation.
+        # Signature: tool_callback(event: str, payload: dict|None)
+        #   events: run_start | turn{hasImage} | received{tools:[{name,clicks?}]} | run_end
+        # The per-turn tools come straight from the parsed action block (this driver),
+        # so the controller needs no per-action plumbing.
+        self.tool_callback = tool_callback
+
+        # Memory bar: called after each LLM call with the provider's exact token
+        # usage (llm_manager.last_usage). The agent only forwards — accumulation +
+        # persistence live in app.py / memory_compression.
+        self.token_callback = token_callback
 
         # Initialize Controller with provider and actual API model name (pass api_key for CLI agent subprocess)
         self.controller = ControllerView(provider=provider, model=self.llm_manager.get_model_name(), web_callback=web_callback, shell_callback=shell_callback, cli_callback=cli_callback, api_key=api_key, stop_event=stop_event, external_terminal=external_terminal)
@@ -149,7 +161,24 @@ class AgentService:
             
         # Start fresh each session
         self.interaction_count = 0
-        
+
+        # Resumable chat memory (UI path only). prior_history is an optimized
+        # snapshot from a PRIOR run of this session, built + loaded by
+        # Auto_Use.agent_conversation.service (ALL memory management lives there,
+        # not here). When present, process_request seeds the conversation lists
+        # from it so the agent "remembers" earlier turns. Scratchpad/todo are
+        # still wiped above — continuity comes ONLY from this memory, not files.
+        # The final lists are exposed on self so the conversation service can
+        # persist them after the run.
+        self.prior_history = prior_history if isinstance(prior_history, dict) else None
+        self.assistant_messages = []
+        self.tool_responses = []
+        # The exact final messages payload sent to the model (system + interleaved
+        # history + the live user message that re-injects user_request/todo/
+        # scratchpad/element_tree each step). Captured for the debug memory log so
+        # the download is the TRUE conversation, not a reconstruction.
+        self.last_messages = None
+
     def _load_system_prompt(self) -> str:
         """Load the system prompt from system_prompt.md file"""
         try:
@@ -337,6 +366,29 @@ class AgentService:
             return res
         return compact(res)
 
+    def _backfill_web_findings(self, tool_response_str: str, findings: str) -> str:
+        """Replace a web step's 'refer to scratchpad' placeholder with the actual
+        numbered findings the agent distilled into the scratchpad on the digest
+        step. The scratchpad is wiped on the next user request, so this keeps the
+        distilled web info in durable conversation memory. Preserves the
+        surrounding shape (a single web result or a 'multiple' results list)."""
+        try:
+            data = json.loads(tool_response_str)
+        except Exception:
+            return tool_response_str
+
+        def fill(entry):
+            if isinstance(entry, dict) and entry.get("tool") == "web":
+                entry.pop("message", None)
+                entry["web_result"] = findings
+            return entry
+
+        if isinstance(data, dict) and data.get("action") == "multiple" and "results" in data:
+            data["results"] = [fill(r) for r in data["results"]]
+        else:
+            data = fill(data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
     def _trim_history_entry(self, entry: str) -> str:
         """Trim an OLDER history step for context: drop 'thinking', 'eval', and
         'action' (keep decision/memory/next_goal). Only the most recent step is kept
@@ -352,6 +404,15 @@ class AgentService:
             return prefix + json.dumps(data, indent=2, ensure_ascii=False)
         except Exception:
             return entry
+
+    def _emit_flow(self, event, payload=None):
+        """Push a tool-flow event to the frontend bottom chain (best-effort)."""
+        if not self.tool_callback:
+            return
+        try:
+            self.tool_callback(event, payload)
+        except Exception:
+            pass
 
     def process_request(self, task: str) -> dict:
         """Process a user request in an iterative loop until completion.
@@ -371,16 +432,39 @@ class AgentService:
         tool_responses = []      # Per-step tool result, aligned 1:1 with assistant_messages; replayed as user turns
         cli_await_result = None  # Stores cli_await result for next iteration's light message
         pending_web_response = None  # Stores web tool response for light digest iteration
+        web_memory_index = None  # tool_responses slot of the web step to backfill with the digest's scratchpad
+        is_web_digest = False    # True only on the iteration that digests a web result into the scratchpad
         json_fail_count = 0  # Track consecutive JSON parse failures (max 3 before exit)
         # Final outcome reported to the caller. Defaults to "incomplete" so any
         # loop exit that doesn't explicitly set success/error is reported as
         # not-finished rather than silently looking like a completion.
         final_status = "incomplete"
         final_message = "Agent stopped before completing the task"
-        
+
+        # ---- Resumable memory seed (UI continuation) -------------------------
+        # If a prior optimized snapshot was supplied (continuing a saved chat),
+        # replay it into the two memory lists so the existing message-build loop
+        # re-emits the earlier conversation. Entries are ALREADY trimmed and
+        # tool_responses already compacted, so no re-processing. The saved memory
+        # ends with a terminal-note step, so on resume that note is the most-recent
+        # entry — which makes the loop replay EVERY real step's tool_response.
+        is_resumed = False
+        if self.prior_history:
+            seeded = self.prior_history.get("assistant_messages") or []
+            if seeded:
+                assistant_messages = list(seeded)
+                tool_responses = list(self.prior_history.get("tool_responses") or [])[:len(assistant_messages)]
+                tool_responses += [None] * (len(assistant_messages) - len(tool_responses))
+                is_resumed = True
+                is_first_iteration = False  # continuation, not a fresh dialogue
+                last_response = self.prior_history.get("done_message") or "Resuming previous session."
+                print(f"🧠 Resumed memory: {len(assistant_messages)} prior step(s) loaded")
+        # ----------------------------------------------------------------------
+
         # Print model info once at the start
         print(f"\n🔄 Processing with {self.llm_manager.get_model_name()}")
-        
+        self._emit_flow("run_start")   # tool-flow chain: clear + take over the demo
+
         # Main agent loop
         while True:
             # Check for stop signal
@@ -392,13 +476,18 @@ class AgentService:
                 break
 
             step_number += 1
-            
+            is_web_digest = False  # set True below only when this iteration digests a web result
+
             # Max step limit - prevent infinite loops
             if step_number > 100:
                 print("\n🛑 Max step limit reached (100). Exiting agent loop.")
                 final_status, final_message = "incomplete", "Reached the 100-step limit without finishing"
                 break
             
+            # Tool-flow chain: announce the turn. Digest iterations send no image,
+            # so the chain skips screenshot+mapping (true to the agent's behaviour).
+            self._emit_flow("turn", {"hasImage": not (cli_await_result or pending_web_response)})
+
             # Skip scan for light digest iterations (CLI await or web tool response)
             if cli_await_result or pending_web_response:
                 print(f"\n{'='*60}")
@@ -514,10 +603,14 @@ Respond with "action": [{"type": "hotkey", "value": "alt+y"}] to accept or "acti
                 except:
                     pass
                 
-                # Subsequent iterations - include last_response, todo_list
-                user_message = f"""<user_request>
+                # Subsequent iterations - include last_response, todo_list.
+                # On a RESUMED session, mark the request as <updated_user_request>
+                # so the agent knows this is a continuation of the same session
+                # (its prior steps are already in the replayed history above).
+                request_tag = "updated_user_request" if is_resumed else "user_request"
+                user_message = f"""<{request_tag}>
 {task}
-</user_request>
+</{request_tag}>
 
 <last_response>
 {last_response}
@@ -593,9 +686,11 @@ No image and element tree provided. Focus on digesting the web response below.
 
                     image_sent = False
                     annotated_image_base64 = None
-                    
-                    # Clear flag after consumption
+
+                    # Clear flag after consumption; mark this as the web-digest step so its
+                    # scratchpad response can be folded into the web memory below.
                     pending_web_response = None
+                    is_web_digest = True
                 else:
                     # Normal iteration - include full context
                     cli_status = self.controller.get_cli_agent_status()
@@ -674,8 +769,14 @@ No image and element tree provided. Focus on digesting the web response below.
                     if tr:
                         messages.append({"role": "user", "content": f"<tool_response>\n{tr}\n</tool_response>"})
 
-            # Current user message (live screen + most recent <last_response>)
+            # Current user message (live screen + most recent <last_response>).
+            # The system prompt is added exactly once (above) — the resumable seed
+            # never carries a system prompt, so a continued session can't double it.
             messages.append({"role": "user", "content": user_message})
+
+            # Capture the exact payload for the debug memory log (the last
+            # iteration's value is retained — i.e. the agent's final true memory).
+            self.last_messages = messages
 
             # Apply prompt caching for OpenRouter/Anthropic (explicit cache_control).
             # messages[-1] = current user message (dynamic, never cache)
@@ -706,7 +807,14 @@ No image and element tree provided. Focus on digesting the web response below.
 
                 # Get raw response from LLM - pass annotated image
                 raw_response = self.llm_manager.send_request(messages, annotated_image_base64)
-                
+
+                # Memory bar: forward this call's exact token usage (input+output).
+                if self.token_callback:
+                    try:
+                        self.token_callback(self.llm_manager.last_usage)
+                    except Exception:
+                        pass
+
                 # CRITICAL Check Stop AFTER LLM (discards result if stopped while waiting)
                 if self.stop_event and self.stop_event.is_set():
                     print("\n🛑 Agent stopped by user (response discarded).")
@@ -715,7 +823,7 @@ No image and element tree provided. Focus on digesting the web response below.
                     break
                     
                 print("✓ LLM response received")
-                
+
                 # Save raw response before any parsing (for debugging)
                 self._save_raw_response(raw_response, step_number)
                 
@@ -759,7 +867,11 @@ No image and element tree provided. Focus on digesting the web response below.
                 # Send to frontend if callback exists (omit action from stream)
                 if self.text_callback:
                     self.text_callback(AgentResponseFormatter.format_response(normalized_json, include_action=False))
-                
+
+                # Tool-flow chain: the packet arrived — tick "packet received" and hand
+                # the frontend this turn's tools, read straight from the action block.
+                self._emit_flow("received", {"tools": AgentResponseFormatter.extract_tools(normalized_json)})
+
                 # Parse the normalized JSON to extract fields and check for done
                 try:
                     agent_response = json.loads(normalized_json)
@@ -808,6 +920,9 @@ No image and element tree provided. Focus on digesting the web response below.
                             
                             if web_results_list:
                                 pending_web_response = "<tool>\n" + "\n".join(web_results_list) + "\n</tool>"
+                                # Remember this web step's memory slot so the NEXT (digest)
+                                # iteration can backfill it with the scratchpad findings.
+                                web_memory_index = len(tool_responses) - 1
                                 print(f"🌐 Web results captured for digest iteration")
                             else:
                                 pending_web_response = None
@@ -833,6 +948,26 @@ No image and element tree provided. Focus on digesting the web response below.
                                     self._tool_response_for_memory(action_result),
                                     indent=2, ensure_ascii=False
                                 )
+
+                            # Web-result memory: on the digest step, fold the numbered
+                            # scratchpad findings the agent JUST wrote into the original web
+                            # step's tool_response — replacing the 'refer to scratchpad'
+                            # pointer. The scratchpad is wiped on the next user request, so
+                            # this keeps the distilled web info in durable conversation memory.
+                            if (is_web_digest and web_memory_index is not None
+                                    and 0 <= web_memory_index < len(tool_responses)
+                                    and tool_responses[web_memory_index]):
+                                entries = [
+                                    str(a.get("value", "")).strip()
+                                    for a in (agent_response.get("action") or [])
+                                    if isinstance(a, dict) and a.get("type") == "scratchpad" and a.get("value")
+                                ]
+                                if entries:
+                                    numbered = "\n".join(f"{i + 1}. {e}" for i, e in enumerate(entries))
+                                    tool_responses[web_memory_index] = self._backfill_web_findings(
+                                        tool_responses[web_memory_index], numbered
+                                    )
+                                web_memory_index = None
 
                             # Wait before next scan (default 3 seconds, unless wait action was used)
                             wait_time = 3.0  # Default wait
@@ -887,5 +1022,18 @@ No image and element tree provided. Focus on digesting the web response below.
 
         # Cleanup: Stop CLI agent subprocess if running
         self.controller.stop_cli_agent()
+
+        # tool-flow chain: if the run didn't finish cleanly, cap it with a "!" drop.
+        if final_status == "error":
+            self._emit_flow("error", {"text": "llm service not responding"})
+        elif final_status == "incomplete" and final_message and "stop" in final_message.lower():
+            self._emit_flow("error", {"text": "agent interrupted"})
+        self._emit_flow("run_end")   # tool-flow chain: run finished
+
+        # Expose the final conversation lists so the conversation service (NOT the
+        # agent) can optimize + persist them after the run. Memory management is
+        # kept entirely out of the agent. Return shape is unchanged.
+        self.assistant_messages = assistant_messages
+        self.tool_responses = tool_responses
 
         return {"status": final_status, "message": final_message}

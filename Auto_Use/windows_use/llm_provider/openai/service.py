@@ -92,14 +92,20 @@ class OpenAIProvider:
         
         try:
             response = self.client.chat.completions.create(**params)
-            
+
             # Return in the same format as other providers
+            usage = getattr(response, "usage", None)
             return {
                 "choices": [{
                     "message": {
                         "content": response.choices[0].message.content
                     }
-                }]
+                }],
+                "usage": {
+                    "input_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                    "output_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                    "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+                } if usage else {},
             }
         except Exception as e:
             error_msg = f"OpenAI API request failed: {str(e)}"

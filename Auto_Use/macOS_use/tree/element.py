@@ -100,7 +100,7 @@ ELEMENT_CONFIG = {
     "AXGroup": {
         "track": True,
         "is_enabled_flag": False,
-        "fallback": ["AXTitle", "AXDescription", "AXRoleDescription"],
+        "fallback": ["AXTitle", "AXDescription", "_title_ui_element", "AXRoleDescription"],
     },
     "AXRadioButton": {
         "track": True,
@@ -452,6 +452,18 @@ GENERIC_LABELS = frozenset({
 def build_label(element, cfg):
     """Try each fallback attribute, return first non-empty, non-generic string."""
     for attr in cfg.get("fallback", []):
+        if attr == "_title_ui_element":
+            linked = ax_attr(element, "AXTitleUIElement")
+            if linked:
+                for sub in ("AXValue", "AXTitle", "AXDescription"):
+                    v = ax_attr(linked, sub)
+                    if v:
+                        label = str(v).replace("\n", " ").strip()
+                        if label.lower() in GENERIC_LABELS:
+                            continue
+                        return label[:50] if len(label) > 50 else label
+            continue
+
         if attr == "_children_text":
             children = ax_attr(element, "AXChildren")
             if children:
@@ -670,6 +682,12 @@ def walk(element, results, depth, screen, clip=None, parent_frame=None,
     my_entry = (my_frame, role_str) if my_frame else None
     child_ancestors = ancestors + [my_entry] if my_entry else ancestors
     children = ax_attr(element, "AXChildren")
+    if not children:
+        # NSBrowser column views (e.g. the Open/Save file dialog) expose their
+        # column scroll areas with an EMPTY AXChildren — the actual content
+        # (an AXList of file rows) is reachable only via AXContents. Fall back
+        # so these lazy containers get traversed instead of dead-ending here.
+        children = ax_attr(element, "AXContents")
     if children:
         try:
             for child in children:

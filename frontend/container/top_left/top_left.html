@@ -1,0 +1,47 @@
+<!-- Top-left container — the live agent screenshot. Injected into #mainGrid
+     (column 1, row 1) by top_left.js. Keeps id="imageStreamContainer" and the
+     .stream-image <img> so the existing window.updateAgentImage() hook in
+     script.js keeps working unchanged. -->
+<div class="container-zone screenshot-zone" id="zoneTopLeft" aria-label="Screenshot">
+    <div class="screenshot-frame" id="imageStreamContainer">
+        <img class="stream-image" src="" alt="Agent screen" style="display: none;">
+    </div>
+
+    <!-- Web globe + shell terminal — swap in over the screenshot while a web /
+         shell command runs (globe_shell.js fades the screenshot out, these in).
+         Ids preserved so the backend hooks drive them unchanged. -->
+    <div class="work-overlay" id="globePanel" aria-hidden="true">
+        <div id="mainGlobeContainer"></div>
+    </div>
+    <div class="work-overlay" id="shellPanel" aria-hidden="true">
+        <!-- Coder-card style: a transparent `>` command line (streams + shimmers
+             with a dot loader while it runs), then an L-connector down to the
+             output line that comes back. Driven by globe_shell.js shell*(). -->
+        <div class="shell-term" id="shellTerminalContainer">
+            <div class="sh-cmd-line" id="shellCmdLine">
+                <span class="sh-p">&gt;</span>
+                <span class="sh-cmd-text" id="shellCmdText"></span>
+            </div>
+            <div class="sh-progress" id="shellProgress" aria-hidden="true">
+                <span class="sh-fill"></span>
+            </div>
+            <div class="sh-out-line" id="shellOutLine">
+                <span class="sh-out-text" id="shellOutText"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Agent Notes — the scratchpad, shown here (image hidden) once a run ends
+         (completed or stopped). Populated by window.showAgentNotes (top_left.js),
+         fed by app.py reading scratchpad/milestone/milestone.md on finish. -->
+    <div class="agent-notes" id="agentNotes" aria-label="Agent notes">
+        <div class="agent-notes-header">
+            <svg class="agent-notes-pen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 20h9"></path>
+                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"></path>
+            </svg>
+            <span class="agent-notes-title">Agent Notes</span>
+        </div>
+        <div class="agent-notes-list" id="agentNotesList"></div>
+    </div>
+</div>

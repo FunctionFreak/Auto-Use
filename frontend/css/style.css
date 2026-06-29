@@ -2,11 +2,15 @@
     /* LOGIC: Single source of truth for dimensions to ensure consistency */
     --glass-radius: clamp(12px, 1.5vw, 16px);
     --expanded-height: 130px;
+    /* Width of the persistent left bar. The main app components are offset to
+       the right by this amount (left-anchored ones by the full width, centered
+       ones by half) so the content always sits to the right of the bar. */
+    --left-bar-w: 240px;
 }
 
 /* WebKit click responsiveness — eliminates tap delay and ghost highlights */
 button, input, textarea, select, a, [role="button"],
-.glass-button-wrapper, .settings-btn, .stop-agent-frame,
+.glass-button-wrapper, .settings-btn, .stop-agent-frame, .send-agent-frame,
 .model-option, .provider-item, .settings-save-btn,
 .settings-delete-btn, .gcp-vertex-btn, .vertex-done-btn {
     -webkit-tap-highlight-color: transparent;
@@ -21,7 +25,8 @@ button, input, textarea, select, a, [role="button"],
     width: 100vw;
     height: 100vh;
     z-index: 99999;
-    background: #000000;
+    /* Same off-white as the app background so the splash blends seamlessly. */
+    background: #D0CFC9;
     opacity: 1;
     margin: 0;
     padding: 0;
@@ -44,7 +49,10 @@ button, input, textarea, select, a, [role="button"],
 body {
     margin: 0;
     padding: 0;
-    background-color: #000000;
+    /* Clean, professional light background. Kept in sync with the native
+       title-bar tint (TITLEBAR_COLOR in app.py) so the bar and content area
+       read as one unified surface. */
+    background-color: #D0CFC9;
     display: flex;
     justify-content: center;
     align-items: center;
@@ -52,26 +60,10 @@ body {
     overflow: hidden;
 }
 
-/* Image Stream Container - Fully Responsive with Liquid Glass */
-.image-stream-container {
-    position: fixed;
-    left: clamp(10px, 2vw, 30px);
-    top: 50%;
-    transform: translateY(-50%) scale(0.95);
-    width: clamp(300px, 45vw, min(800px, 45vw));
-    aspect-ratio: 16 / 9;
-    border-radius: clamp(12px, 2vw, 20px);
-    box-shadow: 0 clamp(4px, 1vw, 8px) clamp(16px, 3vw, 32px) rgba(0, 0, 0, 0.1);
-    z-index: 10;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
-    overflow: hidden;
-    opacity: 0;
-    pointer-events: none;
-    padding: clamp(8px, 1.2vw, 16px);
-}
+/* Screenshot / globe / shell now live in the top-left container
+   (frontend/container/top_left/): the globe + shell JS in globe_shell.js and ALL
+   their CSS in globe_shell.css (they swap in over the screenshot). The shared
+   .liquidGlass-* layers below stay — the CLI pills use them. */
 
 /* Liquid Glass Layers */
 .liquidGlass-effect {
@@ -115,264 +107,8 @@ body {
     justify-content: center;
 }
 
-.image-stream-container.agent-visible {
-    opacity: 1;
-    pointer-events: auto;
-    transform: translateY(-50%) scale(1);
-}
-
-.image-stream-container:hover {
-    box-shadow: 0 clamp(6px, 1.5vw, 12px) clamp(20px, 4vw, 40px) rgba(0, 0, 0, 0.15);
-}
-
-/* Stream Image - Responsive Fit */
-.stream-image {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    object-position: center;
-    border-radius: clamp(8px, 1.5vw, 14px);
-    box-shadow: 0 clamp(2px, 0.5vw, 4px) clamp(8px, 1.5vw, 16px) rgba(0, 0, 0, 0.15);
-}
-
-/* Globe Container - Positioned OUTSIDE and ABOVE image container */
-.main-globe-container {
-    position: fixed;
-    /* Same left and width as image container - globe centers via flexbox */
-    left: clamp(10px, 2vw, 30px);
-    width: clamp(300px, 45vw, min(800px, 45vw));
-    
-    /* Globe height - bigger to fill space */
-    height: clamp(180px, 25vw, 320px);
-    
-    /* TOP edge aligns with LLM button TOP edge (same calculation as button) */
-    top: calc(clamp(30px, 4vw, 60px) + clamp(16px, 2vw, 24px));
-    
-    z-index: 15;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    
-    /* Initially hidden */
-    opacity: 0;
-    transform: translateY(20px) scale(0.9);
-    pointer-events: none;
-    
-    /* Smooth transitions */
-    transition: opacity 0.6s cubic-bezier(0.25, 0.8, 0.25, 1),
-                transform 0.6s cubic-bezier(0.25, 0.8, 0.25, 1);
-}
-
-.main-globe-container.visible {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    pointer-events: auto;
-}
-
-/* Ensure Three.js canvas is transparent */
-.main-globe-container canvas {
-    background: transparent !important;
-}
-
-/* Image container shift animation - entire container moves down */
-.image-stream-container {
-    transition: transform 0.6s cubic-bezier(0.25, 0.8, 0.25, 1);
-}
-
-.image-stream-container.agent-visible.web-active {
-    /* Shift down to sit just below the globe with small gap */
-    transform: translateY(calc(-50% + clamp(120px, 16vw, 220px)));
-}
-
-.image-stream-container.agent-visible.shell-active {
-    /* Shift down to sit just below the shell terminal card */
-    transform: translateY(calc(-50% + clamp(120px, 16vw, 220px)));
-}
-
-/* ── Shell Terminal Container ── */
-.shell-terminal-container {
-    position: fixed;
-    left: clamp(10px, 2vw, 30px);
-    width: clamp(300px, 45vw, min(800px, 45vw));
-    height: clamp(180px, 25vw, 320px);
-    top: calc(clamp(30px, 4vw, 60px) + clamp(16px, 2vw, 24px));
-    z-index: 15;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0;
-    transform: translateY(20px) scale(0.9);
-    pointer-events: none;
-    transition: opacity 0.6s cubic-bezier(0.25, 0.8, 0.25, 1),
-                transform 0.6s cubic-bezier(0.25, 0.8, 0.25, 1);
-}
-
-.shell-terminal-container.visible {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    pointer-events: auto;
-}
-
-/* Terminal card */
-.shell-terminal-card {
-    width: clamp(280px, 80%, 380px);
-    border-radius: 18px;
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    background: rgba(0, 0, 0, 0.03);
-    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.55);
-    overflow: hidden;
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-}
-
-.shell-term-bar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 12px 12px;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-    background: linear-gradient(180deg, rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.02));
-}
-
-.shell-term-bar .dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 999px;
-    background: rgba(90, 90, 90, 0.35);
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
-}
-
-.shell-term-title {
-    margin-left: auto;
-    font: 700 12px/1 ui-sans-serif, system-ui;
-    color: rgba(70, 70, 70, 0.95);
-    letter-spacing: 0.2px;
-}
-
-.shell-term-body {
-    padding: 14px 14px 16px;
-    color: rgba(60, 60, 60, 0.95);
-    font-size: 12px;
-    line-height: 1.55;
-}
-
-.shell-term-body .line {
-    margin: 6px 0;
-    opacity: 0;
-    transform: translateY(4px);
-    transition: opacity 0.15s ease, transform 0.15s ease;
-}
-
-#shellStreamLine,
-#shellStatusLine {
-    max-height: 6.2em;
-    overflow-y: auto;
-    scroll-behavior: smooth;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-}
-
-#shellStreamLine::-webkit-scrollbar,
-#shellStatusLine::-webkit-scrollbar {
-    display: none;
-}
-
-.shell-term-body .line.visible {
-    opacity: 1;
-    transform: translateY(0);
-}
-
-.shell-term-body .line b {
-    color: rgba(50, 50, 50, 0.95);
-}
-
-.shell-term-body .muted {
-    color: rgba(90, 90, 90, 0.85);
-}
-
-.shell-term-body .tag {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    border-radius: 6px;
-    margin-right: 8px;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    background: rgba(0, 0, 0, 0.04);
-    font-weight: 800;
-    font-size: 11px;
-    color: rgba(60, 60, 60, 0.95);
-}
-
-.shell-term-body .tag.ok {
-    box-shadow: 0 0 22px rgba(90, 90, 90, 0.2);
-}
-
-.shell-term-body .tag.run {
-    box-shadow: 0 0 22px rgba(90, 90, 90, 0.2);
-}
-
-.shell-term-body .tag.fail {
-    box-shadow: 0 0 22px rgba(90, 90, 90, 0.2);
-}
-
-.shell-term-body .cursor {
-    display: inline-block;
-    width: 10px;
-    height: 14px;
-    margin-left: 8px;
-    border-radius: 3px;
-    background: rgba(90, 90, 90, 0.75);
-    opacity: 0.65;
-    animation: shell-blink 1s steps(2, end) infinite;
-}
-
-.shell-progress {
-    margin-top: 12px;
-    height: 8px;
-    border-radius: 999px;
-    position: relative;
-    overflow: hidden;
-    background: rgba(0, 0, 0, 0.06);
-    border: 1px solid rgba(0, 0, 0, 0.09);
-}
-
-.shell-progress .fill {
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(90deg, rgba(90, 90, 90, 0), rgba(90, 90, 90, 0.4), rgba(90, 90, 90, 0.4), rgba(90, 90, 90, 0));
-    transform: translateX(-70%);
-    animation: shell-flow 1.05s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
-}
-
-.shell-progress .glint {
-    position: absolute;
-    inset: -30% -40%;
-    background: linear-gradient(110deg, transparent 0%, rgba(90, 90, 90, 0.15) 22%, rgba(90, 90, 90, 0.3) 28%, transparent 40%);
-    transform: translateX(-55%);
-    animation: shell-glint 1.05s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
-    mix-blend-mode: normal;
-}
-
-@keyframes shell-flow {
-    0% { transform: translateX(-75%); opacity: 0.55; }
-    50% { opacity: 1; }
-    100% { transform: translateX(75%); opacity: 0.55; }
-}
-
-@keyframes shell-glint {
-    0% { transform: translateX(-60%); opacity: 0; }
-    20% { opacity: 1; }
-    100% { transform: translateX(60%); opacity: 0; }
-}
-
-@keyframes shell-blink {
-    0% { opacity: 0.2; }
-    50% { opacity: 0.85; }
-    100% { opacity: 0.2; }
-}
+/* Shell terminal CARD visuals moved to container/top_left/globe_shell.css
+   (kept with the globe + shell code for clean separation). */
 
 /* --------------------------------------------------------------
    Liquid Glass Dropdown Button & Wrappers
@@ -381,8 +117,9 @@ body {
 .glass-button-wrapper {
     position: fixed;
 
-    /* Initial centered state — aligns with centered chat container */
-    left: calc(50% - clamp(600px, 65vw, 1000px) / 2 + clamp(16px, 2vw, 24px));
+    /* Initial centered state — aligns with centered chat container (shifted
+       right by half the left-bar width, same as the chat wrapper) */
+    left: calc(50% + var(--left-bar-w) / 2 - clamp(600px, 65vw, 1000px) / 2 + clamp(16px, 2vw, 24px));
 
     /* Top position: chat container top + padding */
     top: calc(clamp(30px, 4vw, 60px) + clamp(16px, 2vw, 24px));
@@ -415,7 +152,7 @@ body {
 }
 
 .glass-button-wrapper.split-layout {
-    left: calc(clamp(10px, 2vw, 30px) + clamp(300px, 45vw, min(800px, 45vw)) + clamp(20px, 4vw, 60px) + clamp(16px, 2vw, 24px));
+    left: calc(var(--left-bar-w) + clamp(10px, 2vw, 30px) + clamp(300px, 45vw, min(800px, 45vw)) + clamp(20px, 4vw, 60px) + clamp(16px, 2vw, 24px));
 }
 
 /* Expanded state - Uses Variables for Consistency */
@@ -683,68 +420,29 @@ body {
    Settings Button - Circular Liquid Glass
    --------------------------------------------------------------
 */
-.settings-btn {
-    position: fixed;
-    /* Left is set dynamically by JS to follow LLM button width */
-    left: 0;
-    top: calc(clamp(30px, 4vw, 60px) + clamp(16px, 2vw, 24px));
-    transition: left 0.3s ease;
-    
-    width: clamp(30px, 3vw, 36px);
-    height: clamp(30px, 3vw, 36px);
-    border-radius: 50%;
-    
-    cursor: pointer;
-    z-index: 15;
-    overflow: hidden;
-    
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    
-    box-shadow: 0 clamp(3px, 0.8vw, 6px) clamp(12px, 2.5vw, 24px) rgba(0, 0, 0, 0.1);
-    transition: transform 0.3s ease, box-shadow 0.3s ease;
-}
-
-.settings-btn:hover {
-    transform: scale(1.08);
-    box-shadow: 0 clamp(4px, 1vw, 8px) clamp(16px, 3vw, 28px) rgba(0, 0, 0, 0.15);
-}
-
-.settings-icon-wrapper {
-    position: relative;
-    z-index: 3;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.settings-icon {
-    width: clamp(16px, 1.8vw, 20px);
-    height: clamp(16px, 1.8vw, 20px);
-    color: rgba(90, 90, 90, 0.85);
-    transition: transform 0.4s ease;
-}
-
-.settings-btn:hover .settings-icon {
-    transform: rotate(45deg);
-}
+/* .settings-btn / .settings-icon styles moved to frontend/settings/settings.css
+   (the settings button is now a component living in the left bar footer). */
 
 /* --------------------------------------------------------------
    Settings Panel Overlay
    --------------------------------------------------------------
 */
+/* Settings now appears as a docked panel on the RIGHT side (same area as the
+   chat wrapper) — not a centered modal popup. The overlay is just a transparent,
+   click-through show/hide controller; the panel itself is the glass card. */
 .settings-overlay {
     position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.3);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+    /* Cover the content area (right of the left bar) with the app's exact base
+       colour so a prior agent run's grid (#mainGrid zones, which body.settings-open
+       does NOT fade) is fully hidden behind Settings instead of showing through a
+       transparent panel and cluttering the view. Left bar stays visible, matching
+       how body.settings-open already keeps it. */
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: var(--left-bar-w);
+    background: #D0CFC9;
     z-index: 100;
-
-    display: flex;
-    align-items: center;
-    justify-content: center;
 
     opacity: 0;
     visibility: hidden;
@@ -755,31 +453,34 @@ body {
 .settings-overlay.active {
     opacity: 1;
     visibility: visible;
-    pointer-events: auto;
 }
 
 .settings-panel {
-    position: relative;
-    width: clamp(340px, 90vw, 440px);
-    padding: clamp(24px, 3vw, 32px);
-    border-radius: clamp(16px, 2vw, 24px);
-    
-    transform: scale(0.9) translateY(20px);
-    transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-    
-    box-shadow: 0 clamp(8px, 2vw, 16px) clamp(32px, 6vw, 64px) rgba(0, 0, 0, 0.2);
-}
-
-.settings-overlay.active .settings-panel {
-    transform: scale(1) translateY(0);
+    position: fixed;
+    /* Docked in the right content area — same geometry as .chat-container-wrapper. */
+    left: calc(50% + var(--left-bar-w) / 2);
+    transform: translateX(-50%);
+    width: clamp(600px, 65vw, 1000px);
+    top: clamp(30px, 4vw, 60px);
+    bottom: clamp(30px, 4vw, 50px);
+    padding: clamp(20px, 2.5vw, 28px);
+    border-radius: var(--glass-radius);
+    overflow: hidden;
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    /* Fully transparent panel — no glass card. The controls float on the greige
+       background; text is grey (see below). */
+    background: transparent;
+    box-shadow: none;
 }
 
 /* ── Telegram "occupied" overlay (shown while a Telegram task runs) ───────── */
 .telegram-task-overlay {
     position: fixed;
     inset: 0;
-    /* Transparent — the app's background video (#bgVideo) stays visible; only
-       the UI components fade out (see body.tg-occupied) while the orb fades in. */
+    /* Transparent — the app's light background stays visible; only the UI
+       components fade out (see body.tg-occupied) while the orb fades in. */
     background: transparent;
     z-index: 101;
 
@@ -799,19 +500,54 @@ body {
     pointer-events: auto;
 }
 
-/* While a Telegram task occupies the machine: fade the app's UI components away
-   but keep the background video. The orb + message live in the transparent
-   overlay above. (id-based selector wins over the components' own .active /
-   .agent-visible show states.) */
+/* While a Telegram task occupies the machine: fade the app's UI components away.
+   The orb + message live in the transparent overlay above. We fade the whole
+   T-grid CELLS (#zoneTopLeft / #zoneTopRight / #zoneBottomLeft / #zoneBottomRight)
+   rather than the inner cards — the cell carries the frosted-glass chrome, and the
+   right cell's idle TODO card must fade too (not just the globe/shell). */
 body.tg-occupied #chatWrapper,
 body.tg-occupied #llmWrapper,
 body.tg-occupied #settingsBtn,
-body.tg-occupied #imageStreamContainer,
-body.tg-occupied #mainGlobeContainer,
-body.tg-occupied #shellTerminalContainer {
+body.tg-occupied #zoneTopLeft,
+body.tg-occupied #zoneTopRight,
+body.tg-occupied #zoneBottomLeft,
+body.tg-occupied #zoneBottomRight {
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.4s ease;
+}
+
+/* Transient top-center notification (window.showToast) — e.g. "Please set the
+   provider in Settings". Hidden until .active, then fades in/out. */
+.app-toast {
+    position: fixed;
+    top: clamp(14px, 2.2vw, 24px);
+    /* Centre over the main content area (aligned with the "Made to do" hero),
+       not the whole window — same geometry as the hero / settings panel. */
+    left: calc(50% + var(--left-bar-w) / 2);
+    transform: translate(-50%, -8px);
+    z-index: 25;
+    max-width: min(90vw, 460px);
+    padding: clamp(8px, 1vw, 11px) clamp(14px, 1.6vw, 20px);
+    border-radius: 999px;
+    background: rgba(40, 40, 46, 0.92);
+    color: rgba(255, 255, 255, 0.96);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: clamp(12px, 1.2vw, 13.5px);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    text-align: center;
+    white-space: nowrap;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.app-toast.active {
+    opacity: 1;
+    transform: translate(-50%, 0);
 }
 
 .telegram-task-content {
@@ -860,20 +596,102 @@ body.tg-occupied #shellTerminalContainer {
 .settings-panel-content {
     position: relative;
     z-index: 3;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: clamp(18px, 2.2vw, 24px);
+    /* Consistent gap between sections (header / Model Selection / API Keys /
+       Remote); each section keeps its heading tight to its content. */
+    gap: clamp(22px, 2.8vw, 32px);
 }
 
-/* Settings Views — only active view is visible */
+/* Footer with Cancel / Save, pinned at the bottom of the right-side panel. */
+.settings-footer {
+    position: relative;
+    z-index: 3;
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: flex-end;
+    gap: clamp(8px, 1vw, 12px);
+    padding-top: clamp(14px, 1.8vw, 20px);
+    margin-top: clamp(8px, 1vw, 12px);
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+.settings-cancel-btn, .settings-savebar-btn {
+    padding: clamp(8px, 1vw, 11px) clamp(18px, 2.2vw, 26px);
+    border-radius: clamp(8px, 1vw, 12px);
+    border: none;
+    cursor: pointer;
+    font-size: clamp(13px, 1.3vw, 15px);
+    font-weight: 600;
+    transition: background-color 0.2s ease, transform 0.15s ease;
+}
+.settings-cancel-btn { background: rgba(0, 0, 0, 0.06); color: rgba(70, 70, 70, 0.95); }
+.settings-cancel-btn:hover { background: rgba(0, 0, 0, 0.1); }
+.settings-savebar-btn { background: rgba(80, 165, 230, 0.9); color: #fff; }
+.settings-savebar-btn:hover { background: rgba(80, 165, 230, 1); }
+.settings-cancel-btn:active, .settings-savebar-btn:active { transform: scale(0.97); }
+
+/* The old per-view API-keys Save button is replaced by the footer Save. */
+.settings-save-btn { display: none; }
+
+/* Hide the chat text box while the settings panel occupies the right side. */
+body.settings-open #chatWrapper {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+/* Flat layout — every section is shown at once (no menu/nesting). The small
+   gap keeps each heading close to its own content; the larger gap BETWEEN
+   sections lives on .settings-panel-content below. */
 .settings-view {
-    display: none;
+    display: flex;
     flex-direction: column;
-    gap: clamp(18px, 2.2vw, 24px);
+    gap: clamp(8px, 1vw, 12px);
 }
 
 .settings-view.active {
     display: flex;
+}
+
+/* Grey text + section headings (transparent panel, no glass behind them). */
+.settings-panel-content { color: rgba(80, 80, 80, 0.92); }
+.settings-title { color: rgba(80, 80, 80, 0.95); }
+.settings-section-heading {
+    font-size: clamp(13px, 1.4vw, 15px);
+    font-weight: 700;
+    color: rgba(110, 110, 110, 0.95);
+    letter-spacing: 0.02em;
+}
+.settings-provider-name, .model-select-label { color: rgba(90, 90, 90, 0.9); }
+
+/* Remote Connection — Telegram row, LEFT-aligned. The label uses the same
+   min-width as the API-key provider labels so "Telegram" lines up with them. */
+.remote-row {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: clamp(10px, 1.2vw, 14px);
+    width: 100%;
+}
+.remote-row-label {
+    min-width: clamp(80px, 10vw, 100px);
+    font-size: clamp(12px, 1.2vw, 14px);
+    font-weight: 600;
+    color: rgba(80, 80, 80, 0.92);
+    white-space: nowrap;
+}
+.remote-row-actions {
+    display: flex;
+    align-items: center;
+    gap: clamp(8px, 1.2vw, 14px);
+}
+.remote-row .remote-disconnect-btn { margin-top: 0; }
+.remote-telegram-logo {
+    display: inline-flex;
+    color: #2AABEE;   /* Telegram blue */
 }
 
 .settings-header {
@@ -908,7 +726,7 @@ body.tg-occupied #shellTerminalContainer {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     font-size: clamp(18px, 2vw, 22px);
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.95);
+    color: rgba(80, 80, 80, 0.95);
 }
 
 /* Sub-header with back button */
@@ -974,16 +792,16 @@ body.tg-occupied #shellTerminalContainer {
 .remote-setup {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: flex-start;
     gap: 14px;
-    padding: clamp(20px, 3vw, 32px) 0;
+    padding: clamp(4px, 0.8vw, 8px) 0;
 }
 
 .remote-instruction {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     font-size: clamp(12px, 1.2vw, 14px);
-    color: rgba(255, 255, 255, 0.45);
-    text-align: center;
+    color: rgba(110, 110, 110, 0.85);
+    text-align: left;
 }
 
 .remote-service-btn {
@@ -1094,6 +912,14 @@ body.tg-occupied #shellTerminalContainer {
     background: rgba(80, 165, 230, 1);
 }
 
+/* Single toggle button: turns red when it acts as "Disconnect". */
+.remote-connect-btn.disconnect {
+    background: rgba(220, 70, 70, 0.9);
+}
+.remote-connect-btn.disconnect:hover:not(:disabled) {
+    background: rgba(220, 70, 70, 1);
+}
+
 .remote-connect-btn:disabled {
     opacity: 0.45;
     cursor: not-allowed;
@@ -1172,7 +998,7 @@ body.tg-occupied #shellTerminalContainer {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     font-size: clamp(12px, 1.2vw, 14px);
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.9);
+    color: rgba(80, 80, 80, 0.92);
     min-width: clamp(80px, 10vw, 100px);
     white-space: nowrap;
     text-decoration: none;
@@ -1180,7 +1006,7 @@ body.tg-occupied #shellTerminalContainer {
 }
 
 .settings-provider-name:hover {
-    color: rgba(255, 255, 255, 1);
+    color: rgba(50, 50, 50, 1);
     text-decoration: underline;
 }
 
@@ -1197,8 +1023,8 @@ body.tg-occupied #shellTerminalContainer {
     
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
     font-size: clamp(12px, 1.2vw, 14px);
-    color: rgba(255, 255, 255, 0.95);
-    
+    color: rgba(55, 55, 55, 0.95);
+
     outline: none;
     box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
     transition: background 0.2s ease, box-shadow 0.2s ease;
@@ -1223,12 +1049,12 @@ body.tg-occupied #shellTerminalContainer {
     align-items: center;
     justify-content: center;
     
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(0, 0, 0, 0.05);
     border: none;
     border-radius: 8px;
     cursor: pointer;
-    
-    color: rgba(255, 255, 255, 0.6);
+
+    color: rgba(90, 90, 90, 0.6);
     transition: color 0.2s ease, background 0.2s ease;
 }
 
@@ -1248,7 +1074,8 @@ body.tg-occupied #shellTerminalContainer {
 }
 
 .settings-provider-input:disabled::placeholder {
-    color: rgba(255, 255, 255, 0.85);
+    /* "API Key already exists" — grey so it's visible on the light input. */
+    color: rgba(90, 90, 90, 0.7);
 }
 
 .settings-save-btn {
@@ -1289,22 +1116,22 @@ body.tg-occupied #shellTerminalContainer {
     height: clamp(28px, 3vw, 34px);
     padding: 0 clamp(8px, 1vw, 12px);
     
-    background: rgba(255, 255, 255, 0.15);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(0, 0, 0, 0.05);
+    border: 1px solid rgba(0, 0, 0, 0.15);
     border-radius: 8px;
-    
+
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     font-size: clamp(10px, 1vw, 12px);
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.8);
+    color: rgba(80, 80, 80, 0.9);
     white-space: nowrap;
     cursor: pointer;
     transition: background 0.2s ease, color 0.2s ease;
 }
 
 .gcp-vertex-btn:hover {
-    background: rgba(255, 255, 255, 0.25);
-    color: rgba(255, 255, 255, 1);
+    background: rgba(0, 0, 0, 0.08);
+    color: rgba(50, 50, 50, 1);
 }
 
 .gcp-vertex-btn.configured {
@@ -1396,8 +1223,8 @@ body.tg-occupied #shellTerminalContainer {
     
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
     font-size: clamp(12px, 1.2vw, 14px);
-    color: rgba(255, 255, 255, 0.95);
-    
+    color: rgba(55, 55, 55, 0.95);
+
     outline: none;
     box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
     transition: background 0.2s ease, box-shadow 0.2s ease;
@@ -1456,359 +1283,83 @@ body.tg-occupied #shellTerminalContainer {
 */
 
 /* Chat Container - Big vertical rectangle with equal gaps */
-.chat-container-wrapper {
+/* =====================================================================
+   Main content 2x2 grid — four component zones (top-left screenshot /
+   top-right tracking-progress / bottom-left tool-response / bottom-right todo)
+   fill the area to the right of the left bar. The zones are injected by the
+   container/top_left, top_right, bottom_left and bottom_right components.
+   ===================================================================== */
+.main-grid {
     position: fixed;
-    /* Gap size - same as image container's left gap */
-    --gap-size: clamp(10px, 2vw, 30px);
-    /* Space between image and chat container - increasing this explicitly */
-    --middle-gap: clamp(20px, 4vw, 60px);
-
-    /* Image container left position */
-    --image-left: clamp(10px, 2vw, 30px);
-    /* Image container width */
-    --image-width: clamp(300px, 45vw, min(800px, 45vw));
-
-    /* Initial centered state */
-    left: 50%;
-    right: auto;
-    width: clamp(600px, 65vw, 1000px);
-    transform: translateX(-50%);
-
-    bottom: clamp(30px, 4vw, 50px);
+    left: calc(var(--left-bar-w) + clamp(10px, 2vw, 30px));
+    right: clamp(10px, 2vw, 30px);
     top: clamp(30px, 4vw, 60px);
-    border-radius: var(--glass-radius);
-    z-index: 12;
-    overflow: hidden;
+    /* Leave room at the bottom for the chat input (the agent-start text box). */
+    /* Raised so the bottom container clears the "Agent activated" strip that
+       sits just above the chat input. */
+    bottom: clamp(160px, 15vw, 196px);
+    z-index: 13;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1.4fr 1fr;          /* top row bigger; tweakable */
+    gap: clamp(10px, 1.5vw, 18px);
+}
+
+/* =====================================================================
+   Empty-state hero — centered "Auto Use / Agent with million moves." over
+   the main content area (same box as .main-grid). Shown on a fresh/new chat
+   (default at launch + after New chat); fades out the moment a task is sent
+   or a saved chat is reopened. Toggled by window.show/hideWelcomeHero.
+   ===================================================================== */
+.welcome-hero {
+    position: fixed;
+    left: calc(var(--left-bar-w) + clamp(10px, 2vw, 30px));
+    right: clamp(10px, 2vw, 30px);
+    top: clamp(30px, 4vw, 60px);
+    bottom: clamp(160px, 15vw, 196px);
+    z-index: 12;                /* just under the grid zones; pointer-transparent */
     display: flex;
     flex-direction: column;
-    justify-content: flex-end;
-    padding: clamp(16px, 2vw, 24px);
-    box-shadow: 0 clamp(4px, 1vw, 8px) clamp(16px, 3vw, 32px) rgba(0, 0, 0, 0.1);
-
-    transition: left 0.5s cubic-bezier(0.25, 0.8, 0.25, 1),
-                right 0.5s cubic-bezier(0.25, 0.8, 0.25, 1),
-                width 0.5s cubic-bezier(0.25, 0.8, 0.25, 1),
-                transform 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
-}
-
-.chat-container-wrapper.split-layout {
-    left: calc(var(--image-left) + var(--image-width) + var(--middle-gap));
-    right: var(--gap-size);
-    width: auto;
-    transform: none;
-}
-
-.chat-container-content {
-    position: relative;
-    z-index: 3;
-    width: 100%;
-    height: 100%; /* Fill the wrapper */
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-end;
-}
-
-/* Wrapper for input to allow side-by-side button */
-.input-area-wrapper {
-    position: relative;
-    width: 100%;
-    display: flex;
-    align-items: flex-end;
-}
-
-/* New Output Stream Area - Blurry container above input */
-.output-stream-area {
-    position: relative;
-    flex: 1; /* Take up remaining space */
-    width: 100%;
-    margin-bottom: clamp(12px, 1.5vw, 16px); /* Space above input */
-    margin-top: clamp(40px, 4vw, 50px); /* Reduced Space below LLM button */
-    
-    /* Same blurred style as chat input */
-    background: rgba(255, 255, 255, 0.15);
-    border-radius: clamp(16px, 2vw, 20px);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-    
-    /* Scrollable content */
-    overflow-y: auto;
-    overflow-x: hidden;
-    
-    /* Hide scrollbar */
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-}
-
-/* Welcome overlay - eyes + breathing glow */
-.welcome-overlay {
-    position: absolute;
-    inset: 0;
-    display: flex;
     align-items: center;
     justify-content: center;
-    gap: 80px;
-    padding-bottom: 25%;
-    z-index: 5;
+    gap: clamp(6px, 0.7vw, 12px);
+    text-align: center;
     pointer-events: none;
-    transition: opacity 0.5s ease;
+    user-select: none;
+    transition: opacity 0.45s ease;
 }
 
-.welcome-overlay.eyes-hidden .welcome-eye {
-    opacity: 0;
-    transition: opacity 0.4s ease;
-}
-
-.welcome-overlay.hidden {
+.welcome-hero.hidden {
     opacity: 0;
 }
 
-.welcome-eye {
-    width: 24px;
-    height: 58px;
-    border-radius: 20px;
-    background: linear-gradient(180deg, rgba(160, 160, 170, 0.5) 0%, rgba(120, 120, 135, 0.5) 100%);
-    animation: welcomeBlink 4s ease-in-out infinite;
+.welcome-hero-title {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: clamp(34px, 5vw, 62px);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    /* Light, soft watermark feel (was too dark). */
+    color: rgba(125, 125, 125, 0.4);
 }
 
-@keyframes welcomeBlink {
-    0%, 85%, 100% { transform: scaleY(1); }
-    92% { transform: scaleY(0.1); }
+.welcome-hero-tagline {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: clamp(14px, 1.5vw, 20px);
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    color: rgba(90, 90, 90, 0.62);
 }
 
-.welcome-glow {
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
+/* Temporary placeholder labels so the empty transparent zones are visible
+   during layout. Remove when real content is wired in. */
+.main-grid .zone-placeholder {
+    color: rgba(90, 90, 90, 0.4);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: clamp(12px, 1.3vw, 15px);
+    font-weight: 600;
+    letter-spacing: 0.03em;
     pointer-events: none;
-    box-shadow: inset 0 0 50px rgba(220, 160, 255, 0.45),
-                inset 0 0 100px rgba(240, 200, 255, 0.25);
-    animation: welcomeBreathe 3s ease-in-out infinite;
-}
-
-@keyframes welcomeBreathe {
-    0%, 100% { opacity: 0.4; }
-    50% { opacity: 1; }
-}
-
-.output-stream-area::-webkit-scrollbar {
-    display: none;
-}
-
-/* Milestone Stream Container */
-.milestone-stream {
-    display: flex;
-    flex-direction: column;
-    gap: clamp(8px, 1vw, 12px);
-    padding: clamp(12px, 1.5vw, 18px);
-    width: 100%;
-    box-sizing: border-box;
-}
-
-/* Individual Milestone Line */
-.milestone-line {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    font-size: clamp(12px, 1.2vw, 14px);
-    font-weight: 500;
-    color: rgba(70, 70, 70, 0.95);
-    line-height: 1.5;
-    
-    /* Auto-wrap behavior */
-    word-wrap: break-word;
-    overflow-wrap: break-word;
-    white-space: normal;
-    
-    /* Subtle left accent */
-    padding-left: clamp(10px, 1.2vw, 14px);
-    border-left: 2px solid rgba(150, 120, 200, 0.4);
-}
-
-/* Error variant — shown when a run ends in failure (e.g. API auth error)
-   instead of silently returning to idle. */
-.milestone-line--error {
-    color: rgba(200, 50, 50, 0.95);
-    border-left-color: rgba(220, 70, 70, 0.7);
-    font-weight: 600;
-}
-
-/* Chat Input Field Styling */
-.chat-input {
-    position: relative; /* For z-index context */
-    z-index: 5; /* Stays on top of the agent strip */
-    width: 100%;
-    /* Reset height to single line */
-    height: clamp(44px, 4vw, 54px);
-    min-height: clamp(44px, 4vw, 54px);
-    max-height: 150px;
-    
-    border: none;
-    background: rgba(255, 255, 255, 0.15);
-    outline: none;
-    
-    /* Padding for text area - centered vertically for single line */
-    padding: clamp(12px, 1.2vw, 15px) clamp(50px, 5vw, 60px) clamp(12px, 1.2vw, 15px) clamp(16px, 1.5vw, 20px);
-    box-sizing: border-box; /* Ensure padding is included in width */
-    
-    /* Transition border radius for join effect */
-    border-radius: clamp(12px, 1.5vw, 16px);
-    transition: border-radius 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
-
-    pointer-events: auto;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    font-size: clamp(13px, 1.3vw, 15px);
-    color: rgba(60, 60, 60, 0.95);
-    font-weight: 500;
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-    
-    /* Textarea specific styles */
-    resize: none; 
-    overflow-y: auto; 
-    line-height: 1.4;
-    display: block;
-    
-    /* Word wrapping */
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    
-    /* Hide Scrollbar */
-    scrollbar-width: none; /* Firefox */
-    -ms-overflow-style: none; /* IE/Edge */
-}
-
-/* When agent strip is active, we keep the corners rounded now - Rules removed */
-
-.chat-input::-webkit-scrollbar {
-    display: none; /* Chrome/Safari/Opera */
-}
-
-/* Keyframes for the gradient animation */
-@keyframes gradientFlow {
-    0% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
-    100% { background-position: 0% 50%; }
-}
-
-/* Breathing animation */
-@keyframes cursorBreathing {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(0.85); }
-}
-
-/* Custom cursor icon in agent strip */
-.agent-cursor-icon {
-    width: 14px;
-    height: 14px;
-    margin-right: 8px; /* Space between icon and text */
-    
-    /* Animated Gradient Background */
-    background: linear-gradient(135deg, #c17fef, #9b5dcf, #e18ed6, #7f9cf5, #c17fef);
-    background-size: 250% 250%;
-    animation: gradientFlow 6s ease infinite, cursorBreathing 2s ease-in-out infinite;
-    
-    /* Masking with the SVG shape */
-    mask-image: url('data:image/svg+xml;utf8,<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M2,2 L12,22 L22,2 Q12,12 2,2 Z" fill="black" transform="rotate(140 12 12)" /></svg>');
-    -webkit-mask-image: url('data:image/svg+xml;utf8,<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M2,2 L12,22 L22,2 Q12,12 2,2 Z" fill="black" transform="rotate(140 12 12)" /></svg>');
-    mask-size: contain;
-    mask-repeat: no-repeat;
-    mask-position: center;
-    -webkit-mask-size: contain;
-    -webkit-mask-repeat: no-repeat;
-    -webkit-mask-position: center;
-    
-    flex-shrink: 0;
-}
-
-/* Agent Response Strip - Initially hidden, slides up */
-.agent-response-strip {
-    /* Centered and shorter than text box */
-    width: 85%;
-    margin: 0 auto; /* Centers horizontally */
-    
-    /* Start with 0 height and no padding */
-    height: 0;
-    min-height: 0;
-    padding: 0;
-    margin-bottom: 0;
-    
-    /* Whitish-Grey background */
-    background: rgba(220, 220, 220, 0.35); 
-    backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
-    
-    /* Rounded corners all around */
-    border-radius: 16px;
-    
-    display: flex;
-    align-items: center;
-    
-    /* Animation handling */
-    opacity: 0;
-    pointer-events: none;
-    transform: translateY(10px);
-    overflow: visible; /* Visible for pseudo-elements */
-    transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
-    position: relative; /* For pseudo-elements */
-
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    font-size: clamp(10px, 1vw, 11px); /* Reduced text size significantly */
-    color: rgba(50, 50, 50, 0.95);
-
-    border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-/* Connectors removed as requested */
-
-.agent-response-strip.active {
-    opacity: 1;
-    pointer-events: auto;
-    transform: translateY(0);
-    /* Expand to full height when active */
-    height: clamp(28px, 3vw, 34px); /* Reduced height by roughly 1/3 */
-    min-height: clamp(28px, 3vw, 34px);
-    margin-bottom: -18px; /* Only apply negative margin when active */
-    /* Adjusted padding to center text in reduced height */
-    padding: 0 clamp(16px, 1.5vw, 20px) 16px clamp(16px, 1.5vw, 20px);
-}
-
-.agent-label {
-    font-weight: 600;
-    color: rgba(90, 90, 90, 0.95); /* Simple grey like other text */
-    margin-right: 8px;
-    white-space: nowrap;
-    /* Removed neon text shadow */
-}
-
-.agent-text {
-    font-weight: 600;
-    color: rgba(90, 90, 90, 0.95);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.chat-input::placeholder {
-    color: rgba(90, 90, 90, 0.6);
-}
-
-/* Stop-agent orb: embedded from pc_button.html (single source of truth for the orb).
-   The iframe is larger than the 42px orb so its glow and the 1.3x click-pop aren't
-   clipped; it's transparent and click-through until the orb is live. */
-.stop-agent-frame {
-    position: absolute;
-    top: 50%;
-    right: -9px;            /* ~72px frame centred where the 42px orb sat (right:6px) */
-    width: 72px;
-    height: 72px;
-    transform: translateY(-50%);
-    background: transparent;
-    border: none;
-    z-index: 20;
-    pointer-events: none;   /* let the input through until the orb is live */
-}
-.stop-agent-frame.active {
-    pointer-events: auto;
+    user-select: none;
 }
 
 /* --------------------------------------------------------------
@@ -2009,342 +1560,127 @@ body.tg-occupied #shellTerminalContainer {
     80% { transform: translateX(6px); }
 }
 
-/* Background Video */
-#bgVideo {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    min-width: 100vw;
-    min-height: 100vh;
-    transform: translate(-50%, -50%);
-    object-fit: cover;
-    z-index: -1;
-    pointer-events: none;
-}
-
-/* =====================================================================
-   CLI Streaming Area — lives INSIDE the chat-container-content.
-   While idle it's hidden; while .chat-container-wrapper is in .cli-mode
-   it takes over the spot of .output-stream-area and the chat box itself
-   expands across the full viewport width.
-   ===================================================================== */
-
-.cli-stream-area {
-    position: relative;
-    flex: 1;
-    width: 100%;
-    box-sizing: border-box;
-    margin-bottom: clamp(12px, 1.5vw, 16px);
-    margin-top: clamp(40px, 4vw, 50px);
-    /* iteration 3: the chat box no longer expands, so this padding has to be
-       lean — enough for visual breathing room, not enough to crowd the pills. */
-    padding: clamp(12px, 1.4vw, 18px) clamp(8px, 1vw, 14px);
-    border-radius: clamp(16px, 2vw, 20px);
-    background: rgba(255, 255, 255, 0.15);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-    display: none;          /* visible only when .chat-container-wrapper has .cli-mode */
-    flex-direction: column;
-    overflow: hidden;
-    opacity: 0;
-    transition: opacity 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
-}
-
-.chat-container-wrapper.cli-mode .cli-stream-area {
-    display: flex;
-    opacity: 1;
-}
-
-/* When CLI mode is on, the existing milestone/welcome panel and the
-   "Agent activated:" strip step aside so the pills own the chat box. */
-.chat-container-wrapper.cli-mode .output-stream-area,
-.chat-container-wrapper.cli-mode .agent-response-strip {
-    display: none;
-}
-
-/* (Iteration 3) The chat-container-wrapper KEEPS its split-layout size
-   during cli-mode. Only its inner content swaps. No left/right/width
-   overrides here. */
-
-/* Hide LLM dropdown chip + settings cog while pills own the screen. */
-body.cli-mode .glass-button-wrapper,
-body.cli-mode .settings-btn {
+/* Hide the LLM dropdown chip while pills own the screen. (The settings cog's
+   cli-mode hide now lives in frontend/settings/settings.css.) */
+body.cli-mode .glass-button-wrapper {
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.35s ease;
 }
 
-.cli-stream-list {
+/* =====================================================================
+   Settings → Model Selection — two side-by-side dropdowns (Provider | Model)
+   ===================================================================== */
+.model-select-row {
     display: flex;
-    flex-direction: column;
-    gap: clamp(8px, 1vw, 12px);
+    gap: clamp(8px, 1.5vw, 14px);
     width: 100%;
-    max-width: 100%;
-    height: 100%;
-    box-sizing: border-box;
-    overflow-y: auto;
-    overflow-x: hidden;
-    /* hide the native scrollbar — content auto-scrolls to bottom */
-    scrollbar-width: none;
-    -ms-overflow-style: none;
 }
-.cli-stream-list::-webkit-scrollbar { display: none; }
-
-.cli-stream-list::-webkit-scrollbar {
-    width: 6px;
-}
-.cli-stream-list::-webkit-scrollbar-thumb {
-    background: rgba(120, 120, 120, 0.25);
-    border-radius: 3px;
-}
-
-/* ---------- individual CLI pill ---------- */
-
-.cli-pill {
-    position: relative;
-    display: flex;
-    align-items: stretch;
-    width: 100%;
-    max-width: 100%;
-    box-sizing: border-box;
-    min-height: clamp(38px, 4vw, 52px);
-    padding: clamp(7px, 0.8vw, 11px) clamp(12px, 1.4vw, 18px) clamp(7px, 0.8vw, 11px) clamp(10px, 1.2vw, 14px);
-    border-radius: clamp(20px, 2.6vw, 30px);
-    overflow: hidden;
-    /* Default stacking: 1. Animating minion pills drop to z-index: 0 in their
-       keyframes so they slide behind their non-animating siblings (the pill
-       directly above masks the moving one — that's the "going behind" feel). */
-    z-index: 1;
-    animation: cli-pill-in 0.35s cubic-bezier(0.25, 0.8, 0.25, 1) both;
-    transition: max-height 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
-}
-
-@keyframes cli-pill-in {
-    from { opacity: 0; transform: translateY(8px) scale(0.98); }
-    to   { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-.cli-pill > .liquidGlass-content {
-    position: relative;
-    z-index: 3;
-    display: flex;
-    align-items: center;
-    gap: clamp(8px, 1vw, 12px);
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-}
-
-/* loader column on the left of the pill.
-   28×28 slot for the particle-engine canvas. The canvas owns its own
-   animation (loader spokes / globe / tick) and morphs between them
-   when the pill state changes. */
-.cli-pill-loader {
-    position: relative;
-    flex: 0 0 auto;
-    width: 20px;
-    height: 20px;
-    align-self: center;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.cli-pill-canvas {
-    display: block;
-    width: 20px;
-    height: 20px;
-    /* Fade controlled by JS for the post-tick "all CLI done + 1s hold" sequence. */
-    transition: opacity 0.4s ease;
-}
-
-/* status glyph — hidden until pill goes complete */
-.cli-pill-status {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.15rem;
-    line-height: 1;
-    opacity: 0;
-    transition: opacity 0.25s ease;
-    pointer-events: none;
-}
-
-/* body column on the right (streaming output). flex:1 1 0 means "take up
-   exactly the remaining space, no more, no less" — combined with min-width:0
-   this guarantees the body never pushes the pill wider than its parent. */
-.cli-pill-body {
+.model-select-field {
     flex: 1 1 0;
     min-width: 0;
-    max-width: 100%;
     display: flex;
     flex-direction: column;
-    justify-content: center;
-    gap: 4px;
-    overflow: hidden;
+    gap: clamp(4px, 0.6vw, 6px);
 }
-
-/* Task description from the main agent — hidden so the pill shows ONLY
-   the live CLI agent output, not the dispatch instruction. */
-.cli-pill-cmd {
-    display: none;
+.model-select-label {
+    font-size: clamp(11px, 1.2vw, 13px);
+    font-weight: 500;
+    color: rgba(90, 90, 90, 0.9);
+    padding-left: 2px;
 }
-
-/* Single-line strip that always shows ONLY the latest streamed line.
-   When a new line arrives, JS swaps the inner div; its words fade in
-   left-to-right via the .cli-word animation. */
-.cli-output {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: clamp(11px, 0.85vw, 12.5px);
-    color: rgba(90, 90, 95, 0.9);
-    line-height: 1.4;
+/* Custom dropdown (NOT a native <select>, so it can render the brain SVG icon
+   on reasoning models). Trigger looks like an input; menu is a glass popup. */
+.model-dropdown {
+    position: relative;
     width: 100%;
-    height: 1.4em;
-    overflow: hidden;
 }
-.cli-output:empty::before {
-    content: 'Waiting for output…';
-    color: rgba(140, 140, 145, 0.65);
-    font-style: italic;
+.model-dropdown-trigger {
+    width: 100%;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: clamp(7px, 0.9vw, 10px) clamp(10px, 1.2vw, 14px);
+    border-radius: clamp(8px, 1vw, 12px);
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    background-color: rgba(255, 255, 255, 0.5);
+    color: #333;
+    font-size: clamp(12px, 1.3vw, 14px);
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
 }
-
-.cli-line {
-    white-space: nowrap;
+.model-dropdown-trigger:hover { background-color: rgba(255, 255, 255, 0.65); }
+.model-dropdown.open .model-dropdown-trigger { border-color: rgba(80, 165, 230, 0.7); }
+.model-dropdown.disabled { opacity: 0.6; pointer-events: none; }
+.model-dropdown-value {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
 }
-.cli-line-err {
-    color: rgba(200, 70, 90, 0.95);
+.model-dropdown-value.placeholder { color: rgba(90, 90, 90, 0.6); }
+.model-dropdown-value .model-icon { width: 18px; height: 18px; }
+.model-dropdown-chevron {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    color: rgba(90, 90, 90, 0.7);
+    transition: transform 0.25s ease;
 }
-.cli-line-summary {
-    color: rgba(70, 70, 75, 0.9);
-    font-style: italic;
-}
-
-/* word-by-word reveal — each <span class="cli-word"> staggers its fade in. */
-.cli-word {
-    opacity: 0;
-    animation: cli-word-in 0.22s ease-out forwards;
-}
-@keyframes cli-word-in {
-    to { opacity: 1; }
-}
-
-/* ---------- complete state ----------
-   Canvas tick is the success indicator; legacy ✓ glyph is hidden.
-   For error/stopped the canvas fades out via .canvas-faded and
-   the legacy ✕ glyph paints in its place. */
-
-.cli-pill.complete .cli-pill-canvas.canvas-faded {
-    opacity: 0;
-}
-
-.cli-pill.complete .cli-pill-status {
-    opacity: 1;
-}
-
-.cli-pill[data-status="complete"] .cli-pill-status::before {
-    /* Canvas tick replaces this — keep glyph hidden by default. JS adds
-       .show-status-glyph to a pill once the canvas has faded out, at which
-       point the ✓ becomes visible. */
-    content: '✓';
-    color: rgba(64, 160, 110, 0.95);
+.model-dropdown.open .model-dropdown-chevron { transform: rotate(180deg); }
+.model-dropdown-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    z-index: 5;
+    max-height: 240px;
+    overflow-y: auto;
+    padding: 6px;
+    border-radius: clamp(8px, 1vw, 12px);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    background: rgba(245, 245, 245, 0.92);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    backdrop-filter: blur(18px) saturate(140%);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
     display: none;
 }
-
-.cli-pill[data-status="complete"].show-status-glyph .cli-pill-status::before {
-    display: block;
+.model-dropdown.open .model-dropdown-menu { display: block; }
+.model-dropdown-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 7px 10px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: clamp(12px, 1.3vw, 14px);
+    color: #333;
+    white-space: normal;
 }
+.model-dropdown-option:hover { background-color: rgba(255, 255, 255, 0.6); color: #000; }
+.model-dropdown-option.selected { background-color: rgba(80, 165, 230, 0.18); }
+.model-dropdown-option .model-icon { width: 20px; height: 20px; fill: currentColor; flex-shrink: 0; opacity: 0.9; }
+.model-dropdown-empty { padding: 8px 10px; color: rgba(90, 90, 90, 0.6); font-size: 13px; }
 
-.cli-pill[data-status="error"] .cli-pill-status::before,
-.cli-pill[data-status="stopped"] .cli-pill-status::before {
-    content: '✕';
-    color: rgba(200, 70, 90, 0.95);
+/* Disabled option — a provider with no API key. Greyed and non-selectable; clicking it
+   toasts a disclaimer (handled in makeDropdown). The hint on the right says why. */
+.model-dropdown-option--disabled { cursor: not-allowed; color: rgba(90, 90, 90, 0.45); }
+.model-dropdown-option--disabled:hover { background-color: transparent; color: rgba(90, 90, 90, 0.45); }
+.model-dropdown-option-hint {
+    font-size: 0.8em;
+    font-style: italic;
+    color: rgba(170, 95, 95, 0.8);
+    white-space: nowrap;
+    flex-shrink: 0;
 }
-
-/* Hide the canvas under the ✕ glyph for error/stopped — we don't have a
-   particle "fail" shape, so just let the legacy glyph take over. */
-.cli-pill[data-status="error"] .cli-pill-canvas,
-.cli-pill[data-status="stopped"] .cli-pill-canvas {
-    opacity: 0;
-}
-
-.cli-pill.complete .cli-output {
-    max-height: 1.6em;
-}
-
-/* ============================================================
-   Minion pill — child variant of cli-pill.
-   Card-stack choreography: each minion is wrapped in a .cli-minion-wrap
-   that has overflow: hidden. The wrapper grows in height while the
-   inner pill translates from -100% to 0 — the wrapper's top edge sits
-   directly below the predecessor's bottom edge in flex flow, so the
-   pill geometrically slides out from behind that predecessor. On
-   absorb, the wrapper collapses while the inner pill translates back
-   to -100% — pill tucks back behind the predecessor.
-   Real geometric clip via overflow:hidden, not z-index masking, so
-   it works through the translucent liquid-glass pills.
-   ============================================================ */
-
-.cli-minion-wrap {
-    /* Default matches .cli-pill min-height so the wrapper hugs the inner pill
-       exactly. JS overrides this inline (`wrap.style.--minion-h = pill.offsetHeight`)
-       after spawn for a pixel-perfect fit — no empty space inside the wrapper,
-       so flex-column gap between sibling wrappers stays uniform. */
-    --minion-h: clamp(38px, 4vw, 52px);
-    display: block;
-    align-self: center;     /* narrower than parent, centered in flex column */
-    width: 75%;
-    overflow: hidden;       /* the real clip: hides the pill above the wrapper top */
-    height: 0;
-    animation: cli-minion-wrap-drop 0.45s cubic-bezier(0.25, 0.8, 0.25, 1) forwards;
-}
-
-.cli-minion-wrap > .cli-pill.minion {
-    width: 100%;            /* fill the wrapper (which already owns the 75% width) */
-    margin: 0;
-    animation: cli-minion-pill-drop 0.45s cubic-bezier(0.25, 0.8, 0.25, 1) both;
-}
-
-@keyframes cli-minion-wrap-drop {
-    from { height: 0; }
-    to   { height: var(--minion-h, 80px); }
-}
-
-@keyframes cli-minion-pill-drop {
-    from { transform: translateY(-100%); }
-    to   { transform: translateY(0); }
-}
-
-.cli-minion-wrap.absorbing {
-    pointer-events: none;
-    animation: cli-minion-wrap-absorb 0.45s cubic-bezier(0.55, 0, 0.45, 1) forwards;
-}
-
-.cli-minion-wrap.absorbing > .cli-pill.minion {
-    animation: cli-minion-pill-absorb 0.45s cubic-bezier(0.55, 0, 0.45, 1) forwards;
-}
-
-@keyframes cli-minion-wrap-absorb {
-    from { height: var(--minion-h, 80px); }
-    to   { height: 0; }
-}
-
-@keyframes cli-minion-pill-absorb {
-    from { transform: translateY(0); }
-    to   { transform: translateY(-100%); }
-}
-
-/* ============================================================
-   Web-loading state on a pill.
-   When the pill enters .web-loading (CLI agent's web tool is fetching),
-   the canvas icon morphs to the spinning globe and the body streams a
-   loop of funny scraping/searching phrases (handled in script.js).
-   No CSS overlay — globe icon + streamed phrases are the cue.
-   ============================================================ */
 
 /* ============================================================
    AutoUse helper info popup
