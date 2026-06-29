@@ -336,6 +336,151 @@ def _fda_granted():
         return True  # missing path / other -> don't reset
 
 
+# =============================================================================
+# macOS permission catalog + setup-wizard state
+# =============================================================================
+# The four macOS permissions Auto Use needs, in the order the setup wizard walks
+# the user through them. Full Disk Access is gated BEFORE Screen Recording on
+# purpose: once FDA is granted we can read TCC.db live to detect Screen
+# Recording's real state (its in-process CGPreflight result is cached for the
+# whole process lifetime, so it can't see a grant made after launch).
+PERMISSION_CATALOG = [
+    {
+        "key": "accessibility",
+        "label": "Accessibility",
+        "description": "Lets Auto Use move the cursor, click, and type for you.",
+        "tcc_service": "Accessibility",
+        "settings_deep_link": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        "relaunch_sensitive": False,
+        "auto_resettable": True,
+    },
+    {
+        "key": "full_disk_access",
+        "label": "Full Disk Access",
+        "description": "Lets Auto Use read and save the files your tasks need.",
+        "tcc_service": "SystemPolicyAllFiles",
+        "settings_deep_link": "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+        "relaunch_sensitive": False,
+        "auto_resettable": True,
+    },
+    {
+        "key": "screen_recording",
+        "label": "Screen Recording",
+        "description": "Lets Auto Use see your screen to decide what to do next.",
+        "tcc_service": "ScreenCapture",
+        "settings_deep_link": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+        "relaunch_sensitive": True,
+        "auto_resettable": True,
+    },
+    {
+        "key": "automation",
+        "label": "Automation",
+        "description": "Lets Auto Use tell apps like Finder and Safari what to do.",
+        "tcc_service": "AppleEvents",
+        "settings_deep_link": "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
+        "relaunch_sensitive": False,
+        "auto_resettable": False,
+    },
+]
+
+# Cached result of the last System Events probe (Automation has no clean
+# no-prompt API; we remember whether the probe last succeeded).
+_AUTOMATION_CACHE = "automation_grant.json"
+
+
+def _automation_granted():
+    """Best-effort Automation (System Events) check. There is no reliable
+    no-prompt API, so we read the cached result of the last probe (written by
+    _request_automation when it runs). Defaults to False so the wizard shows the
+    step rather than silently passing it."""
+    try:
+        marker = app_data_dir() / _AUTOMATION_CACHE
+        if marker.exists():
+            return bool(json.loads(marker.read_text()).get("granted"))
+    except Exception:
+        pass
+    return False
+
+
+def _screen_granted_live():
+    """Live (uncached) Screen Recording grant by reading TCC.db directly.
+    Needs Full Disk Access to read the DB and a stable client id (the bundle id),
+    so it only works in the packaged app. Returns True/False, or None when we
+    can't tell (no FDA / dev mode / schema mismatch). Used only to detect the
+    'granted in Settings but not yet effective in this process' relaunch case."""
+    if not (IS_COMPILED and IS_MAC):
+        return None  # dev: client is the python/terminal path, not the bundle id
+    try:
+        import sqlite3
+        tcc_db = os.path.expanduser("~/Library/Application Support/com.apple.TCC/TCC.db")
+        con = sqlite3.connect(f"file:{tcc_db}?mode=ro", uri=True, timeout=1.0)
+        try:
+            cur = con.execute(
+                "SELECT auth_value FROM access WHERE service=? AND client=?",
+                ("kTCCServiceScreenCapture", MACOS_BUNDLE_ID),
+            )
+            row = cur.fetchone()
+        finally:
+            con.close()
+        if row is None:
+            return False
+        return int(row[0]) >= 2  # auth_value: 0/1 denied, 2 allowed (modern schema)
+    except Exception:
+        return None
+
+
+def _needs_relaunch():
+    """True if a relaunch-sensitive permission (Screen Recording) is granted on
+    disk but the cached in-process preflight still reports it as not granted."""
+    if not IS_MAC:
+        return False
+    try:
+        if not _screen_granted() and _screen_granted_live() is True:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _permission_states():
+    """Per-permission live state (mac). Pure read, never prompts. Single source
+    of truth for all_permissions_granted() and the /api/permissions/* routes."""
+    checks = {
+        "accessibility":    _ax_granted,
+        "full_disk_access": _fda_granted,
+        "screen_recording": _screen_granted,
+        "automation":       _automation_granted,
+    }
+    states = []
+    for spec in PERMISSION_CATALOG:
+        try:
+            granted = bool(checks[spec["key"]]())
+        except Exception:
+            granted = False
+        states.append({
+            "key": spec["key"],
+            "label": spec["label"],
+            "description": spec["description"],
+            "settings_deep_link": spec["settings_deep_link"],
+            "relaunch_sensitive": spec["relaunch_sensitive"],
+            "granted": granted,
+        })
+    return states
+
+
+def all_permissions_granted() -> bool:
+    """True iff every required macOS permission is currently granted. Non-mac ->
+    True. Used by app.py to decide whether to open the setup wizard or the app.
+    Fails open (True) on internal error so a bug can never brick startup."""
+    if not IS_MAC:
+        return True
+    try:
+        return all(p["granted"] for p in _permission_states())
+    except Exception:
+        debug_exception("all_permissions_granted")
+        return True
+
+
 def repair_stale_tcc_entries():
     """Clear orphaned macOS TCC ("ghost") entries for our bundle id, once per build.
 
@@ -392,58 +537,183 @@ def repair_stale_tcc_entries():
         debug_exception("repair_stale_tcc_entries")
 
 
+# --- per-permission triggers (each pokes ONE macOS permission) ----------------
+def _request_accessibility():
+    """Show the Accessibility trust prompt if not already granted."""
+    from ApplicationServices import AXIsProcessTrusted, AXIsProcessTrustedWithOptions
+    if not AXIsProcessTrusted():
+        AXIsProcessTrustedWithOptions({"AXTrustedCheckOptionPrompt": True})
+
+
+def _request_screen_recording():
+    """Show the Screen Recording prompt if not already granted (first call only;
+    macOS shows nothing on later calls — the wizard opens the pane as fallback)."""
+    from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
+    if not CGPreflightScreenCaptureAccess():
+        CGRequestScreenCaptureAccess()
+
+
+def _request_automation():
+    """Run the System Events probe — this triggers the Automation consent dialog
+    AND lets us learn whether Automation works. osascript BLOCKS until the user
+    answers the dialog (up to the timeout), so the result usually reflects the
+    user's choice. Caches the outcome for _automation_granted()."""
+    granted = False
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", 'tell application "System Events" to return name of first process whose frontmost is true'],
+            capture_output=True, text=True, timeout=10
+        )
+        granted = (result.returncode == 0 and bool(result.stdout.strip()))
+    except Exception:
+        granted = False
+    try:
+        (app_data_dir() / _AUTOMATION_CACHE).write_text(json.dumps({
+            "granted": granted, "checked_at": datetime.now().isoformat(),
+        }))
+    except Exception:
+        debug_exception("automation cache write")
+    return granted
+
+
+# Map of permission key -> programmatic trigger. Full Disk Access has none
+# (macOS only lets us open the pane), so it's absent here.
+_REQUEST_TRIGGERS = {
+    "accessibility": _request_accessibility,
+    "screen_recording": _request_screen_recording,
+    "automation": _request_automation,
+}
+
+
+def _open_settings_pane(deep_link):
+    """Open a specific System Settings privacy pane (best-effort)."""
+    try:
+        subprocess.run(["open", deep_link], capture_output=True, timeout=10)
+    except Exception:
+        debug_exception("open settings pane")
+
+
+def _tccutil_reset(service):
+    """Reset our own bundle's TCC entry for ONE service (user-level, no sudo).
+    This is the per-permission ghost-entry repair: clears a stale grant left by a
+    previous install so a fresh prompt can rebind to the CURRENT binary. No-op in
+    dev (the bundle id isn't registered; the Terminal/python owns the grant)."""
+    if not (IS_COMPILED and IS_MAC):
+        return False
+    try:
+        subprocess.run(["tccutil", "reset", service, MACOS_BUNDLE_ID],
+                       capture_output=True, text=True, timeout=10)
+        return True
+    except Exception:
+        debug_exception(f"tccutil reset {service}")
+        return False
+
+
+def request_permission(key):
+    """Drive ONE macOS permission for the setup wizard. Returns
+    {ok, key, granted, reset_performed}. Flow: re-check first; if already
+    granted, do nothing. Otherwise auto-repair any ghost entry (tccutil reset of
+    just this service, when resettable), then trigger the OS prompt / open the
+    exact Settings pane, then re-check."""
+    spec = next((p for p in PERMISSION_CATALOG if p["key"] == key), None)
+    if not IS_MAC or spec is None:
+        return {"ok": False, "key": key, "granted": False, "reset_performed": False}
+    checks = {
+        "accessibility": _ax_granted, "full_disk_access": _fda_granted,
+        "screen_recording": _screen_granted, "automation": _automation_granted,
+    }
+    try:
+        if checks[key]():
+            return {"ok": True, "key": key, "granted": True, "reset_performed": False}
+        reset_performed = False
+        if spec["auto_resettable"]:
+            reset_performed = _tccutil_reset(spec["tcc_service"])
+        trigger = _REQUEST_TRIGGERS.get(key)
+        if trigger:
+            try:
+                trigger()
+            except Exception:
+                debug_exception(f"trigger {key}")
+        _open_settings_pane(spec["settings_deep_link"])
+        return {"ok": True, "key": key, "granted": bool(checks[key]()),
+                "reset_performed": reset_performed}
+    except Exception:
+        debug_exception(f"request_permission {key}")
+        return {"ok": False, "key": key, "granted": False, "reset_performed": False}
+
+
+def reset_all_permissions():
+    """Escape hatch: clear ALL of our bundle's TCC grants (the same reset the
+    uninstaller does, minus removing the app) for a guaranteed clean slate, then
+    relaunch. Compiled-mac only for the reset; the relaunch runs everywhere."""
+    if IS_MAC and IS_COMPILED:
+        try:
+            subprocess.run(["tccutil", "reset", "All", MACOS_BUNDLE_ID],
+                           capture_output=True, text=True, timeout=15)
+        except Exception:
+            debug_exception("tccutil reset All")
+    try:
+        (app_data_dir() / _AUTOMATION_CACHE).unlink(missing_ok=True)
+    except Exception:
+        pass
+    request_relaunch()
+
+
+# --- relaunch (needed so cached preflights re-evaluate) -----------------------
+_relaunch_requested = False
+
+
+def request_relaunch():
+    """Ask for a relaunch after the GUI loop exits, and tear down the window so
+    webview.start() returns on the main thread. The actual relaunch_app() runs
+    from app.py right after webview.start()."""
+    global _relaunch_requested
+    _relaunch_requested = True
+    try:
+        w = get_window()
+        if w:
+            w.destroy()
+    except Exception:
+        debug_exception("request_relaunch destroy")
+
+
+def relaunch_app():
+    """Relaunch Auto Use cleanly so cached TCC preflights are re-evaluated. MUST
+    be called after webview.start() returns (main thread; port 5000 released).
+    Compiled: re-open the .app bundle via LaunchServices (rebinds TCC identity to
+    the bundle id) then hard-exit. Dev: replace the process image."""
+    try:
+        if IS_COMPILED and IS_MAC:
+            app_bundle = Path(sys.executable).resolve().parents[2]  # .../AutoUse.app
+            subprocess.Popen(["open", "-n", str(app_bundle)])
+            os._exit(0)
+        else:
+            python = sys.executable
+            script = str(_REPO_ROOT / "app.py")
+            os.execv(python, [python, script])
+    except Exception:
+        debug_exception("relaunch_app")
+
+
 def request_macos_permissions():
-    """Prompt user for required macOS permissions on first launch (no-op elsewhere)"""
+    """Bulk-prompt for required macOS permissions (no-op elsewhere). The setup
+    wizard now drives prompts one-by-one via request_permission(); this is kept
+    as a fallback for any non-wizard caller."""
     if not IS_MAC:
         return
     try:
-        from ApplicationServices import AXIsProcessTrusted
-
-        # Accessibility — prompt if not already granted
-        if not AXIsProcessTrusted():
-            from ApplicationServices import AXIsProcessTrustedWithOptions
-            AXIsProcessTrustedWithOptions({"AXTrustedCheckOptionPrompt": True})
-
-        # Screen Recording — prompt if not already granted
-        from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
-        if not CGPreflightScreenCaptureAccess():
-            CGRequestScreenCaptureAccess()
-
-        # Automation (Apple Events) — trigger System Events prompt at first launch
-        try:
-            subprocess.run(
-                ["osascript", "-e", 'tell application "System Events" to return name of first process whose frontmost is true'],
-                capture_output=True, text=True, timeout=10
+        _request_accessibility()
+        _request_screen_recording()
+        _request_automation()
+        if not _fda_granted():
+            print(
+                "\n⚠️  Full Disk Access not granted. Auto Use needs it so shell commands can\n"
+                "    read/write Desktop, Documents and Downloads without macOS permission popups.\n"
+                "    Opening System Settings — add to Full Disk Access:\n"
+                "      • Packaged app: add 'AutoUse'\n"
+                "      • Dev run: add your Terminal / VS Code / the python you launch from\n"
             )
-        except Exception:
-            pass
-
-        # Full Disk Access — macOS has no API to request it, only to open its pane.
-        try:
-            tcc_db = os.path.expanduser("~/Library/Application Support/com.apple.TCC/TCC.db")
-            has_fda = True
-            try:
-                with open(tcc_db, "rb") as _f:
-                    _f.read(1)
-            except PermissionError:
-                has_fda = False
-            except Exception:
-                has_fda = True  # missing path / other error — don't nag
-            if not has_fda:
-                print(
-                    "\n⚠️  Full Disk Access not granted. Auto Use needs it so shell commands can\n"
-                    "    read/write Desktop, Documents and Downloads without macOS permission popups.\n"
-                    "    Opening System Settings — add to Full Disk Access:\n"
-                    "      • Packaged app: add 'AutoUse'\n"
-                    "      • Dev run: add your Terminal / VS Code / the python you launch from\n"
-                )
-                subprocess.run(
-                    ["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"],
-                    capture_output=True, timeout=10
-                )
-        except Exception:
-            pass
-
+            _open_settings_pane("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
     except Exception:
         debug_exception("request_macos_permissions")
 
@@ -732,6 +1002,76 @@ def serve_cursor():
             return response
         return "Cursor not found", 404
     return send_from_directory(str(get_auto_use_path() / 'logo'), 'cursor.png')
+
+
+# =============================================================================
+# Flask routes — macOS permission setup wizard
+# =============================================================================
+@app.route('/setup')
+def setup_page():
+    """Serve the permission setup wizard (mirrors index())."""
+    if IS_COMPILED:
+        response = serve_embedded_file('frontend/setup/setup.html')
+        if response:
+            return response
+        return "setup.html not found in embedded resources", 500
+    return send_from_directory(app.static_folder, 'setup/setup.html')
+
+
+@app.route('/api/permissions/status', methods=['GET'])
+def api_permissions_status():
+    """Live per-permission status. The wizard polls this ~every 1.5s. Stateless:
+    re-reads the OS every call so it can never desync from System Settings."""
+    if not IS_MAC:
+        return jsonify({
+            "platform": "other", "is_compiled": IS_COMPILED,
+            "permissions": [], "all_granted": True, "needs_relaunch": False,
+        })
+    states = _permission_states()
+    return jsonify({
+        "platform": "mac",
+        "is_compiled": IS_COMPILED,
+        "permissions": states,
+        "all_granted": all(p["granted"] for p in states),
+        "needs_relaunch": _needs_relaunch(),
+    })
+
+
+@app.route('/api/permissions/request', methods=['POST'])
+def api_permissions_request():
+    """Drive ONE permission: auto-repair any ghost entry, trigger the prompt /
+    open the right Settings pane, re-check. Body: {permission_key|key}."""
+    from flask import request
+    data = request.get_json(silent=True) or {}
+    key = data.get("permission_key") or data.get("key")
+    result = request_permission(key)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route('/api/permissions/reset_all', methods=['POST'])
+def api_permissions_reset_all():
+    """Escape hatch — reset every TCC grant for our bundle, then relaunch."""
+    reset_all_permissions()
+    return jsonify({"ok": True})
+
+
+@app.route('/api/app/relaunch', methods=['POST'])
+def api_app_relaunch():
+    """Relaunch the app (so cached Screen Recording / Accessibility grants apply)."""
+    request_relaunch()
+    return jsonify({"ok": True})
+
+
+@app.route('/api/app/quit', methods=['POST'])
+def api_app_quit():
+    """Close the window so the user is never trapped in the wizard."""
+    try:
+        w = get_window()
+        if w:
+            w.destroy()
+    except Exception:
+        debug_exception("api_app_quit")
+    return jsonify({"ok": True})
 
 
 # =============================================================================

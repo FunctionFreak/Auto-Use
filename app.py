@@ -338,8 +338,10 @@ def main():
     # Clear orphaned macOS TCC "ghost" entries from a previous build (once per
     # build identity; no-op on Windows / dev).
     service.repair_stale_tcc_entries()
-    # Prompt for required macOS permissions on first launch (no-op on Windows).
-    service.request_macos_permissions()
+    # macOS permissions are now driven one-by-one by the setup wizard (served at
+    # /setup and gated via the initial window URL below), which also auto-repairs
+    # stale ghost entries per-permission. The old bulk request_macos_permissions()
+    # shotgun is intentionally NOT called here anymore.
 
     # Start Flask in a daemon thread, then wait until it's actually ready.
     t = threading.Thread(target=service.start_server)
@@ -358,9 +360,13 @@ def main():
     # --left-bar-w in frontend/css/style.css). Don't pass x/y: pywebview's Edge
     # backend double-scales them on HiDPI; omitting position uses CenterScreen.
     win_w, win_h = 1140, 700
+    # Gate the main app behind the permission setup wizard: if any required macOS
+    # permission is missing, open /setup instead of / (the wizard navigates to /
+    # once everything is granted). No-op on Windows / when all are granted.
+    start_path = '/setup' if (IS_MAC and not service.all_permissions_granted()) else '/'
     win = webview.create_window(
         'Auto use',
-        'http://127.0.0.1:5000',
+        f'http://127.0.0.1:5000{start_path}',
         width=win_w,
         height=win_h,
     )
@@ -403,6 +409,12 @@ def main():
             pass
 
     webview.start()
+
+    # If the setup wizard (Restart-to-finish) or the "Reset everything" action
+    # asked for a relaunch, do it now that the GUI loop has fully exited — main
+    # thread, with port 5000 released — so cached TCC preflights re-evaluate.
+    if getattr(service, '_relaunch_requested', False):
+        service.relaunch_app()
 
 
 if __name__ == '__main__':
