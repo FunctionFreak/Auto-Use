@@ -143,13 +143,14 @@ class AnthropicProvider:
                 if block.get("type") == "text":
                     text_content = block.get("text", "")
                     break
-            
+
             return {
                 "choices": [{
                     "message": {
                         "content": text_content
                     }
-                }]
+                }],
+                "usage": result.get("usage", {}),
             }
             
         except requests.exceptions.RequestException as e:

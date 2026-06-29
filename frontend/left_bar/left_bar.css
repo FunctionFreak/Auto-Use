@@ -1,0 +1,100 @@
+/* =====================================================================
+   Left Bar — persistent task-history panel (SHELL ONLY for now; contents
+   are intentionally empty and will be filled in a later step).
+
+   Styled as a liquid-glass card matching the other components: an inset,
+   rounded rectangle that reuses the global .liquidGlass-effect / -tint /
+   -shine layers (defined in css/style.css). The horizontal space for the bar
+   is reserved by `--left-bar-w` in css/style.css, which offsets the main app
+   content to the right. Loaded via left_bar/left_bar.js + linked in index.html.
+   ===================================================================== */
+
+.left-bar {
+    position: fixed;
+    /* Very small gap from the window's left edge; taller than the chat card.
+       The RIGHT edge stays anchored at --left-bar-w (so content is unchanged):
+       shrinking the left gap is compensated by growing the width below. */
+    left: clamp(5px, 0.7vw, 9px);
+    top: clamp(5px, 0.7vw, 9px);
+    bottom: clamp(14px, 1.8vw, 22px);
+    /* Fill the reserved bar space minus the (small) left gap, so the right edge
+       lands at --left-bar-w and the gap before the main content is unchanged. */
+    width: calc(var(--left-bar-w) - clamp(5px, 0.7vw, 9px));
+    z-index: 30;
+    box-sizing: border-box;
+
+    /* Rounded glass rectangle */
+    border-radius: var(--glass-radius);
+    overflow: hidden;
+    box-shadow: 0 clamp(4px, 1vw, 8px) clamp(16px, 3vw, 32px) rgba(0, 0, 0, 0.1);
+
+    display: flex;
+    flex-direction: column;
+
+    /* Hidden until the splash finishes; revealed via .revealed (added by
+       left_bar.js on the 'splashDone' message). */
+    opacity: 0;
+    transform: translateX(-12px);
+    pointer-events: none;
+    transition: opacity 0.6s cubic-bezier(0.25, 0.8, 0.25, 1),
+                transform 0.6s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.left-bar.revealed {
+    opacity: 1;
+    transform: translateX(0);
+    pointer-events: auto;
+}
+
+.left-bar:hover {
+    box-shadow: 0 clamp(6px, 1.5vw, 12px) clamp(20px, 4vw, 40px) rgba(0, 0, 0, 0.15);
+}
+
+/* Content wrapper — top-aligned column (overrides the centered
+   .liquidGlass-content). Body fills the space; footer pins to the bottom. */
+.left-bar .left-bar-content {
+    /* border-box so width:100% (from .liquidGlass-content) INCLUDES the padding;
+       otherwise the wrapper overflows right and flex-end clips the cog. */
+    box-sizing: border-box;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    padding: clamp(12px, 1.5vw, 18px);
+    gap: clamp(8px, 1vw, 12px);
+}
+
+/* Header — Auto Use logo, top-left. */
+.left-bar .left-bar-header {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding-bottom: clamp(8px, 1vw, 12px);
+}
+
+/* Auto Use brand logo, top-left of the bar. */
+.left-bar-logo {
+    height: clamp(26px, 3vw, 34px);
+    width: auto;
+    object-fit: contain;
+    display: block;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+/* Body — New chat button + future history list. Fills the space so the
+   footer (settings cog) is pushed to the bottom. */
+.left-bar .left-bar-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+/* Footer — settings cog, pinned bottom-left of the bar. */
+.left-bar .left-bar-footer {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding-top: clamp(8px, 1vw, 12px);
+}

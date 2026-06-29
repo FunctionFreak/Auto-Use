@@ -1,0 +1,55 @@
+/* =====================================================================
+   Settings button component — the gear that opens the settings overlay.
+   Moved out of css/style.css into its own folder for maintainability.
+
+   Previously this was a fixed, JS-positioned button floating next to the LLM
+   button; it now lives in the left bar footer as an in-flow element. The
+   settings OVERLAY/panel itself still lives in index.html + script.js for now.
+   ===================================================================== */
+
+.settings-btn {
+    position: relative;          /* in-flow within the left bar footer */
+    width: clamp(30px, 3vw, 36px);
+    height: clamp(30px, 3vw, 36px);
+    border-radius: 50%;
+    cursor: pointer;
+    overflow: hidden;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    box-shadow: 0 clamp(3px, 0.8vw, 6px) clamp(12px, 2.5vw, 24px) rgba(0, 0, 0, 0.1);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.settings-btn:hover {
+    transform: scale(1.08);
+    box-shadow: 0 clamp(4px, 1vw, 8px) clamp(16px, 3vw, 28px) rgba(0, 0, 0, 0.15);
+}
+
+.settings-icon-wrapper {
+    position: relative;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.settings-icon {
+    width: clamp(16px, 1.8vw, 20px);
+    height: clamp(16px, 1.8vw, 20px);
+    color: rgba(90, 90, 90, 0.85);
+    transition: transform 0.4s ease;
+}
+
+.settings-btn:hover .settings-icon {
+    transform: rotate(45deg);
+}
+
+/* Hide the cog while CLI pills own the screen (preserves prior behavior). */
+body.cli-mode .settings-btn {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.35s ease;
+}

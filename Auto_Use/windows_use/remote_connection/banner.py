@@ -382,7 +382,7 @@ BANNER_HTML = r"""<!DOCTYPE html>
   <div class="banner">
     <div class="measure">
       <div class="stop-agent-button">
-        <iframe id="orbFrame" class="orb-frame" src="http://127.0.0.1:5000/pc_button.html"
+        <iframe id="orbFrame" class="orb-frame" src="http://127.0.0.1:5000/chat_input/pc_button.html"
                 scrolling="no" frameborder="0"></iframe>
       </div>
       <div class="body">

@@ -204,7 +204,35 @@ class AgentResponseFormatter:
         except Exception as e:
             # If any error occurs, return failure with raw response
             return (False, None, raw_response)
-    
+
+    @staticmethod
+    def extract_tools(normalized_response: str) -> list:
+        """Pull this turn's tools from the parsed action block, in execution order,
+        for the frontend tool-flow chain. e.g.
+            [{"name": "left_click", "clicks": 2}, {"name": "input"}, {"name": "web"}]
+        """
+        tools = []
+        try:
+            data = json.loads(normalized_response)
+            actions = data.get("action", [])
+            if isinstance(actions, dict):
+                actions = [actions]
+            for item in actions:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("type")
+                if not name:
+                    continue
+                tool = {"name": name}
+                if "clicks" in item:
+                    tool["clicks"] = item.get("clicks")
+                if "direction" in item:
+                    tool["direction"] = item.get("direction")
+                tools.append(tool)
+        except Exception:
+            pass
+        return tools
+
     @staticmethod
     def format_response(normalized_response: str, include_action: bool = False) -> str:
         """Format normalized JSON response into readable terminal output with emojis.

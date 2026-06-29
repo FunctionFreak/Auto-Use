@@ -89,9 +89,9 @@ _embedded_resources.py
 _build_stamp.py
 /raw_reasoning
 *.mp4
-!frontend/background.mp4
 !demo.mp4
 /Auto_Use/api_key
+/Auto_Use/agent_conversation/settings.json
 /Auto_Use/windows_use/mcp_tracking
 *.exe
 *.ico
@@ -117,3 +117,8 @@ screen_record.py
 /Auto_Use/macOS_use/scratchpad
 /cli_minion_result
 /Auto_Use/windows_use/scratchpad/cli_minion
+
+# Resumable chat memory (UI) — runtime session data lives inside the package;
+# the code (service.py / __init__.py) is tracked, the saved chats are not.
+/Auto_Use/agent_conversation/index.json
+/Auto_Use/agent_conversation/chat_*/

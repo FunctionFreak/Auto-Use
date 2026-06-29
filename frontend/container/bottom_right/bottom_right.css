@@ -1,0 +1,146 @@
+/* =====================================================================
+   Bottom-right container — the agent's TODO list. Injected into #mainGrid
+   (col 2, row 2). The TODO list is TRANSPARENT: no card, no background, no glow —
+   just the task rows (check / spinner + text) rendered straight onto the cell, blank
+   until window.updateTodoList populates it (bottom_right.js). check / spinner adapted
+   from coder_animation.html; classes prefixed todo-*, keyframes prefixed tw-*.
+   ===================================================================== */
+.bottom-right-zone {
+    grid-column: 2;
+    grid-row: 2;
+    min-width: 0;
+    min-height: 0;
+    position: relative;
+    /* Borderless — the todo rows render transparently. */
+    border-radius: var(--glass-radius);
+    overflow: hidden;
+}
+
+/* The todo state fills the box. Opacity (not display:none) keeps it measurable.
+   setWorkState('todo') in script.js toggles .is-active on #todoState. */
+.bottom-right-zone .work-state {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+.bottom-right-zone .work-state.is-active {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* The TODO list is a compact block that FILLS the cell, anchored near the top with
+   a little padding. Beyond what fits it scrolls (bottom_right.js: "no scroll until
+   3 done, then up one per completion"). */
+.bottom-right-zone .work-state.todo-state {
+    align-items: flex-start;        /* anchor to the top — little space above */
+    justify-content: center;
+    padding: clamp(9px, 1.2vw, 13px) clamp(13px, 1.5vw, 18px);
+    box-sizing: border-box;
+}
+.todo-list {
+    width: 100%;
+    max-height: 100%;              /* fill the cell — compact rows; scrolls beyond */
+    overflow-y: auto;
+    overflow-x: hidden;
+    scroll-behavior: smooth;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", "Courier New", monospace;
+    font-size: 11.5px;
+    line-height: 1.35;
+}
+.todo-list::-webkit-scrollbar { display: none; }
+
+.todo-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    min-height: 23px;
+    flex: 0 0 auto;            /* keep row size so the list scrolls, not squishes */
+    color: rgba(0, 0, 0, 0.6);
+}
+
+.todo-check {
+    width: 13px;
+    height: 13px;
+    flex: 0 0 auto;
+    border-radius: 3px;
+    border: 1.3px solid rgba(0, 0, 0, 0.3);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.todo-check.done {
+    background: transparent;
+    border-color: transparent;
+}
+.todo-check.done::after {
+    content: "";
+    width: 3.8px;
+    height: 7px;
+    border: solid #8b5cf6;
+    border-width: 0 1.6px 1.6px 0;
+    transform: rotate(45deg) translate(-0.5px, -1px);
+    animation: tw-tickGlow 3s ease-in-out infinite;
+}
+@keyframes tw-tickGlow {
+    0%, 100% { filter: drop-shadow(0 0 2px rgba(139, 92, 246, 0.6)); }
+    50% { filter: drop-shadow(0 0 5px rgba(139, 92, 246, 1)); }
+}
+
+/* The rotating dial shown on the current (first not-done) task. */
+.todo-spinner {
+    width: 13px;
+    height: 13px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    border: 1.6px solid rgba(139, 92, 246, 0.3);
+    border-top-color: #8b5cf6;
+    animation: tw-spin 1s linear infinite;
+    display: inline-block;
+    box-sizing: border-box;
+}
+@keyframes tw-spin {
+    to { transform: rotate(360deg); }
+}
+
+.todo-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* Completed: just the tick + a subtle dim. No strikethrough. */
+.todo-text.is-done {
+    color: rgba(0, 0, 0, 0.4);
+}
+
+/* Interrupted (Stop pressed) — a still-pending task is marked cancelled with a
+   darker ✕ and darker text, instead of a frozen spinner. */
+.todo-cross {
+    width: 13px;
+    height: 13px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(25, 25, 25, 0.85);
+    font-weight: 800;
+    font-size: 12px;
+    line-height: 1;
+}
+.todo-cross::after { content: "✕"; }
+.todo-text.is-cancelled {
+    color: rgba(25, 25, 25, 0.8);
+}

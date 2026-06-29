@@ -1,0 +1,68 @@
+<!-- Chat input component — the bottom text box (the agent-start input). Holds the
+     output / cli / agent-activated strip areas plus the input bar (the textarea and
+     the stop-agent orb). Injected into #chatWrapper by chat_input.js; the agent-
+     lifecycle wiring (Enter-to-send, stop button, streaming) stays in script.js and
+     attaches on the 'chatinput:ready' event. Future bottom-row tools go in the empty
+     space left of the .input-toolbar group. -->
+<div class="chat-container-content">
+    <!-- New Output Stream Area -->
+    <div class="output-stream-area">
+        <div class="welcome-overlay" id="welcomeOverlay">
+            <div class="welcome-eye"></div>
+            <div class="welcome-eye"></div>
+            <div class="welcome-glow"></div>
+        </div>
+        <div class="milestone-stream" id="milestoneStream"></div>
+    </div>
+
+    <!-- CLI streaming area: takes over the chat box during cli_await -->
+    <div class="cli-stream-area" id="cliStreamArea">
+        <div class="cli-stream-list" id="cliStreamList"></div>
+    </div>
+
+    <!-- Agent Response Strip (Hidden by default) -->
+    <div class="agent-response-strip" id="agentResponseStrip">
+        <div class="agent-cursor-icon"></div>
+        <span class="agent-label">Agent activated:</span>
+        <span class="agent-text" id="agentText"></span>
+    </div>
+
+    <!-- Composer that collapses on send. IDLE: a ONE-line textarea on top (grows upward
+         as you type) with a tools row below it — the model picker + send/stop orb grouped
+         at the RIGHT (the empty left of that row is room for future tools). ON SEND: the
+         text shrinks to one line and the tools row is pushed UP to sit beside it, so the
+         whole thing becomes a single slim row; the grey send orb morphs into the glowing
+         stop orb (same slot, crossfade). -->
+    <div class="input-area-wrapper">
+        <textarea class="chat-input" placeholder="Select a model in Settings to start..." rows="1" disabled></textarea>
+
+        <div class="input-toolbar">
+            <!-- Model picker (drop-up) — sits at the right, just left of the send orb.
+                 Label shows the active provider until a model is picked, then the model
+                 name. Wired by script.js (wireChatDropdown) which reuses makeDropdown.
+                 Kept a descendant of .input-area-wrapper so the :has(.chat-model-dropdown.open)
+                 z-index lift still resolves. -->
+            <div class="model-dropdown chat-model-dropdown" id="chatModelDropdown">
+                <button class="model-dropdown-trigger" type="button" aria-label="Select model">
+                    <span class="model-dropdown-value placeholder">select model</span>
+                    <svg class="chat-dropdown-chevron" width="14" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <polyline points="6 10 12 4 18 10"></polyline>
+                        <polyline points="6 14 12 20 18 14"></polyline>
+                    </svg>
+                </button>
+                <div class="model-dropdown-menu"></div>
+            </div>
+
+            <!-- Orb slot: the send orb (idle) and stop orb (running) are overlaid here and
+                 crossfade into one another so the same-shape circles read as one morph. -->
+            <div class="input-orb-slot">
+                <!-- Send orb: embeds send_button.html (grey, idle). Clicking it sends. -->
+                <iframe id="sendBtnFrame" class="send-agent-frame" src="chat_input/send_button.html"
+                        title="Send" scrolling="no" frameborder="0"></iframe>
+                <!-- Stop Agent Orb Button: embeds pc_button.html (glowing, agent running). -->
+                <iframe id="stopBtnFrame" class="stop-agent-frame" src="chat_input/pc_button.html"
+                        title="Stop Agent" scrolling="no" frameborder="0"></iframe>
+            </div>
+        </div>
+    </div>
+</div>

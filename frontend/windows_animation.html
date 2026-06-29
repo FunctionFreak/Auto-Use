@@ -8,19 +8,10 @@
     body {
       margin: 0;
       min-height: 100vh;
-      background-color: #fff;
+      /* Same off-white as the app background so the splash matches the app. */
+      background-color: #D0CFC9;
       font-family: sans-serif;
       overflow: hidden;
-    }
-
-    #bgVideo {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
-      object-fit: cover;
-      z-index: 0;
     }
 
     .laptop-container {
@@ -144,10 +135,6 @@
   </style>
 </head>
 <body>
-
-  <video id="bgVideo" autoplay muted loop playsinline>
-    <source src="background.mp4" type="video/mp4">
-  </video>
 
   <canvas id="particleCanvas"></canvas>
 

@@ -142,3 +142,16 @@ class CLIAgentResponseFormatter:
         except:
             pass
         return []
+
+    @staticmethod
+    def format_stream_json(normalized_response: str) -> str:
+        """Per-step payload for the streaming UI terminal — ONLY the action block (a real
+        terminal shows what's being executed, not thinking/goal/memory). The frontend reads
+        `action` from this for both the `>` stream and the tool-icon chain. On parse error,
+        fall back to the input unchanged.
+        """
+        try:
+            json_data = json.loads(normalized_response)
+            return json.dumps({"action": json_data.get("action", [])}, indent=2, ensure_ascii=False)
+        except Exception:
+            return normalized_response

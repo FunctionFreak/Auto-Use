@@ -2,6 +2,26 @@
 <html>
 <head>
     <link rel="stylesheet" href="css/style.css">
+    <!-- Left bar component styles (markup injected by left_bar/left_bar.js) -->
+    <link rel="stylesheet" href="left_bar/left_bar.css">
+    <!-- Settings button component (markup injected into the left bar footer) -->
+    <link rel="stylesheet" href="settings/settings.css">
+    <!-- New Chat button component (markup injected into the left bar body) -->
+    <link rel="stylesheet" href="chat/chat.css">
+    <!-- Main content T-grid zone components (container/ holds all three) -->
+    <link rel="stylesheet" href="container/top_left/top_left.css">
+    <link rel="stylesheet" href="container/top_left/globe_shell.css">
+    <link rel="stylesheet" href="container/top_right/top_right.css">
+    <link rel="stylesheet" href="container/bottom_left/bottom_left.css">
+    <link rel="stylesheet" href="container/bottom_right/bottom_right.css">
+    <!-- Chat input (bottom text box) component -->
+    <link rel="stylesheet" href="chat_input/chat_input.css">
+    <!-- Memory bar — far-right vertical token gauge (background) -->
+    <link rel="stylesheet" href="memory_bar/memory_bar.css">
+    <!-- CLI container — full-width panel that slides up from the bottom on cli_await -->
+    <link rel="stylesheet" href="cli/cli_stage.css">
+    <!-- Live coder card rendered inside that container (one per CLI agent) -->
+    <link rel="stylesheet" href="cli/cli_container/coder_card.css">
     <!-- Three.js for Globe Animation -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
@@ -18,39 +38,12 @@
         </symbol>
     </svg>
 
-    <!-- Globe Container for Web Search Animation (outside image container) -->
-    <div class="main-globe-container" id="mainGlobeContainer"></div>
-
-    <!-- Shell Terminal Container for Shell Command Animation (outside image container) -->
-    <div class="shell-terminal-container" id="shellTerminalContainer">
-        <div class="shell-terminal-card">
-            <div class="shell-term-bar">
-                <div class="shell-term-title" id="shellTermTitle">Shell</div>
-            </div>
-            <div class="shell-term-body" id="shellTermBody">
-                <div class="line visible"><b>$</b> <span id="shellCmdText"></span></div>
-                <div class="line" id="shellStreamLine"><span class="muted">› </span><span id="shellStreamText"></span></div>
-                <div class="line" id="shellStatusLine">
-                    <span class="tag run" id="shellStatusTag">●</span>
-                    <span id="shellStatusText">running</span>
-                    <span class="cursor" id="shellCursor" aria-hidden="true"></span>
-                </div>
-                <div class="shell-progress" id="shellProgress">
-                    <span class="fill"></span>
-                    <span class="glint" aria-hidden="true"></span>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="image-stream-container" id="imageStreamContainer">
-        <div class="liquidGlass-effect"></div>
-        <div class="liquidGlass-tint"></div>
-        <div class="liquidGlass-shine"></div>
-        <div class="liquidGlass-content">
-            <img src="" alt="Screenshot Preview" class="stream-image" style="display: none;">
-        </div>
-    </div>
+    <!-- The agent screenshot (#imageStreamContainer), the web-search globe
+         (#mainGlobeContainer) and the shell terminal (#shellTerminalContainer)
+         now live INSIDE the T-grid container components:
+           • container/top_left/  → screenshot       (col 1, row 1)
+           • container/top_right/ → tracking progress (col 2, row 1)
+         They keep the same ids/classes so the script.js engine code is unchanged. -->
 
     <!-- Template cloned by script.js for each CLI subprocess pill -->
     <template id="cliPillTemplate">
@@ -182,113 +175,63 @@
         </filter>
     </svg>
 
-    <div class="settings-btn" id="settingsBtn" title="Settings">
-        <div class="liquidGlass-effect-btn"></div>
-        <div class="liquidGlass-tint-btn"></div>
-        <div class="liquidGlass-shine-btn"></div>
-        <div class="settings-icon-wrapper">
-            <svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="3"></circle>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-            </svg>
-        </div>
+    <!-- Settings button is now a component injected into the left bar footer
+         (see frontend/settings/). Provider/model selection moved into
+         Settings → Model Selection (two dropdowns). -->
+
+    <!-- Right side is intentionally transparent now: the glass card layers were
+         removed so only the text box shows over the greige background. -->
+    <!-- Main content 2x2 grid: screenshot (top-left) | tracking progress (top-right) |
+         tool-response chain (bottom-left) | todo list (bottom-right). Zones are injected
+         by their components (container/top_left, top_right, bottom_left, bottom_right). -->
+    <!-- Transient top-center notification (driven by window.showToast) -->
+    <div id="appToast" class="app-toast" role="status" aria-live="polite"></div>
+
+    <!-- Empty-state hero: centered "Auto Use / Agent with million moves." over the
+         main area. Shown on a fresh/new chat (default at launch + after New chat);
+         hidden the moment a task is sent or a saved chat is reopened. Toggled via
+         window.showWelcomeHero / window.hideWelcomeHero. -->
+    <div class="welcome-hero" id="welcomeHero" aria-hidden="true">
+        <div class="welcome-hero-title">Made to do...</div>
     </div>
 
-    <div class="glass-button-wrapper" id="llmWrapper">
-        <div class="liquidGlass-effect-btn"></div>
-        <div class="liquidGlass-tint-btn"></div>
-        <div class="liquidGlass-shine-btn"></div>
-        
-        <div class="glass-button-content">
-            <span class="current-selection">
-                <span class="selection-text">LLM Provider</span>
-            </span>
-        </div>
+    <div class="main-grid" id="mainGrid"></div>
 
-        <div class="dropdown-options" id="dropdownOptions">
-            <!-- Options will be populated dynamically -->
-        </div>
-    </div>
-
-    <video id="bgVideo" autoplay muted loop playsinline aria-hidden="true">
-        <source src="background.mp4" type="video/mp4">
-    </video>
-
-    <div class="chat-container-wrapper" id="chatWrapper">
-        <div class="liquidGlass-effect"></div>
-        <div class="liquidGlass-tint"></div>
-        <div class="liquidGlass-shine"></div>
-        
-        <div class="chat-container-content">
-            <!-- New Output Stream Area -->
-            <div class="output-stream-area">
-                <div class="welcome-overlay" id="welcomeOverlay">
-                    <div class="welcome-eye"></div>
-                    <div class="welcome-eye"></div>
-                    <div class="welcome-glow"></div>
-                </div>
-                <div class="milestone-stream" id="milestoneStream"></div>
-            </div>
-
-            <!-- CLI streaming area: takes over the chat box during cli_await -->
-            <div class="cli-stream-area" id="cliStreamArea">
-                <div class="cli-stream-list" id="cliStreamList"></div>
-            </div>
-            
-            <!-- Agent Response Strip (Hidden by default) -->
-            <div class="agent-response-strip" id="agentResponseStrip">
-                <div class="agent-cursor-icon"></div>
-                <span class="agent-label">Agent activated:</span>
-                <span class="agent-text" id="agentText"></span>
-            </div>
-
-            <div class="input-area-wrapper">
-                <textarea class="chat-input" placeholder="Select a model to start..." rows="1" disabled></textarea>
-                
-                <!-- Stop Agent Orb Button: embeds pc_button.html (single source of truth for the orb) -->
-                <iframe id="stopBtnFrame" class="stop-agent-frame" src="pc_button.html"
-                        title="Stop Agent" scrolling="no" frameborder="0"></iframe>
-            </div>
-        </div>
-    </div>
+    <!-- Chat input (the bottom text box) is a component now — markup lives in
+         chat_input/chat_input.html and is injected here by chat_input.js, which
+         then fires 'chatinput:ready' so script.js wires Enter-to-send etc. -->
+    <div class="chat-container-wrapper" id="chatWrapper"></div>
 
     <!-- Settings Panel Overlay -->
     <div class="settings-overlay" id="settingsOverlay">
         <div class="settings-panel">
-            <div class="liquidGlass-effect-btn"></div>
-            <div class="liquidGlass-tint-btn"></div>
-            <div class="liquidGlass-shine-btn"></div>
-            
             <div class="settings-panel-content">
 
-                <!-- Menu View (default) -->
-                <div class="settings-view settings-menu-view active" id="settingsMenuView">
-                    <div class="settings-header">
-                        <span class="settings-title">Settings</span>
-                        <button class="settings-close-btn" id="settingsCloseBtn">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                        </button>
-                    </div>
-                    <div class="settings-menu-list">
-                        <div class="settings-menu-item" data-view="apikeys">
-                            <span>API Keys</span>
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-                        </div>
-                        <div class="settings-menu-item" data-view="remote">
-                            <span>Remote Connection</span>
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                <!-- Single header — flat layout, all sections shown directly (no menu/nesting) -->
+                <div class="settings-header">
+                    <span class="settings-title">Settings</span>
+                </div>
+
+                <!-- Provider Selection (the MODEL is now picked in the chat-box drop-up) -->
+                <div class="settings-view settings-modelselect-view" id="settingsModelView">
+                    <div class="settings-section-heading">Provider</div>
+                    <div class="model-select-row">
+                        <div class="model-select-field">
+                            <label class="model-select-label">Provider</label>
+                            <div class="model-dropdown" id="providerDropdown">
+                                <button class="model-dropdown-trigger" type="button">
+                                    <span class="model-dropdown-value placeholder">Select a provider…</span>
+                                    <svg class="model-dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                </button>
+                                <div class="model-dropdown-menu"></div>
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- API Keys View -->
+                <!-- API Keys -->
                 <div class="settings-view settings-apikeys-view" id="settingsApikeysView">
-                    <div class="settings-sub-header">
-                        <button class="settings-back-btn" data-view="menu">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
-                        </button>
-                        <span class="settings-title">API Keys</span>
-                    </div>
+                    <div class="settings-section-heading">API Keys</div>
                     <div class="settings-provider-list">
                         <div class="settings-provider-row" data-provider="openrouter">
                             <a class="settings-provider-name" href="https://openrouter.ai/keys" target="_blank">OpenRouter</a>
@@ -355,47 +298,28 @@
                     <button class="settings-save-btn" id="settingsSaveBtn">Save</button>
                 </div>
 
-                <!-- Remote Connection View -->
+                <!-- Remote Connection -->
                 <div class="settings-view settings-remote-view" id="settingsRemoteView">
-                    <div class="settings-sub-header">
-                        <button class="settings-back-btn" data-view="menu">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
-                        </button>
-                        <span class="settings-title">Remote Connection</span>
-                    </div>
+                    <div class="settings-section-heading">Remote Connection</div>
 
-                    <!-- Not connected state: service selection -->
+                    <!-- Not connected state -->
                     <div class="remote-setup" id="remoteSetup">
-                        <!-- Telegram service button -->
-                        <button class="remote-service-btn" id="remoteTelegramBtn" type="button">
-                            <span class="remote-service-icon">
-                                <!-- Telegram paper-plane glyph -->
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M21.5 4.5L2.5 12l5.5 2 2 6 3-3.5 5.5 4 3-16zM10 14l8.5-7L11 14.5l-1 4.5L10 14z"/></svg>
+                        <div class="remote-row">
+                            <span class="remote-row-label remote-telegram-logo" aria-label="Telegram">
+                                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M21.5 4.5L2.5 12l5.5 2 2 6 3-3.5 5.5 4 3-16zM10 14l8.5-7L11 14.5l-1 4.5L10 14z"/></svg>
                             </span>
-                            <span class="remote-service-label">Telegram</span>
-                            <span class="remote-service-chevron">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="remote-row-actions">
+                                <button class="remote-connect-btn" id="remoteToggleBtn" type="button">Connect</button>
                             </span>
-                        </button>
-
-                        <!-- Guided pairing — revealed when Telegram button is clicked -->
-                        <div class="remote-phone-form" id="remoteTelegramForm" style="display:none;">
-                            <div class="remote-instruction">Click below to begin pairing. A helper banner will guide you through opening Telegram and logging in.</div>
-                            <button class="remote-connect-btn" id="remoteConnectBtn" type="button">Connect</button>
-                            <button class="remote-disconnect-btn" id="remoteDeleteTokenBtn" type="button" style="display:none;">Delete token</button>
-                            <div class="remote-instruction" id="remoteInstructions" style="display:none;">Please follow the on-screen instructions in the helper banner (top-right of your screen).</div>
                         </div>
-                    </div>
-
-                    <!-- Connected state -->
-                    <div class="remote-connected" id="remoteConnected" style="display:none;">
-                        <div class="remote-status-icon">✅</div>
-                        <div class="remote-bot-name" id="remoteBotName">@bot</div>
-                        <div class="remote-status-label">Connected & listening</div>
-                        <button class="remote-disconnect-btn" id="remoteDisconnectBtn">Disconnect</button>
+                        <div class="remote-instruction" id="remoteInstructions" style="display:none;">Please follow the on-screen instructions in the helper banner (top-right of your screen).</div>
                     </div>
                 </div>
 
+            </div>
+            <div class="settings-footer">
+                <button class="settings-cancel-btn" id="settingsCancelBtn" type="button">Cancel</button>
+                <button class="settings-savebar-btn" id="settingsSaveBarBtn" type="button">Save</button>
             </div>
         </div>
     </div>
@@ -448,6 +372,30 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <!-- Left bar component loader (injects left_bar/left_bar.html, reveals on splashDone) -->
+    <script src="left_bar/left_bar.js"></script>
+    <!-- Settings button component (mounts into the left bar footer, emits 'open-settings') -->
+    <script src="settings/settings.js"></script>
+    <!-- New Chat button component (mounts into the left bar body) -->
+    <script src="chat/chat.js"></script>
+    <!-- Main content T-grid zone components (mount into #mainGrid) -->
+    <script src="container/top_left/top_left.js"></script>
+    <!-- Top-left screen overlays: web globe + shell terminal swap over the screenshot -->
+    <script src="container/top_left/globe_shell.js"></script>
+    <script src="container/top_right/top_right.js"></script>
+    <script src="container/bottom_left/bottom_left.js"></script>
+    <script src="container/bottom_right/bottom_right.js"></script>
+    <!-- Chat input (bottom text box): injects into #chatWrapper, fires 'chatinput:ready' -->
+    <script src="chat_input/chat_input.js"></script>
+    <!-- Memory bar loader (defines window.updateMemoryBar before script.js) -->
+    <script src="memory_bar/memory_bar.js"></script>
     <script src="script.js"></script>
+    <!-- CLI container — the coder card component, then the stage orchestrator. Both load
+         AFTER script.js so the orchestrator's window.cli* hooks override the old chat-box
+         CLI rendering. coder_card.js must precede cli_stage.js (it defines CliCoderCard);
+         tool_icons.js precedes coder_card.js (it defines the action-icon engine). -->
+    <script src="cli/cli_container/tool_icons.js"></script>
+    <script src="cli/cli_container/coder_card.js"></script>
+    <script src="cli/cli_stage.js"></script>
 </body>
 </html>
