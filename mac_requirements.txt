@@ -10,6 +10,9 @@ Pillow
 opencv-python
 numpy
 scipy
+ocrmac
+pyobjc-framework-Vision
+pyobjc-framework-Quartz
 
 # HTTP Requests & API clients
 requests

@@ -122,3 +122,4 @@ screen_record.py
 # the code (service.py / __init__.py) is tracked, the saved chats are not.
 /Auto_Use/agent_conversation/index.json
 /Auto_Use/agent_conversation/chat_*/
+automation_grant.json
