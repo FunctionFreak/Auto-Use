@@ -40,6 +40,7 @@ import re
 import io
 import time
 import base64
+import threading
 import numpy as np
 from collections import namedtuple
 from PIL import Image, ImageDraw, ImageFont
@@ -62,12 +63,19 @@ from ApplicationServices import (
     AXIsProcessTrusted, kAXErrorSuccess,
 )
 
+try:
+    from .ocr import OCRScanner
+except ImportError:  # allow `python element.py` standalone
+    from ocr import OCRScanner
+
 
 # ========== CONFIGURATION ==========
 # Toggle switches — same semantics as Windows element.py
 SCREENSHOT = True    # Set to False to only generate element tree without screenshot
 DEBUG = False        # Set to True to save files to debug folders, False for direct LLM only
 FRONTEND = True      # Set to True when running from app.py to send images to frontend
+OCR = True           # Set to False to disable Apple Vision OCR merge (canvas/label-less text)
+OCR_RECOGNITION_LEVEL = "accurate"  # "accurate" (default) or "fast" (lower latency)
 
 # Define Rect namedtuple matching Windows format (left, top, right, bottom)
 Rect = namedtuple('Rect', ['left', 'top', 'right', 'bottom'])
@@ -494,6 +502,15 @@ def build_label(element, cfg):
 _seen_roles = set()
 
 CLIP_ROLES = frozenset({"AXScrollArea", "AXList", "AXOutline", "AXTable"})
+
+# Cleaned ("AX"-stripped) roles that are structural wrappers — they never claim
+# screen space for OCR overlap purposes; gaps between their children are exactly
+# where OCR fills in. Only "Group" actually reaches the tree today (the rest are
+# CLIP_ROLES that aren't tracked as nodes); listing them is future-proofing.
+OCR_STRUCTURAL_CONTAINER_TYPES = frozenset({
+    "Group", "ScrollArea", "List", "Outline", "Table",
+    "WebArea", "SplitGroup", "TabGroup", "Toolbar",
+})
 
 
 def _overlaps(a, b):
@@ -1335,6 +1352,15 @@ class UIElementScanner:
         self.found_elements = {}        # Dictionary to store elements by type
         self._debug_iteration = 0       # Debug iteration counter
 
+        # OCR state
+        self._screenshot = None         # Single captured PIL screenshot (pixels)
+        self._scale = 2.0               # Backing scale factor of the capture
+        self._screen_size = (0, 0)      # (width, height) in CG points
+        self._ocr_backdrop_max_area = float("inf")  # leaves bigger than this don't suppress OCR
+        self.ocr_words = []             # Raw OCR lines (CG points, filtered later)
+        self.ocr_scanner = None         # OCRScanner instance
+        self.ocr_thread = None          # Thread handle for parallel OCR scan
+
     def scan_elements(self):
         """Scan the active window and menu bar for configured element types."""
 
@@ -1350,6 +1376,10 @@ class UIElementScanner:
         self.top_layer_info = None
         self.second_layer_info = None
         self.found_elements = {}
+        self._screenshot = None
+        self.ocr_words = []
+        self.ocr_scanner = None
+        self.ocr_thread = None
 
         # Check accessibility permission
         if not AXIsProcessTrusted():
@@ -1359,11 +1389,29 @@ class UIElementScanner:
 
         # Get screen info
         screen = get_screen()
+        self._screen_size = (screen["width"], screen["height"])
 
         # Run the macOS AX scan
         _seen_roles.clear()
         app_info, menu_items, elements = extract_all(screen)
         elements.sort(key=lambda e: (e["y"], e["x"]))
+
+        # Capture the screen ONCE, now that extract_all has settled the frame
+        # (it activates the app + toggles AXEnhancedUserInterface with a sleep).
+        # The same image is reused for OCR overlap-filtering and final annotation,
+        # so OCR boxes, AX boxes, and the displayed screenshot share one frame.
+        if SCREENSHOT or OCR:
+            self._screenshot, self._scale = take_screenshot(screen)
+
+        # Start OCR in a parallel thread — it overlaps the (main-thread) tree build.
+        if OCR and self._screenshot is not None:
+            self.ocr_scanner = OCRScanner(
+                self._screenshot.copy(), self._scale,
+                (screen["x"], screen["y"]),
+                recognition_level=OCR_RECOGNITION_LEVEL,
+            )
+            self.ocr_thread = threading.Thread(target=self.ocr_scanner.scan)
+            self.ocr_thread.start()
 
         # Store application name
         if app_info:
@@ -1431,6 +1479,16 @@ class UIElementScanner:
 
         # ----- Build element tree from flat elements using spatial containment -----
         self.element_tree = self._build_hierarchical_tree(elements)
+
+        # ----- Merge OCR survivors into the tree -----
+        # Join the parallel OCR scan, then nest any text the AX tree missed
+        # (canvas / label-less controls) as OCR_TEXT nodes that don't overlap
+        # an already-detected element.
+        if self.ocr_thread is not None:
+            self.ocr_thread.join()
+            self.ocr_words = self.ocr_scanner.get_lines()
+            self.ocr_thread = None
+            self._filter_and_merge_ocr()
 
         # ----- Capture and annotate screenshot -----
         self._debug_iteration += 1
@@ -1577,9 +1635,157 @@ class UIElementScanner:
 
         return roots
 
+    # ========== OCR MERGE (ported from windows_use/tree/element.py) ==========
+
+    def _collect_leaf_rects(self, tree_list, rects):
+        """Recursively collect rects that actually claim screen space, for OCR
+        overlap checking. Structural wrappers (Group, ScrollArea, ...) never claim
+        space — the gaps between their children are exactly where OCR fills in —
+        so we recurse into them without adding their own rect. Every other element
+        type claims its rect, EXCEPT backdrop-sized leaves (a full-window AXImage
+        for a map / canvas, a big background) which shouldn't suppress the text
+        drawn on top of them."""
+        for item in tree_list:
+            has_children = bool(item.get("children"))
+            if item["type"] in OCR_STRUCTURAL_CONTAINER_TYPES:
+                if has_children:
+                    self._collect_leaf_rects(item["children"], rects)
+            else:
+                rect = item.get("rect") or item.get("visible_rect")
+                if rect:
+                    area = (rect.right - rect.left) * (rect.bottom - rect.top)
+                    if area <= self._ocr_backdrop_max_area:
+                        rects.append(rect)
+                if has_children:
+                    self._collect_leaf_rects(item["children"], rects)
+
+    def _find_deepest_container(self, tree_list, cx, cy):
+        """Find the deepest element whose rect contains point (cx, cy) and return
+        its children list (so the OCR node nests there). Uses center-point
+        containment — forgiving of OCR boxes that poke a pixel outside their
+        visual parent. Returns the top-level tree_list if nothing claims the point."""
+        for item in tree_list:
+            rect = item.get("rect") or item.get("visible_rect")
+            if not rect:
+                continue
+            if rect.left <= cx <= rect.right and rect.top <= cy <= rect.bottom:
+                # Inside this element — try to go deeper among its children.
+                if item.get("children"):
+                    deeper = self._find_deepest_container(item["children"], cx, cy)
+                    if deeper is not item["children"]:
+                        return deeper
+                    # Children exist but none claimed the point — nest as a sibling.
+                    return item["children"]
+                # Leaf element that contains the point — nest as its child.
+                return item.setdefault("children", [])
+        # No element in this list contains the point — caller decides.
+        return tree_list
+
+    def _filter_and_merge_ocr(self):
+        """Filter OCR lines against detected elements, nest survivors into the tree.
+
+        Only leaf (space-claiming) element rects suppress OCR; structural wrappers
+        don't. An OCR line whose center sits inside a leaf rect is already covered
+        by the AX scan and is discarded. Surviving lines (canvas / label-less text
+        the AX tree missed) are nested into the deepest matching container as
+        OCR_TEXT nodes and registered for clicking (coordinate-click fallback,
+        ax_element=None) + drawing."""
+        if not self.ocr_words:
+            return
+
+        # Backdrop guard: a leaf element covering a large fraction of the screen
+        # is a canvas/background (e.g. Apple Maps' full-window "Map" AXImage), not
+        # the label for any specific word. Such leaves must NOT suppress OCR text
+        # drawn over them, or we lose every label on a map / large image / canvas.
+        sw, sh = self._screen_size
+        self._ocr_backdrop_max_area = (0.25 * sw * sh) if (sw and sh) else float("inf")
+
+        # Collect rects that claim screen space (top layer + menu bar).
+        leaf_rects = []
+        self._collect_leaf_rects(self.element_tree, leaf_rects)
+        self._collect_leaf_rects(self.menu_bar_tree, leaf_rects)
+
+        # Drop OCR lines overlapping a detected leaf; also dedupe OCR-vs-OCR.
+        kept_lines = []
+        seen = set()
+        for line in self.ocr_words:
+            cx = (line["left"] + line["right"]) // 2
+            cy = (line["top"] + line["bottom"]) // 2
+
+            overlaps_leaf = any(
+                r.left <= cx <= r.right and r.top <= cy <= r.bottom
+                for r in leaf_rects
+            )
+            if overlaps_leaf:
+                continue
+
+            key = (line["text"], round(cx / 5), round(cy / 5))
+            if key in seen:
+                continue
+            seen.add(key)
+            kept_lines.append((line, cx, cy))
+
+        # Nest each surviving OCR line into the deepest matching container.
+        for line, cx, cy in kept_lines:
+            self.element_index += 1
+            line_rect = Rect(line["left"], line["top"], line["right"], line["bottom"])
+
+            node = {
+                "element": None,
+                "name": line["text"],
+                "aria_role": "",
+                "type": "OCR_TEXT",
+                "active": True,
+                "index": self.element_index,
+                "value": None,
+                "actions": None,
+                "visibility": "full",
+                "clipped_by": None,
+                "rect": line_rect,
+                "visible_rect": line_rect,
+                "children": [],
+                "browser_top_layer": None,
+                "browser_second_layer": None,
+                "source": "ocr",
+            }
+            target_list = self._find_deepest_container(self.element_tree, cx, cy)
+            target_list.append(node)
+
+            # Controller mapping — ax_element=None routes to the coordinate-click fallback.
+            self.elements_mapping[str(self.element_index)] = {
+                'element': None,
+                'rect': line_rect,
+                'visible_rect': line_rect,
+                'name': line["text"],
+                'aria_role': '',
+                'type': 'OCR_TEXT',
+                'value': None,
+                'visibility': 'full',
+                'clipped_by': None,
+                'ax_element': None,
+            }
+
+            # Track found elements by type (mirrors _assign_indices bookkeeping).
+            self.found_elements.setdefault("OCR_TEXT", []).append(node)
+
+            if SCREENSHOT:
+                self.elements_to_draw.append({
+                    "rect": line_rect,
+                    "index": self.element_index,
+                    "depth": 0,
+                    "visibility": "full",
+                    "source": "ocr",
+                })
+
     def _capture_and_annotate(self, screen):
-        """Capture screenshot, draw bounding boxes, store as base64."""
-        screenshot, scale = take_screenshot(screen)
+        """Annotate the screenshot captured earlier in scan_elements, store as base64."""
+        # Reuse the single frame captured (after extract_all settled) so OCR boxes,
+        # AX boxes, and the displayed screenshot are all consistent. Fall back to a
+        # fresh capture only if it wasn't taken (e.g. called outside scan_elements).
+        if self._screenshot is not None:
+            screenshot, scale = self._screenshot.copy(), self._scale
+        else:
+            screenshot, scale = take_screenshot(screen)
         if screenshot is None:
             self._annotated_image_base64 = None
             self._plain_screenshot = None
@@ -1608,6 +1814,7 @@ class UIElementScanner:
         for item in self.elements_to_draw:
             rect = item["rect"]
             index = str(item["index"])
+            is_ocr = item.get("source") == "ocr"
 
             # Convert from CG coordinates to pixel coordinates
             box = (
@@ -1616,6 +1823,11 @@ class UIElementScanner:
                 int((rect.right - ox) * scale),
                 int((rect.bottom - oy) * scale),
             )
+
+            # OCR boxes get slight padding for breathing room around tight text
+            if is_ocr:
+                pad = int(3 * scale)
+                box = (box[0] - pad, box[1] - pad, box[2] + pad, box[3] + pad)
 
             draw.rectangle(box, outline=BOX_COLOR, width=2)
 
@@ -1628,9 +1840,14 @@ class UIElementScanner:
                 text_width = len(label) * 8
                 text_height = 15
 
-            # Position label at top-left inside box
-            text_x = box[0] + 4
-            text_y = box[1] + 3
+            if is_ocr:
+                # OCR: position label above the box (text usually fills the box)
+                text_x = box[0]
+                text_y = box[1] - text_height - 2
+            else:
+                # Position label at top-left inside box
+                text_x = box[0] + 4
+                text_y = box[1] + 3
 
             # White outline for readability
             outline_color = (255, 255, 255)
@@ -1735,6 +1952,14 @@ class UIElementScanner:
         indent = "  " * depth
 
         for item in tree_list:
+            # OCR_TEXT elements use a distinct format (text the AX tree missed)
+            if item.get("source") == "ocr":
+                text = _xml_escape(item['name'])
+                result += f'{indent}[{item["index"]}]<Line="{text}", type="OCR_TEXT", active="True", visibility="full" />\n'
+                if item.get("children"):
+                    result += self._get_tree_text_recursive(item["children"], depth + 1)
+                continue
+
             name = _xml_escape(item['name'])
             visibility = item.get('visibility', 'full')
 
@@ -1806,6 +2031,14 @@ class UIElementScanner:
         indent = "  " * depth
 
         for item in tree_list:
+            # OCR_TEXT elements use a distinct format (text the AX tree missed)
+            if item.get("source") == "ocr":
+                text = _xml_escape(item['name'])
+                file.write(f'{indent}[{item["index"]}]<Line="{text}", type="OCR_TEXT", active="True", visibility="full" />\n')
+                if item.get("children"):
+                    self._write_tree_recursive(file, item["children"], depth + 1)
+                continue
+
             name = _xml_escape(item['name'])
             visibility = item.get('visibility', 'full')
 
