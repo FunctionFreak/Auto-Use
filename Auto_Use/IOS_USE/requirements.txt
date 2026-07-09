@@ -1,0 +1,4 @@
+requests
+Pillow
+google-genai
+python-dotenv
