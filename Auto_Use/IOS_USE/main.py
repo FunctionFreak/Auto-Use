@@ -1,4 +1,10 @@
-from agent_core.agent.service import AgentService
+import sys
+import os
+
+# Ensure project root (Auto-Use/) is on path when run directly: python main.py
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
+
+from Auto_Use.IOS_USE.agent.main_driver.service import AgentService
 
 # Configuration
 PROVIDER = "google"

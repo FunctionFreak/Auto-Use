@@ -6,11 +6,12 @@ import io
 import base64
 import os
 import time
-from agent_core.controller.service import controller_service
-from agent_core.vault.service import vault_service
+from ..controller.service import controller_service
+from ..vault.service import vault_service
 
-# Debug folder to save scans
-DEBUG = False  # Set to True to save files to debug folders
+# ========== FLAGS ==========
+DEBUG = False        # Set to True to save files to debug folders, False for direct LLM only
+FRONTEND = True      # Set to True when running from app.py to send images to frontend
 
 # Configuration embedded in code
 config = {
@@ -73,19 +74,15 @@ wda_url = "http://localhost:8100"
 class UIElementScanner:
     """Scanner for iPhone UI elements using WebDriverAgent"""
     
-    def __init__(self, config=None):
+    def __init__(self, config=None, frontend_callback=None):
         self.config = config or {}
+        self.frontend_callback = frontend_callback
         self.elements_mapping = {}
         
         # Store scan data in memory
         self.element_tree_text = ""
         self.image_base64 = None
-        
-        # Create debug directories if DEBUG is enabled
-        if DEBUG:
-            os.makedirs("debug/element", exist_ok=True)
-            os.makedirs("debug/screenshot", exist_ok=True)
-    
+
     def scan_elements(self):
         """Scan iPhone UI elements and capture screenshot"""
         try:
@@ -261,7 +258,10 @@ class UIElementScanner:
                     value = elem['value']
                     element_type = elem['type'].split('XCUIElementType')[-1].lower()
                     indent = "    " * elem['depth']  # 4 spaces per depth level
-                    element_lines.append(f'{indent}[{index}]<type="{element_type}", label="{label}", value="{value}", x="{elem["x"]}", y="{elem["y"]}", w="{elem["width"]}", h="{elem["height"]}" />\n')
+                    if value:
+                        element_lines.append(f'{indent}[{index}]<element_name="{label}", type="{element_type}", value="{value}" />\n')
+                    else:
+                        element_lines.append(f'{indent}[{index}]<element_name="{label}", type="{element_type}" />\n')
                 
                 # Store in memory
                 self.element_tree_text = ''.join(element_lines)
@@ -359,23 +359,31 @@ class UIElementScanner:
                     
                     # Save to debug folder ONLY if DEBUG is enabled
                     if DEBUG:
+                        os.makedirs("debug/element", exist_ok=True)
+                        os.makedirs("debug/screenshot", exist_ok=True)
                         timestamp = int(time.time())
                         debug_element_file = f"debug/element/ui_elements_{timestamp}.txt"
                         debug_screenshot_file = f"debug/screenshot/ui_elements_screenshot_{timestamp}.png"
-                        
+
                         # Save element tree to debug folder
                         with open(debug_element_file, 'w', encoding='utf-8') as f:
                             f.write(self.element_tree_text)
-                        
+
                         # Save annotated screenshot to debug folder
                         image.save(debug_screenshot_file)
-                    
+
+                    # Send to frontend
+                    if FRONTEND and self.frontend_callback:
+                        if DEBUG:
+                            # Send annotated screenshot for debugging
+                            self.frontend_callback(self.image_base64)
+                        else:
+                            # Send plain screenshot for production frontend
+                            self.frontend_callback(image_base64)
+
                 else:
                     print(f"Failed to take screenshot: {screenshot_response.status_code}")
                 
-                # Show preview
-                print(f"Elements found: {len(found_elements)}")
-            
             else:
                 print(f"Failed to get source: {response.status_code}")
                 

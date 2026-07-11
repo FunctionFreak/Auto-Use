@@ -7,12 +7,12 @@ import time
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
-from ..llm_provider.llm_manager import LLMManager
+from ...llm_provider.llm_manager import LLMManager
 from .view import AgentResponseFormatter
-from ..tree.element import UIElementScanner, ELEMENT_CONFIG
-from ..controller.view import ControllerView
-from ..controller.app import app_launcher_service
-from ..vault.service import vault_service
+from ...tree.element import UIElementScanner, ELEMENT_CONFIG
+from ...controller.view import ControllerView
+from ...controller.app import app_launcher_service
+from ...vault.service import vault_service
 
 class AgentService:
     """Service for Windows automation agent"""

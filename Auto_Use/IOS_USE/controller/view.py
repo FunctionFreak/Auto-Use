@@ -1,4 +1,4 @@
-# agent_core/controller/view.py
+# Auto_Use/IOS_USE/controller/view.py
 
 import json
 import logging
@@ -208,7 +208,7 @@ class ControllerView:
                 
                 try:
                     # Get credential from vault
-                    from agent_core.vault.service import vault_service
+                    from ..vault.service import vault_service
                     credential_value = vault_service.get_credential_for_element(int(element_number))
                     
                     if credential_value:

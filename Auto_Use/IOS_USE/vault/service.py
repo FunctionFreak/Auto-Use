@@ -26,7 +26,7 @@ class VaultService:
                     self.credentials = json.load(f)
                 logger.info(f"Loaded credentials for {len(self.credentials)} applications")
             else:
-                logger.warning("credentials.json not found")
+                logger.debug("credentials.json not found")
                 self.credentials = {}
         except Exception as e:
             logger.error(f"Error loading credentials: {str(e)}")

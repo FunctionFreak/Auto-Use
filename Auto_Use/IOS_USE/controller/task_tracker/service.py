@@ -11,8 +11,8 @@ class TaskTrackerService:
         """Initialize the Task Tracker Service"""
         # Get the project root directory
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        # Go up three levels from agent_core/controller/task_tracker to reach project root
-        self.root_dir = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
+        # Go up two levels from Auto_Use/IOS_USE/controller/task_tracker/ to reach IOS_USE/
+        self.root_dir = os.path.dirname(os.path.dirname(current_dir))
         
         # Set todo directory path
         self.todo_dir = os.path.join(self.root_dir, "todo")
