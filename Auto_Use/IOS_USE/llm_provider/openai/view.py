@@ -17,37 +17,37 @@
 # A small attribution goes a long way toward a healthy open-source
 # community — thank you for contributing.
 
-# Model mappings for Google provider
+# Model mappings for OpenAI provider
 # Maps user-friendly names to actual API model names
 
 MODEL_MAPPINGS = {
-    "gemini-3.1-pro": {
-        "api_name": "gemini-3.1-pro-preview",
+    "gpt-5.4-mini": {
+        "api_name": "gpt-5.4-mini",
         "vision": True,
-        "display_name": "Gemini 3.1 Pro",
+        "display_name": "GPT-5.4 Mini",
         "reasoning_support": True,
-        "vertex": False
+        "json_mode": True
     },
-    "gemini-3.5-flash": {
-        "api_name": "gemini-3.5-flash",
+    "gpt-5.4": {
+        "api_name": "gpt-5.4",
         "vision": True,
-        "display_name": "Gemini 3.5 Flash",
+        "display_name": "GPT-5.4",
         "reasoning_support": True,
-        "vertex": False
+        "json_mode": True
     },
-    "gemini-3.1-pro-vertex": {
-        "api_name": "gemini-3.1-pro-preview",
+    "gpt-5.5": {
+        "api_name": "gpt-5.5",
         "vision": True,
-        "display_name": "Gemini 3.1 Pro (Vertex)",
+        "display_name": "GPT-5.5",
         "reasoning_support": True,
-        "vertex": True
+        "json_mode": True
     },
-    "gemini-3.5-flash-vertex": {
-        "api_name": "gemini-3.5-flash",
+    "gpt-5.5-pro": {
+        "api_name": "gpt-5.5-pro",
         "vision": True,
-        "display_name": "Gemini 3.5 Flash (Vertex)",
+        "display_name": "GPT-5.5 Pro",
         "reasoning_support": True,
-        "vertex": True
+        "json_mode": True
     }
 }
 
@@ -55,9 +55,11 @@ def get_model_info(short_name: str) -> dict:
     """Get full model information from short name"""
     if short_name in MODEL_MAPPINGS:
         return MODEL_MAPPINGS[short_name]
+    # If not found, assume it's already a full model name
     return {
         "api_name": short_name,
         "vision": True,
         "display_name": short_name,
-        "reasoning_support": True
+        "reasoning_support": False,
+        "json_mode": True  # Default to supporting JSON mode for OpenAI
     }

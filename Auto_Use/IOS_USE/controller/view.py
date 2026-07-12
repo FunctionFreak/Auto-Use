@@ -208,7 +208,7 @@ class ControllerView:
                 
                 try:
                     # Get credential from vault
-                    from ..vault.service import vault_service
+                    from ...vault.service import vault_service
                     credential_value = vault_service.get_credential_for_element(int(element_number))
                     
                     if credential_value:

@@ -7,7 +7,7 @@ import base64
 import os
 import time
 from ..controller.service import controller_service
-from ..vault.service import vault_service
+from ...vault.service import vault_service
 
 # ========== FLAGS ==========
 DEBUG = False        # Set to True to save files to debug folders, False for direct LLM only

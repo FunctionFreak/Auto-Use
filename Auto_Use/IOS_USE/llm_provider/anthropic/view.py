@@ -17,47 +17,39 @@
 # A small attribution goes a long way toward a healthy open-source
 # community — thank you for contributing.
 
-# Model mappings for Google provider
+# Model mappings for Anthropic provider
 # Maps user-friendly names to actual API model names
 
 MODEL_MAPPINGS = {
-    "gemini-3.1-pro": {
-        "api_name": "gemini-3.1-pro-preview",
+    "claude-haiku-4.5": {
+        "api_name": "claude-haiku-4-5-20251001",
         "vision": True,
-        "display_name": "Gemini 3.1 Pro",
-        "reasoning_support": True,
-        "vertex": False
+        "display_name": "Claude Haiku 4.5"
     },
-    "gemini-3.5-flash": {
-        "api_name": "gemini-3.5-flash",
+    "claude-opus-4.7": {
+        "api_name": "claude-opus-4-7",
         "vision": True,
-        "display_name": "Gemini 3.5 Flash",
-        "reasoning_support": True,
-        "vertex": False
+        "display_name": "Claude Opus 4.7"
     },
-    "gemini-3.1-pro-vertex": {
-        "api_name": "gemini-3.1-pro-preview",
+    "claude-opus-4.6": {
+        "api_name": "claude-opus-4-6",
         "vision": True,
-        "display_name": "Gemini 3.1 Pro (Vertex)",
-        "reasoning_support": True,
-        "vertex": True
+        "display_name": "Claude Opus 4.6"
     },
-    "gemini-3.5-flash-vertex": {
-        "api_name": "gemini-3.5-flash",
+    "claude-sonnet-4.6": {
+        "api_name": "claude-sonnet-4-6",
         "vision": True,
-        "display_name": "Gemini 3.5 Flash (Vertex)",
-        "reasoning_support": True,
-        "vertex": True
-    }
+        "display_name": "Claude Sonnet 4.6"
+    },
 }
 
 def get_model_info(short_name: str) -> dict:
     """Get full model information from short name"""
     if short_name in MODEL_MAPPINGS:
         return MODEL_MAPPINGS[short_name]
+    # If not found, assume it's already a full model name
     return {
         "api_name": short_name,
         "vision": True,
-        "display_name": short_name,
-        "reasoning_support": True
+        "display_name": short_name
     }

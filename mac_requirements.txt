@@ -37,3 +37,6 @@ python-telegram-bot
 nuitka
 ordered-set
 zstandard
+
+# ios_use
+pymobiledevice3==9.32.0

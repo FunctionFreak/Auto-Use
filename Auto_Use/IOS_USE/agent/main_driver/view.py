@@ -1,34 +1,125 @@
+# Copyright 2026 Autouse AI — https://github.com/auto-use/Auto-Use
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# If you build on this project, please keep this header and credit
+# Autouse AI (https://github.com/auto-use/Auto-Use) in forks and derivative works.
+# A small attribution goes a long way toward a healthy open-source
+# community — thank you for contributing.
+
 import json
 import re
+import os
+import time
+from pathlib import Path
 
 class AgentResponseFormatter:
     """Formats agent JSON responses for terminal display"""
     
-    # Emoji mappings for each field
     FIELD_EMOJIS = {
         "thinking": "🧠 Thinking",
-        "verdict_last_action": "⚖️  Verdict Last Action", 
-        "image_observation": "👁️  Image Observation",
+        "eval": "📝 Eval", 
+        "decision": "👁️ Decision",
+        "next_goal": "🎯 Next Goal",
         "memory": "💾 Memory",
-        "current_goal": "🎯 Current Goal",
         "action": "⚡ Action"
     }
     
     @staticmethod
-    def normalize_response(raw_response: str) -> str:
+    def _parse_xml_tags(raw_response: str) -> dict | None:
+        """
+        Parse XML-tag format responses like <thinking>...</thinking>
+        Returns dict if successful, None if not XML format.
+        """
+        # Check if response contains XML-style tags
+        if not re.search(r'<(thinking|eval|decision|next_goal|memory|action)>', raw_response):
+            return None
+        
+        json_data = {}
+        
+        # Simple fields - extract content between tags
+        simple_fields = ["thinking", "eval", "decision", "next_goal", "memory"]
+        for field in simple_fields:
+            match = re.search(rf'<{field}>(.*?)</{field}>', raw_response, re.DOTALL)
+            if match:
+                json_data[field] = match.group(1).strip()
+        
+        # Action field - contains JSON-like content that needs wrapping
+        action_match = re.search(r'<action>(.*?)</action>', raw_response, re.DOTALL)
+        if action_match:
+            action_content = action_match.group(1).strip()
+            
+            # Remove trailing ``` if present (malformed markdown)
+            action_content = re.sub(r'```\s*$', '', action_content).strip()
+            
+            # Try to parse action content as JSON
+            try:
+                # If it's already valid JSON
+                json_data["action"] = json.loads(action_content)
+            except json.JSONDecodeError:
+                # Wrap in braces if it looks like JSON properties without outer braces
+                if action_content and not action_content.startswith('{'):
+                    try:
+                        wrapped = '{' + action_content + '}'
+                        json_data["action"] = json.loads(wrapped)
+                    except json.JSONDecodeError:
+                        # Last resort: store as raw string in a wrapper
+                        json_data["action"] = {"raw": action_content}
+                else:
+                    json_data["action"] = {"raw": action_content}
+        
+        # Return data only if we found at least some fields
+        if json_data:
+            return json_data
+        return None
+    
+    @staticmethod
+    def normalize_response(raw_response: str) -> tuple:
         """
         Normalize LLM response to ensure consistent format.
-        Always returns response in ```json\n{...}\n``` format.
+        Returns tuple: (success: bool, normalized_json: str, raw_response: str)
+        
+        - success: True if JSON was parsed successfully, False otherwise
+        - normalized_json: The normalized JSON string in ```json\n{...}\n``` format
+        - raw_response: Original raw response (useful for retry on failure)
+        
+        Handles multiple formats including:
+        - Standard ```json ... ``` blocks
+        - Reasoning/thinking text followed by JSON at the end
+        - Raw JSON
+        - XML-tag format
         """
         try:
             # First, try to extract JSON from various possible formats
             json_data = None
             
-            # Case 1: Response is already in ```json ... ``` format
-            json_match = re.search(r'```json\s*(.*?)\s*```', raw_response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-                json_data = json.loads(json_str)
+            # Case 1: Response has ```json ... ``` format (find the LAST one for reasoning models)
+            # Reasoning models often output thinking first, then JSON at the end
+            if not json_data:
+                try:
+                    # Find ALL ```json blocks and use the last one (most likely the actual output)
+                    all_json_blocks = list(re.finditer(r'```json\s*(.*?)\s*```', raw_response, re.DOTALL))
+                    if all_json_blocks:
+                        # Try the last block first (reasoning models put output at end)
+                        for match in reversed(all_json_blocks):
+                            try:
+                                json_str = match.group(1).strip()
+                                json_data = json.loads(json_str)
+                                break  # Success, stop trying
+                            except json.JSONDecodeError:
+                                continue  # Try the previous block
+                except Exception:
+                    pass  # Fall through to next case
             
             # Case 2: Response is raw JSON (no markdown wrapper)
             if not json_data:
@@ -36,92 +127,134 @@ class AgentResponseFormatter:
                     # Try to parse the entire response as JSON
                     json_data = json.loads(raw_response.strip())
                 except json.JSONDecodeError:
-                    # If that fails, try to find JSON object in the response
-                    json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', raw_response, re.DOTALL)
-                    if json_match:
-                        json_str = json_match.group(0)
-                        json_data = json.loads(json_str)
+                    pass  # Fall through to next case
             
-            # Case 3: Response has JSON but with extra text
+            # Case 3: Find JSON object using regex (handles embedded JSON)
             if not json_data:
-                # Look for JSON-like structure more aggressively
-                lines = raw_response.split('\n')
-                json_start = -1
-                json_end = -1
-                brace_count = 0
-                
-                for i, line in enumerate(lines):
-                    if '{' in line and json_start == -1:
-                        json_start = i
-                    if json_start != -1:
-                        brace_count += line.count('{') - line.count('}')
-                        if brace_count == 0 and json_start != -1:
-                            json_end = i
+                try:
+                    # Find JSON-like structures - use findall to get all matches, try from the end
+                    json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+                    matches = list(re.finditer(json_pattern, raw_response, re.DOTALL))
+                    for match in reversed(matches):
+                        try:
+                            json_str = match.group(0)
+                            json_data = json.loads(json_str)
                             break
-                
-                if json_start != -1 and json_end != -1:
-                    json_str = '\n'.join(lines[json_start:json_end + 1])
-                    json_data = json.loads(json_str)
+                        except json.JSONDecodeError:
+                            continue
+                except Exception:
+                    pass
             
-            # If we couldn't parse JSON, return error in expected format
+            # Case 4: Response has JSON but with extra text - use brace counting
             if not json_data:
-                return '''```json
-{
-  "thinking": "Error: Could not parse response as valid JSON",
-  "verdict_last_action": "Unable to parse response",
-  "image_observation": "",
-  "memory": "",
-  "current_goal": "",
-  "action": {}
-}
-```'''
+                try:
+                    # Look for JSON-like structure more aggressively
+                    # Find the LAST opening brace to handle reasoning + JSON at end
+                    lines = raw_response.split('\n')
+                    
+                    # Find all potential JSON start positions (lines with '{')
+                    potential_starts = [i for i, line in enumerate(lines) if '{' in line]
+                    
+                    # Try from the last potential start (reasoning models put JSON at end)
+                    for json_start in reversed(potential_starts):
+                        brace_count = 0
+                        json_end = -1
+                        
+                        for i in range(json_start, len(lines)):
+                            brace_count += lines[i].count('{') - lines[i].count('}')
+                            if brace_count == 0 and i > json_start:
+                                json_end = i
+                                break
+                        
+                        if json_end != -1:
+                            # Extract JSON, handling case where { is mid-line
+                            first_line = lines[json_start]
+                            brace_pos = first_line.find('{')
+                            lines[json_start] = first_line[brace_pos:]
+                            
+                            json_str = '\n'.join(lines[json_start:json_end + 1])
+                            try:
+                                json_data = json.loads(json_str)
+                                break  # Success
+                            except json.JSONDecodeError:
+                                continue  # Try previous potential start
+                except Exception:
+                    pass
             
-            # Ensure all required fields are present
-            required_fields = ["thinking", "verdict_last_action", "image_observation", 
-                             "memory", "current_goal", "action"]
+            # Case 5: Response is in XML-tag format (e.g., <thinking>...</thinking>)
+            if not json_data:
+                json_data = AgentResponseFormatter._parse_xml_tags(raw_response)
+            
+            # If we couldn't parse JSON, return failure with raw response
+            if not json_data:
+                return (False, None, raw_response)
+            
+            # Ensure all required fields are present (NEW FORMAT)
+            required_fields = ["thinking", "eval", "decision",
+                             "next_goal", "memory", "action"]
             
             for field in required_fields:
                 if field not in json_data:
-                    json_data[field] = "" if field != "action" else {}
+                    json_data[field] = "" if field != "action" else []
             
-            # Format the normalized JSON with proper markdown wrapper
+            # Return clean JSON string (no markdown wrapper - avoids backtick collision)
             normalized_json = json.dumps(json_data, indent=2, ensure_ascii=False)
-            return f"```json\n{normalized_json}\n```"
+            return (True, normalized_json, raw_response)
             
         except Exception as e:
-            # If any error occurs, return a properly formatted error response
-            return '''```json
-{
-  "thinking": "Error: Failed to normalize response - ''' + str(e) + '''",
-  "verdict_last_action": "Error in response processing",
-  "image_observation": "",
-  "memory": "",
-  "current_goal": "",
-  "action": {}
-}
-```'''
-    
+            # If any error occurs, return failure with raw response
+            return (False, None, raw_response)
+
     @staticmethod
-    def format_response(normalized_response: str) -> str:
-        """Format normalized JSON response into readable terminal output with emojis"""
+    def extract_tools(normalized_response: str) -> list:
+        """Pull this turn's tools from the parsed action block, in execution order,
+        for the frontend tool-flow chain. e.g.
+            [{"name": "left_click", "clicks": 2}, {"name": "input"}, {"name": "web"}]
+        """
+        tools = []
         try:
-            # Extract JSON from markdown code block (we know it's properly formatted now)
-            json_match = re.search(r'```json\s*(.*?)\s*```', normalized_response, re.DOTALL)
-            if not json_match:
-                return normalized_response  # Return as-is if no JSON found
-            
-            json_str = json_match.group(1)
-            data = json.loads(json_str)
+            data = json.loads(normalized_response)
+            actions = data.get("action", [])
+            if isinstance(actions, dict):
+                actions = [actions]
+            for item in actions:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("type")
+                if not name:
+                    continue
+                tool = {"name": name}
+                if "clicks" in item:
+                    tool["clicks"] = item.get("clicks")
+                if "direction" in item:
+                    tool["direction"] = item.get("direction")
+                tools.append(tool)
+        except Exception:
+            pass
+        return tools
+
+    @staticmethod
+    def format_response(normalized_response: str, include_action: bool = False) -> str:
+        """Format normalized JSON response into readable terminal output with emojis.
+        include_action: If True, include the action block (for terminal). If False, omit it (for frontend stream).
+        """
+        try:
+            # Parse clean JSON string directly (no markdown wrapper)
+            data = json.loads(normalized_response)
             
             # Build formatted output
             lines = []
             for field, emoji_label in AgentResponseFormatter.FIELD_EMOJIS.items():
                 if field in data:
                     value = data[field]
-                    # Convert dict/list to string for action field
+                    
+                    # Skip action field unless include_action (frontend should not stream action)
+                    if field == "action" and not include_action:
+                        continue
+                    
+                    # Convert dict/list to string for other fields
                     if isinstance(value, (dict, list)):
                         value = json.dumps(value, indent=2)
-                    
                     lines.append(f"- {emoji_label}: {value}")
             
             return "\n".join(lines)

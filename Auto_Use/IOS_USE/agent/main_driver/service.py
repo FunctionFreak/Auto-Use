@@ -1,346 +1,942 @@
+# Copyright 2026 Autouse AI — https://github.com/auto-use/Auto-Use
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# If you build on this project, please keep this header and credit
+# Autouse AI (https://github.com/auto-use/Auto-Use) in forks and derivative works.
+# A small attribution goes a long way toward a healthy open-source
+# community — thank you for contributing.
+
 import os
-import base64
 import json
 import re
-import xml.etree.ElementTree as ET
+import base64
 import time
+import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
 from ...llm_provider.llm_manager import LLMManager
 from .view import AgentResponseFormatter
 from ...tree.element import UIElementScanner, ELEMENT_CONFIG
-from ...controller.view import ControllerView
-from ...controller.app import app_launcher_service
-from ...vault.service import vault_service
+from ...controller import ControllerView
+from PIL import Image
+from io import BytesIO
+
+def _compress_screenshot(base64_str: str, max_width: int = 1080, quality: int = 75) -> str:
+    """Compress screenshot to reduce token size while keeping UI readable"""
+    try:
+        img_bytes = base64.b64decode(base64_str)
+        img = Image.open(BytesIO(img_bytes))
+
+        # Downscale if wider than max_width
+        if img.width > max_width:
+            ratio = max_width / img.width
+            new_size = (max_width, int(img.height * ratio))
+            img = img.resize(new_size, Image.LANCZOS)
+
+        # Re-encode as JPEG with lower quality
+        buffer = BytesIO()
+        img.save(buffer, format="JPEG", quality=quality)
+        return base64.b64encode(buffer.getvalue()).decode("utf-8")
+    except Exception:
+        return base64_str  # Return original if compression fails
+
+def _cleanup_scratchpad():
+    """Clear all contents inside Auto_Use/IOS_USE/scratchpad/ for a fresh start."""
+    # Clear scratchpad contents
+    scratchpad_dir = Path(__file__).parent.parent.parent / "scratchpad"
+    if scratchpad_dir.exists():
+        for item in scratchpad_dir.iterdir():
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+    else:
+        scratchpad_dir.mkdir(parents=True, exist_ok=True)
+
+    # Also clear the todo folder (on iOS it lives at IOS_USE/todo, not under
+    # scratchpad/ like macOS, so it needs its own wipe for the same fresh start)
+    todo_dir = Path(__file__).parent.parent.parent / "todo"
+    if todo_dir.exists() and todo_dir.is_dir():
+        shutil.rmtree(todo_dir)
+
 
 class AgentService:
-    """Service for Windows automation agent"""
-    
-    # Expected output format for agent responses
-    OUTPUT_FORMAT = """
-```json
-{
-  "thinking": "",
-  "verdict_last_action": "",
-  "image_observation": "",
-  "memory": "",
-  "current_goal": "",
-  "action": {
+    """Service for iOS automation agent"""
 
-  }
-}
-```"""
-    
-    def __init__(self, provider: str, model: str, save_conversation: bool = True):
+    def __init__(self, provider: str, model: str, save_conversation: bool = False, thinking: bool = True, frontend_callback=None, text_callback=None, web_callback=None, shell_callback=None, tool_callback=None, token_callback=None, api_key: str = None, stop_event=None, prior_history: Optional[dict] = None):
         """Initialize the Agent Service"""
-        # Clear todo.md silently before anything starts
-        self._clear_todo()
-        
-        # Initialize LLM Manager
-        self.llm_manager = LLMManager(provider, model)
-        
-        # Initialize UI Element Scanner
-        self.scanner = UIElementScanner(ELEMENT_CONFIG)
-        
+        # Clean up scratchpad for a fresh start
+        _cleanup_scratchpad()
+
+        # Ensure sandbox workspace exists on Desktop
+        self.sandbox_root = Path.home() / "Desktop" / "sandbox_workspace"
+        if not self.sandbox_root.exists():
+            self.sandbox_root.mkdir(parents=True, exist_ok=True)
+
+        # Initialize LLM Manager with optional runtime API key
+        self.llm_manager = LLMManager(provider, model, thinking, api_key)
+
+        # Store stop event
+        self.stop_event = stop_event
+
+        # Initialize UI Element Scanner with optional frontend callback for image streaming
+        self.scanner = UIElementScanner(ELEMENT_CONFIG, frontend_callback=frontend_callback)
+
+        # Store text callback for streaming agent responses to frontend
+        self.text_callback = text_callback
+
+        # Store web callback for globe animation
+        self.web_callback = web_callback
+
+        # Store shell callback for terminal animation
+        self.shell_callback = shell_callback
+
+        # Store tool-flow callback for the bottom "Tool response" chain animation.
+        # Signature: tool_callback(event: str, payload: dict|None)
+        #   events: run_start | turn{hasImage} | received{tools:[{name,clicks?}]} | run_end
+        # The per-turn tools come straight from the parsed action block (this driver),
+        # so the controller needs no per-action plumbing.
+        self.tool_callback = tool_callback
+
+        # Memory bar: called after each LLM call with the provider's exact token
+        # usage (llm_manager.last_usage). The agent only forwards — accumulation +
+        # persistence live in app.py / memory_compression.
+        self.token_callback = token_callback
+
         # Initialize Controller
+        # (the iOS ControllerView doesn't take provider/model/callback args yet)
         self.controller = ControllerView()
-        
+
         # Save conversation flag
         self.save_conversation = save_conversation
-        
+
         # Load system prompt
         self.system_prompt = self._load_system_prompt()
-        
-        # Create conversation directory
+
+        # Clear previous conversation folder to start fresh
+        conversation_folder = Path("conversation")
+        if conversation_folder.exists():
+            shutil.rmtree(conversation_folder)
+
+        # Clear previous debug folder to start fresh
+        debug_folder = Path("debug")
+        if debug_folder.exists():
+            shutil.rmtree(debug_folder)
+
+        # Clear previous raw_reasoning folder to start fresh
+        raw_reasoning_folder = Path("raw_reasoning")
+        if raw_reasoning_folder.exists():
+            shutil.rmtree(raw_reasoning_folder)
+
+        # Create conversation directory and initialize fresh conversation file
         if self.save_conversation:
             self.conversation_dir = Path("conversation")
             self.conversation_dir.mkdir(exist_ok=True)
-            
+            self.conversation_file = self.conversation_dir / "conversation.txt"
+
+            # Always start fresh - each program run is a new session
+            self._initialize_conversation_file()
+
+            # Create raw_reasoning directory for storing raw LLM outputs
+            self.raw_reasoning_dir = Path("raw_reasoning")
+            self.raw_reasoning_dir.mkdir(exist_ok=True)
+
         # Start fresh each session
         self.interaction_count = 0
-        
-        # Store conversation history for complete snapshots
-        self.conversation_history = []
-        
-        # Scan installed apps at startup
-        app_launcher_service.scan_apps()
-        
-    def _clear_todo(self):
-        """Silently clear todo.md file at agent startup"""
-        try:
-            todo_file = Path("todo/todo.md")
-            if todo_file.exists():
-                todo_file.unlink()
-        except:
-            pass  # Silently ignore any errors
-    
+
+        # Resumable chat memory (UI path only). prior_history is an optimized
+        # snapshot from a PRIOR run of this session, built + loaded by
+        # Auto_Use.agent_conversation.service (ALL memory management lives there,
+        # not here). When present, process_request seeds the conversation lists
+        # from it so the agent "remembers" earlier turns. Scratchpad/todo are
+        # still wiped above — continuity comes ONLY from this memory, not files.
+        # The final lists are exposed on self so the conversation service can
+        # persist them after the run.
+        self.prior_history = prior_history if isinstance(prior_history, dict) else None
+        self.assistant_messages = []
+        self.tool_responses = []
+        # The exact final messages payload sent to the model (system + interleaved
+        # history + the live user message that re-injects user_request/todo/
+        # scratchpad/element_tree each step). Captured for the debug memory log so
+        # the download is the TRUE conversation, not a reconstruction.
+        self.last_messages = None
+
     def _load_system_prompt(self) -> str:
         """Load the system prompt from system_prompt.md file"""
         try:
             current_dir = os.path.dirname(os.path.abspath(__file__))
             prompt_path = os.path.join(current_dir, "system_prompt.md")
-            
+
             with open(prompt_path, 'r', encoding='utf-8') as file:
                 return file.read()
         except FileNotFoundError:
             raise FileNotFoundError("system_prompt.md file not found in the agent directory")
         except Exception as e:
             raise Exception(f"Error loading system prompt: {str(e)}")
-    
-    def _save_conversation_async(self, image_sent: bool = False):
-        """Create a NEW timestamped file with COMPLETE agent memory snapshot at each iteration"""
+
+    def _initialize_conversation_file(self):
+        """Initialize the conversation file with header information"""
         try:
-            self.interaction_count += 1
-            
-            # Create timestamped filename
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            conversation_file = self.conversation_dir / f"conversation_step_{self.interaction_count}_{timestamp}.txt"
-            
-            with open(conversation_file, 'w', encoding='utf-8') as f:
-                # Header
-                f.write("=" * 80 + "\n")
-                f.write(f"AGENT MEMORY SNAPSHOT - ITERATION #{self.interaction_count}\n")
-                f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            with open(self.conversation_file, 'w', encoding='utf-8') as f:
+                f.write("=== CONVERSATION LOG ===\n")
+                f.write(f"Session Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write(f"Provider: {self.llm_manager.get_provider_name()}\n")
                 f.write(f"Model: {self.llm_manager.get_model_name()}\n")
-                f.write("=" * 80 + "\n\n")
-                
-                # System Prompt
-                f.write("=" * 80 + "\n")
-                f.write("SYSTEM PROMPT (Always in Agent Memory)\n")
-                f.write("=" * 80 + "\n")
+                f.write("=" * 60 + "\n\n")
+
+                f.write("=== SYSTEM PROMPT ===\n")
                 f.write(self.system_prompt)
-                f.write("\n\n")
-                
-                # All conversation history
-                f.write("=" * 80 + "\n")
-                f.write("COMPLETE CONVERSATION HISTORY\n")
-                f.write("=" * 80 + "\n\n")
-                
-                interaction_num = 0
-                for i, message in enumerate(self.conversation_history):
-                    role = message["role"]
-                    content = message["content"]
-                    
-                    if role == "system":
-                        # Skip system as we already printed it above
-                        continue
-                    elif role == "user":
-                        interaction_num += 1
-                        f.write(f"\n{'=' * 80}\n")
-                        f.write(f"INTERACTION #{interaction_num}\n")
-                        f.write(f"{'=' * 80}\n\n")
-                        f.write(f"USER MESSAGE:\n")
-                        f.write(f"{'-' * 80}\n")
-                        f.write(f"{content}\n")
-                        f.write(f"{'-' * 80}\n")
-                        if image_sent and i == len(self.conversation_history) - 2:
-                            f.write("\n[Screenshot was sent with this message]\n")
-                        f.write("\n")
-                    elif role == "assistant":
-                        f.write(f"ASSISTANT RESPONSE:\n")
-                        f.write(f"{'-' * 80}\n")
-                        f.write(f"{content}\n")
-                        f.write(f"{'-' * 80}\n\n")
-                
-                # Summary footer
-                f.write("\n" + "=" * 80 + "\n")
-                f.write(f"END OF SNAPSHOT - Total Interactions: {self.interaction_count}\n")
-                f.write("=" * 80 + "\n")
-            
-            print(f"✓ Memory snapshot saved: {conversation_file.name}")
+                f.write("\n\n" + "=" * 60 + "\n\n")
+        except Exception as e:
+            print(f"Error initializing conversation file: {str(e)}")
+
+    def _save_conversation_snapshot(self, messages: list, current_assistant_response: str, image_sent: bool, interaction_count: int):
+        """Save a numbered conversation file rendering the EXACT payload sent this
+        step (system + interleaved assistant/user turns + current user message) plus
+        this step's freshly generated response — a faithful peek into agent memory."""
+        try:
+            conversation_file = self.conversation_dir / f"conversation_{interaction_count}.txt"
+
+            def _text(content):
+                # Cached messages carry content as a list of {type,text,...} blocks.
+                if isinstance(content, list):
+                    return "\n".join(b.get("text", "") for b in content if isinstance(b, dict))
+                return content if isinstance(content, str) else str(content)
+
+            with open(conversation_file, 'w', encoding='utf-8') as f:
+                # Header
+                f.write("=== CONVERSATION LOG ===\n")
+                f.write(f"Session Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Provider: {self.llm_manager.get_provider_name()}\n")
+                f.write(f"Model: {self.llm_manager.get_model_name()}\n")
+                f.write(f"Current Interaction: #{interaction_count}\n")
+                f.write("=" * 60 + "\n\n")
+
+                # Render every message in the exact order it was sent to the model.
+                for m in messages:
+                    role = str(m.get("role", "?")).upper()
+                    if role == "SYSTEM":
+                        f.write("=== SYSTEM PROMPT ===\n")
+                        f.write(_text(m.get("content", "")))
+                        f.write("\n\n" + "=" * 60 + "\n\n")
+                    else:
+                        f.write(f"--- {role} ---\n")
+                        f.write(_text(m.get("content", "")))
+                        f.write("\n\n")
+
+                if image_sent:
+                    f.write("[Screenshot sent with the latest user message]\n\n")
+
+                # This step's freshly generated response (the reply, not part of the request).
+                f.write(f"--- ASSISTANT (response · step {interaction_count}) ---\n")
+                f.write(current_assistant_response)
+                f.write("\n")
+
+            print(f"✓ Memory snapshot saved: conversation_{interaction_count}.txt")
         except Exception as e:
             print(f"Error saving conversation snapshot: {str(e)}")
-    
-    
-    def _save_conversation(self, image_sent: bool):
-        """Save complete conversation snapshot to timestamped file"""
+
+
+    def _save_raw_response(self, raw_response: str, step_number: int):
+        """Save raw LLM response before any parsing/normalization"""
         if self.save_conversation:
-            self._save_conversation_async(image_sent)
-    
-    def _execute_action(self, normalized_json: str) -> dict:
-        """Extract action from normalized JSON and execute it via controller"""
+            try:
+                raw_file = self.raw_reasoning_dir / f"raw_response_{step_number}.txt"
+                with open(raw_file, 'w', encoding='utf-8') as f:
+                    f.write(raw_response)
+            except Exception as e:
+                print(f"⚠ Error saving raw response: {str(e)}")
+
+    def _save_conversation(self, messages: list, current_assistant_response: str, image_sent: bool, interaction_count: int):
+        """Save conversation snapshot to file - simple and direct"""
+        if self.save_conversation:
+            self._save_conversation_snapshot(messages, current_assistant_response, image_sent, interaction_count)
+
+    def _read_todo_from_file(self) -> str:
+        """Read the current todo list from the task tracker's todo.md file"""
         try:
-            # Extract JSON from markdown code block
-            json_match = re.search(r'```json\s*(.*?)\s*```', normalized_json, re.DOTALL)
-            if not json_match:
-                return {"status": "error", "message": "No JSON found in response"}
-            
-            json_str = json_match.group(1)
-            data = json.loads(json_str)
-            
-            # Extract action block
-            if "action" not in data:
-                return {"status": "error", "message": "No action block in response"}
-            
-            action_data = data["action"]
-            
-            # Route action to controller
-            result = self.controller.route_action(action_data)
-            
-            return result
-            
-        except Exception as e:
-            return {"status": "error", "message": f"Error executing action: {str(e)}"}
-    
-    def process_request(self, task: str) -> str:
-        """Process a user request and return agent response"""
-        # Initialize conversation history with system prompt
-        self.conversation_history = [
-            {"role": "system", "content": self.system_prompt}
-        ]
-        
-        # Store the initial task
-        initial_task = task
-        loop_count = 0
-        
-        # Show model info only once at the beginning
-        print(f"\n🤖 Using: {self.llm_manager.get_model_name()}")
-        
-        # Main agent loop
-        wait_duration = 0  # Track wait time from previous action
-        action_result = {}  # Track action results across iterations
-        while True:
-            loop_count += 1
-            print(f"\n{'='*60}")
-            print(f"📍 Step {loop_count}")
-            
-            # Wait before scanning - either from wait action or default 2 seconds
-            if loop_count > 1:  # Skip wait on first iteration
-                sleep_time = wait_duration if wait_duration > 0 else 2
-                if sleep_time > 0:
-                    print(f"⏳ Waiting {sleep_time} seconds before scanning...")
-                    time.sleep(sleep_time)
-                wait_duration = 0  # Reset for next iteration
-            
-            # Scan UI elements and get annotated screenshot
-            print("🔍 Scanning snapshot.")
-            self.scanner.scan_elements()
-            element_tree_text, image_base64 = self.scanner.get_scan_data()
-            if image_base64:
-                print(f"✅ Image captured - size: {len(image_base64)} chars")
-            else:
-                print("❌ NO IMAGE - image_base64 is None!")
-            
-            image_sent = image_base64 is not None
-            
-            # Update vault with current element tree so it can identify fields
-            vault_service.update_element_tree(element_tree_text)
-            
-            # Wrap element tree in proper tags
-            formatted_element_tree = f"<element_tree>\n{element_tree_text}\n</element_tree>"
-            
-            # Read todo list if it exists
-            todo_content = ""
-            todo_file = Path("todo/todo.md")
+            # Read from the task tracker's own file path (single source of truth —
+            # exactly where TaskTrackerService writes), so read can never drift from write.
+            todo_file = Path(self.controller.task_tracker.todo_file)
             if todo_file.exists():
                 with open(todo_file, 'r', encoding='utf-8') as f:
-                    todo_content = f.read()
-            
-            # Check if previous action had a tool_response (from video_player)
-            tool_response_text = ""
-            tool_response_found = None
-            
-            # Check for tool_response at top level (single action)
-            if action_result and action_result.get('tool_response'):
-                tool_response_found = action_result['tool_response']
-            # Check for tool_response in combined actions (inside results array)
-            elif action_result and action_result.get('action') == 'combined' and action_result.get('results'):
-                for result in action_result['results']:
-                    if result.get('tool_response'):
-                        tool_response_found = result['tool_response']
-                        break
-            
-            if tool_response_found:
-                tool_response_text = f"""<tool_response>
-{tool_response_found}
-</tool_response>
+                    return f.read().strip()
+            else:
+                return ""
+        except Exception as e:
+            print(f"⚠ Error reading todo file: {str(e)}")
+            return ""
 
-"""
-                print(f"📨 Tool response will be included in next prompt: {tool_response_found}")
-            # Construct user message - only include task in first iteration
-            if loop_count == 1:
+    def _read_scratchpad_from_file(self) -> str:
+        """Read the current scratchpad entries from scratchpad/milestone/milestone.md file"""
+        try:
+            # iOS has no scratchpad service on the controller yet — read the same
+            # milestone file layout as macOS directly (the future scratchpad
+            # handler must write here).
+            scratchpad_file = Path(__file__).parent.parent.parent / "scratchpad" / "milestone" / "milestone.md"
+            if scratchpad_file.exists():
+                with open(scratchpad_file, 'r', encoding='utf-8') as f:
+                    return f.read().strip()
+            else:
+                return ""
+        except Exception as e:
+            print(f"⚠ Error reading scratchpad file: {str(e)}")
+            return ""
+
+    def _remove_action_from_response(self, response_json: str) -> str:
+        """Remove 'action' field from assistant response to save tokens in history"""
+        try:
+            response_data = json.loads(response_json)
+            if "action" in response_data:
+                del response_data["action"]
+            return json.dumps(response_data, indent=2, ensure_ascii=False)
+        except Exception:
+            # Handle <Step_no=X /> prefix that makes json.loads fail
+            match = re.match(r'(<Step_no=\d+ />\n)(.*)', response_json, re.DOTALL)
+            if match:
+                prefix, json_part = match.group(1), match.group(2)
+                try:
+                    response_data = json.loads(json_part)
+                    if "action" in response_data:
+                        del response_data["action"]
+                    return prefix + json.dumps(response_data, indent=2, ensure_ascii=False)
+                except Exception:
+                    return response_json
+            return response_json
+
+    def _remove_thinking_from_response(self, response_json: str) -> str:
+        """Remove 'thinking' field from assistant response to save tokens in history"""
+        try:
+            response_data = json.loads(response_json)
+
+            # Remove thinking field if it exists
+            if "thinking" in response_data:
+                del response_data["thinking"]
+
+            # Remove eval field if it exists
+            if "eval" in response_data:
+                del response_data["eval"]
+
+            return json.dumps(response_data, indent=2, ensure_ascii=False)
+        except Exception:
+            return response_json
+
+    def _tool_response_for_memory(self, action_result: dict) -> dict:
+        """Build the compact tool_response preserved in agent memory for a step.
+
+        Only web-tool results are compacted: their raw text is already removed and
+        digested into the scratchpad, so memory keeps just the query + a pointer.
+        Web is compacted ONLY when it succeeded — a failed web call keeps its exact
+        response so the agent can see what went wrong. Every other result (shell
+        output, click/input results, etc.) is preserved verbatim.
+        """
+        import copy
+        res = copy.deepcopy(action_result)
+
+        def compact(entry):
+            if (isinstance(entry, dict)
+                    and entry.get("tool") == "web"
+                    and entry.get("status") == "success"):
+                return {
+                    "action": "tool",
+                    "tool": "web",
+                    "query": entry.get("query", ""),
+                    "message": "memory optimized — refer to scratchpad for the web result",
+                }
+            return entry
+
+        if res.get("action") == "multiple" and "results" in res:
+            res["results"] = [compact(r) for r in res["results"]]
+            return res
+        return compact(res)
+
+    def _backfill_web_findings(self, tool_response_str: str, findings: str) -> str:
+        """Replace a web step's 'refer to scratchpad' placeholder with the actual
+        numbered findings the agent distilled into the scratchpad on the digest
+        step. The scratchpad is wiped on the next user request, so this keeps the
+        distilled web info in durable conversation memory. Preserves the
+        surrounding shape (a single web result or a 'multiple' results list)."""
+        try:
+            data = json.loads(tool_response_str)
+        except Exception:
+            return tool_response_str
+
+        def fill(entry):
+            if isinstance(entry, dict) and entry.get("tool") == "web":
+                entry.pop("message", None)
+                entry["web_result"] = findings
+            return entry
+
+        if isinstance(data, dict) and data.get("action") == "multiple" and "results" in data:
+            data["results"] = [fill(r) for r in data["results"]]
+        else:
+            data = fill(data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
+    def _trim_history_entry(self, entry: str) -> str:
+        """Trim an OLDER history step for context: drop 'thinking', 'eval', and
+        'action' (keep decision/memory/next_goal). Only the most recent step is kept
+        full so the agent retains its latest reasoning; everything older is trimmed.
+        Handles the leading '<Step_no=N />' marker.
+        """
+        m = re.match(r'(<Step_no=\d+ />\n)(.*)', entry, re.DOTALL)
+        prefix, json_part = (m.group(1), m.group(2)) if m else ("", entry)
+        try:
+            data = json.loads(json_part)
+            for field in ("thinking", "eval", "action"):
+                data.pop(field, None)
+            return prefix + json.dumps(data, indent=2, ensure_ascii=False)
+        except Exception:
+            return entry
+
+    def _emit_flow(self, event, payload=None):
+        """Push a tool-flow event to the frontend bottom chain (best-effort)."""
+        if not self.tool_callback:
+            return
+        try:
+            self.tool_callback(event, payload)
+        except Exception:
+            pass
+
+    def process_request(self, task: str) -> dict:
+        """Process a user request in an iterative loop until completion.
+
+        Returns a structured outcome {"status", "message"} so callers (Telegram,
+        web UI) can tell a real completion from a failure instead of always
+        reporting "done":
+          - "success"    a `done` action ran
+          - "error"      a critical exception ended the loop (e.g. API failure)
+          - "incomplete" the loop ended otherwise (stopped, max steps, parse fails)
+        """
+        # Initialize tracking variables
+        step_number = 0
+        last_response = None
+        is_first_iteration = True
+        assistant_messages = []  # Track all assistant responses for memory
+        tool_responses = []      # Per-step tool result, aligned 1:1 with assistant_messages; replayed as user turns
+        pending_web_response = None  # Stores web tool response for light digest iteration
+        web_memory_index = None  # tool_responses slot of the web step to backfill with the digest's scratchpad
+        is_web_digest = False    # True only on the iteration that digests a web result into the scratchpad
+        json_fail_count = 0  # Track consecutive JSON parse failures (max 3 before exit)
+        # Final outcome reported to the caller. Defaults to "incomplete" so any
+        # loop exit that doesn't explicitly set success/error is reported as
+        # not-finished rather than silently looking like a completion.
+        final_status = "incomplete"
+        final_message = "Agent stopped before completing the task"
+
+        # ---- Resumable memory seed (UI continuation) -------------------------
+        # If a prior optimized snapshot was supplied (continuing a saved chat),
+        # replay it into the two memory lists so the existing message-build loop
+        # re-emits the earlier conversation. Entries are ALREADY trimmed and
+        # tool_responses already compacted, so no re-processing. The saved memory
+        # ends with a terminal-note step, so on resume that note is the most-recent
+        # entry — which makes the loop replay EVERY real step's tool_response.
+        is_resumed = False
+        if self.prior_history:
+            seeded = self.prior_history.get("assistant_messages") or []
+            if seeded:
+                assistant_messages = list(seeded)
+                tool_responses = list(self.prior_history.get("tool_responses") or [])[:len(assistant_messages)]
+                tool_responses += [None] * (len(assistant_messages) - len(tool_responses))
+                is_resumed = True
+                is_first_iteration = False  # continuation, not a fresh dialogue
+                last_response = self.prior_history.get("done_message") or "Resuming previous session."
+                print(f"🧠 Resumed memory: {len(assistant_messages)} prior step(s) loaded")
+        # ----------------------------------------------------------------------
+
+        # Print model info once at the start
+        print(f"\n🔄 Processing with {self.llm_manager.get_model_name()}")
+        self._emit_flow("run_start")   # tool-flow chain: clear + take over the demo
+
+        # Main agent loop
+        while True:
+            # Check for stop signal
+            if self.stop_event and self.stop_event.is_set():
+                print("\n🛑 Agent stopped by user.")
+                final_status, final_message = "incomplete", "Stopped by user"
+                # Don't send callback to frontend to avoid re-opening the strip
+                break
+
+            step_number += 1
+            is_web_digest = False  # set True below only when this iteration digests a web result
+
+            # Max step limit - prevent infinite loops
+            if step_number > 100:
+                print("\n🛑 Max step limit reached (100). Exiting agent loop.")
+                final_status, final_message = "incomplete", "Reached the 100-step limit without finishing"
+                break
+
+            # Tool-flow chain: announce the turn. Digest iterations send no image,
+            # so the chain skips screenshot+mapping (true to the agent's behaviour).
+            self._emit_flow("turn", {"hasImage": not pending_web_response})
+
+            # Skip scan for light digest iterations (web tool response)
+            if pending_web_response:
+                print(f"\n{'='*60}")
+                print(f"🌐 Step {step_number}: Web digest iteration (no scan)")
+                element_tree_text = ""
+                annotated_image_base64 = None
+                image_sent = False
+                formatted_element_tree = ""
+            else:
+                # Scan UI elements and get annotated screenshot
+                print(f"\n{'='*60}")
+                print(f"🔍 Step {step_number}: Scanning snapshot.")
+                self.scanner.scan_elements()
+
+                # Check Stop AFTER Scan
+                if self.stop_event and self.stop_event.is_set():
+                    final_status, final_message = "incomplete", "Stopped by user"
+                    break
+
+                element_tree_text, annotated_image_base64 = self.scanner.get_scan_data()
+
+                # Compress screenshot to reduce token size
+                if annotated_image_base64:
+                    annotated_image_base64 = _compress_screenshot(annotated_image_base64)
+
+                image_sent = annotated_image_base64 is not None
+
+                if image_sent:
+                    print(f"✅ Image captured - annotated: {len(annotated_image_base64)} chars")
+                else:
+                    print("❌ NO IMAGE - annotated image is None!")
+
+                # Wrap element tree in proper tags
+                formatted_element_tree = f"<element_tree>\n{element_tree_text}\n</element_tree>"
+
+            # Construct user message based on iteration
+            if is_first_iteration:
+                # First iteration - user_request + element tree only.
+                # ToDo creation and timing are governed by <todo_capability> in the
+                # system prompt (flexible: iteration 1 by default, may create later),
+                # so no hard-coded todo rules are injected here.
                 user_message = f"""<user_request>
 {task}
 </user_request>
-
-<todo>
-{todo_content}
-</todo>
-
-{formatted_element_tree}
-
-{tool_response_text}<output_format>
-{self.OUTPUT_FORMAT}
-</output_format>"""
+"""
+                user_message += f"\n{formatted_element_tree}"
             else:
-                # For subsequent iterations, just provide element tree
-                user_message = f"""<todo>
-{todo_content}
-</todo>
+                # Fetch fresh todo from file system
+                todo_list = self._read_todo_from_file()
 
-{formatted_element_tree}
+                # Fetch fresh scratchpad entries from file system
+                scratchpad_content = self._read_scratchpad_from_file()
 
-{tool_response_text}<output_format>
-{self.OUTPUT_FORMAT}
-</output_format>"""
-            
-            # Remove all previous user messages, keep only system and assistant
-            self.conversation_history = [msg for msg in self.conversation_history if msg["role"] != "user"]
-            
-            # Add user message to conversation history
-            self.conversation_history.append({"role": "user", "content": user_message})
-            
-            try:
-                # Get raw response from LLM
-                raw_response = self.llm_manager.send_request(self.conversation_history, image_base64)
-                print("✅ Response received")
-                
-                # Normalize the response to ensure consistent JSON format
-                normalized_json = AgentResponseFormatter.normalize_response(raw_response)
-                
-                # Add assistant response to conversation history
-                self.conversation_history.append({"role": "assistant", "content": raw_response})
-                
-                # Extract and execute action
-                action_result = self._execute_action(normalized_json)
-                
-                # Check if wait action was executed and store duration for next iteration
-                if action_result.get("action") == "wait":
-                    wait_duration = action_result.get("seconds", 2)
-                
-                # Add wait for video_player actions to complete
-                elif action_result.get("action") == "video_player":
-                    command = action_result.get("command", "")
-                    if command == "streaming":
-                        # Streaming check needs 4 seconds to compare timestamps
-                        print("⏳ Waiting for video streaming check to complete...")
-                        time.sleep(4.5)
+                # Check if last_response contains web tool result
+                web_tool_response = ""
+                try:
+                    last_response_data = json.loads(last_response)
+                    web_results_list = []
+
+                    # Check for single tool action
+                    if (last_response_data.get("action") == "tool" and
+                        last_response_data.get("tool") == "web" and
+                        "result" in last_response_data):
+                        web_results_list.append(last_response_data["result"])
+                        # Remove the web result from last_response to avoid duplication
+                        del last_response_data["result"]
+                        last_response = json.dumps(last_response_data, indent=2)
+
+                    # Check for multiple actions containing web tool (collect ALL results)
+                    elif last_response_data.get("action") == "multiple" and "results" in last_response_data:
+                        results = last_response_data["results"]
+                        for idx, result in enumerate(results):
+                            if (result.get("action") == "tool" and
+                                result.get("tool") == "web" and
+                                "result" in result):
+                                web_results_list.append(result["result"])
+                                # Remove the web result from this specific result
+                                del results[idx]["result"]
+                        last_response = json.dumps(last_response_data, indent=2)
+
+                    # Combine all web results with newlines, wrap in <tool> tag
+                    if web_results_list:
+                        web_tool_response = "<tool>\n" + "\n".join(web_results_list) + "\n</tool>"
+                except:
+                    pass
+
+                # Subsequent iterations - include last_response, todo_list.
+                # On a RESUMED session, mark the request as <updated_user_request>
+                # so the agent knows this is a continuation of the same session
+                # (its prior steps are already in the replayed history above).
+                request_tag = "updated_user_request" if is_resumed else "user_request"
+                user_message = f"""<{request_tag}>
+{task}
+</{request_tag}>
+
+<last_response>
+{last_response}
+</last_response>"""
+
+                if pending_web_response:
+                    user_message = f"""<critical>
+No image and element tree provided. Focus on digesting the web response below.
+1. Analyze thoroughly - extract all relevant data (numbers, dates, names, URLs, prices, etc.)
+2. Save ALL important findings to scratchpad in this step's action.
+</critical>
+
+{pending_web_response}
+
+<user_request>
+{task}
+</user_request>
+
+<last_response>
+{last_response}
+</last_response>
+
+<todo_list>
+{todo_list}
+</todo_list>"""
+
+                    if scratchpad_content:
+                        user_message += f"""
+
+<scratchpad>
+{scratchpad_content}
+</scratchpad>"""
                     else:
-                        # Other video commands need time for UI response
-                        print(f"⏳ Waiting for video {command} to complete...")
-                        time.sleep(1)
-                
-                # Check action result and log any errors
-                if action_result.get("status") == "error":
-                    print(f"⚠️  Action failed: {action_result.get('message', 'Unknown error')}")
-                
-                # Save COMPLETE agent memory snapshot (system prompt + all conversations)
-                self._save_conversation(image_sent)
-                
-                # Format the response with emojis for console output
-                formatted_response = AgentResponseFormatter.format_response(normalized_json)
-                print(f"\n{formatted_response}")
-                
-                # Check if done action was executed
-                if action_result.get("action") == "done":
-                    print(f"\n{'='*60}")
-                    print("✅ Agent completed task!")
-                    print(f"Summary: {action_result.get('summary', 'No summary provided')}")
-                    print(f"Total iterations: {loop_count}")
-                    print(f"{'='*60}")
-                    return action_result.get("summary", "Task completed")
-                
+                        user_message += """
+
+<scratchpad>none</scratchpad>"""
+
+                    image_sent = False
+                    annotated_image_base64 = None
+
+                    # Clear flag after consumption; mark this as the web-digest step so its
+                    # scratchpad response can be folded into the web memory below.
+                    pending_web_response = None
+                    is_web_digest = True
+                else:
+                    # Normal iteration - include full context
+                    # Add web tool response if present (Note is already embedded in each result)
+                    if web_tool_response:
+                        user_message += f"\n\n{web_tool_response}"
+                    user_message += f"""
+
+<todo_list>
+{todo_list}
+</todo_list>"""
+
+                    # Always add scratchpad tag (with content or "none")
+                    if scratchpad_content:
+                        user_message += f"""
+
+<scratchpad>
+{scratchpad_content}
+</scratchpad>"""
+                    else:
+                        user_message += f"""
+
+<scratchpad>none</scratchpad>"""
+
+                    user_message += f"""
+
+{formatted_element_tree}"""
+
+                   # Add image tag if image is provided
+                    if image_sent:
+                        user_message += "\n\n<image>Annotated screenshot with bounding boxes</image>"
+                        user_message += "\n\n<critical>Pure vision first: decide which element to interact with from the screenshot alone, then refer to <element_tree> for its [id].</critical>"
+
+            # Build the API messages as a real interleaved dialogue:
+            #   system, then for each past step:  assistant(step) -> user(tool_response),
+            #   and finally the current user message (live screen + <last_response>).
+            #
+            # Sliding-window trim: only the MOST RECENT past step keeps its full
+            # thinking/eval/action; every older step is trimmed to
+            # decision/memory/next_goal (_trim_history_entry), so the agent always sees
+            # its latest reasoning in full and just the outline of older steps.
+            # Tool results stay on the USER side (correct role -> clean eval, no schema
+            # leakage). The most recent step's result is NOT re-emitted here — it already
+            # rides in the current user message as <last_response>.
+            messages = [
+                {"role": "system", "content": self.system_prompt}
+            ]
+
+            n_hist = len(assistant_messages)
+            for i, step_msg in enumerate(assistant_messages):
+                is_recent = (i == n_hist - 1)
+                content = step_msg if is_recent else self._trim_history_entry(step_msg)
+                # Reinforce the objective by prepending the task to step 1.
+                if i == 0 and not is_first_iteration:
+                    content = f"<User_Task>\n{task}\n</User_Task>\n\n{content}"
+                messages.append({"role": "assistant", "content": content})
+
+                # Interleave this step's tool result as its own user turn — except the
+                # most recent, whose result is carried by the current user message below.
+                if not is_recent:
+                    tr = tool_responses[i] if i < len(tool_responses) else None
+                    if tr:
+                        messages.append({"role": "user", "content": f"<tool_response>\n{tr}\n</tool_response>"})
+
+            # Current user message (live screen + most recent <last_response>).
+            # The system prompt is added exactly once (above) — the resumable seed
+            # never carries a system prompt, so a continued session can't double it.
+            messages.append({"role": "user", "content": user_message})
+
+            # Capture the exact payload for the debug memory log (the last
+            # iteration's value is retained — i.e. the agent's final true memory).
+            self.last_messages = messages
+
+            # Apply prompt caching for OpenRouter/Anthropic (explicit cache_control).
+            # messages[-1] = current user message (dynamic, never cache)
+            # messages[-2] = most recent assistant step (full now -> trimmed next step)
+            # messages[-3] = last frozen turn (older tool_response/assistant) — safe to cache
+            # Starts once len >= 4.
+            if self.llm_manager.get_provider_name() in ("openrouter", "anthropic") and len(messages) >= 4:
+                cache_idx = len(messages) - 3
+                content = messages[cache_idx]["content"]
+                if isinstance(content, str):
+                    messages[cache_idx]["content"] = [
+                        {
+                            "type": "text",
+                            "text": content,
+                            "cache_control": {"type": "ephemeral"}
+                        }
+                    ]
+
+            try:
+                # Make API request through LLM Manager
+                if image_sent:
+                    print("📸 Screenshot sent to LLM (annotated)")
+
+                # Check Stop BEFORE LLM
+                if self.stop_event and self.stop_event.is_set():
+                    final_status, final_message = "incomplete", "Stopped by user"
+                    break
+
+                # Get raw response from LLM - pass annotated image
+                raw_response = self.llm_manager.send_request(messages, annotated_image_base64)
+
+                # Memory bar: forward this call's exact token usage (input+output).
+                if self.token_callback:
+                    try:
+                        self.token_callback(self.llm_manager.last_usage)
+                    except Exception:
+                        pass
+
+                # CRITICAL Check Stop AFTER LLM (discards result if stopped while waiting)
+                if self.stop_event and self.stop_event.is_set():
+                    print("\n🛑 Agent stopped by user (response discarded).")
+                    final_status, final_message = "incomplete", "Stopped by user"
+                    break
+
+                print("✓ LLM response received")
+
+                # Save raw response before any parsing (for debugging)
+                self._save_raw_response(raw_response, step_number)
+
+                # Normalize the response to ensure consistent JSON format
+                success, normalized_json, failed_raw = AgentResponseFormatter.normalize_response(raw_response)
+
+                # If JSON parse failed, discard response and retry with fresh scan
+                if not success:
+                    json_fail_count += 1
+                    print(f"⚠️ JSON parse failed ({json_fail_count}/3). Discarding and retrying with fresh scan...")
+
+                    if json_fail_count >= 3:
+                        print("❌ JSON parsing failed 3 consecutive times. Exiting agent.")
+                        final_status, final_message = "incomplete", "Could not parse a valid model response (3 consecutive failures)"
+                        break
+
+                    # Rewind step number so next iteration retries the same step
+                    step_number -= 1
+                    continue
+
+                # Reset consecutive JSON fail counter on success
+                json_fail_count = 0
+
+                # Save a faithful snapshot of the EXACT payload sent this step (system +
+                # interleaved assistant/tool-response turns + current user message) plus
+                # this step's response — a true peek into agent memory.
+                self._save_conversation(messages, normalized_json, image_sent, step_number)
+
+                # Store the FULL response (thinking/eval/action included). The sliding-window
+                # trim at send time keeps it full only while it's the most recent step, then
+                # trims thinking/eval/action once it's older.
+                assistant_messages.append(f"<Step_no={step_number} />\n{normalized_json}")
+                # Keep tool_responses aligned 1:1 with assistant_messages; filled in after the
+                # action runs below (stays None for a step that takes no action).
+                tool_responses.append(None)
+
+                # Format the response with emojis for console output (terminal: include action block)
+                formatted_response = AgentResponseFormatter.format_response(normalized_json, include_action=True)
+                print(formatted_response)
+
+                # Send to frontend if callback exists (omit action from stream)
+                if self.text_callback:
+                    self.text_callback(AgentResponseFormatter.format_response(normalized_json, include_action=False))
+
+                # Tool-flow chain: the packet arrived — tick "packet received" and hand
+                # the frontend this turn's tools, read straight from the action block.
+                self._emit_flow("received", {"tools": AgentResponseFormatter.extract_tools(normalized_json)})
+
+                # Parse the normalized JSON to extract fields and check for done
+                try:
+                    agent_response = json.loads(normalized_json)
+                    if agent_response:
+
+                        # Execute actions if present
+                        if "action" in agent_response and agent_response["action"]:
+                            # Check Stop BEFORE Action
+                            if self.stop_event and self.stop_event.is_set():
+                                final_status, final_message = "incomplete", "Stopped by user"
+                                break
+
+                            # Execute the action
+                            print("\n⚡ Executing action...")
+
+                            # (The iOS scanner already pushed the elements mapping to
+                            # controller_service during scan_elements, so no
+                            # set_elements handoff is needed here.)
+
+                            # Send action to controller
+                            action_result = self.controller.route_action(agent_response["action"])
+
+                            # Check if action was stopped mid-execution
+                            if action_result.get("status") == "stopped":
+                                print("\n🛑 Agent stopped by user (action interrupted).")
+                                final_status, final_message = "incomplete", "Stopped by user"
+                                break
+
+                            # Check if web tool was used — store for light digest iteration
+                            web_results_list = []
+                            if action_result.get("tool") == "web" and "result" in action_result:
+                                web_results_list.append(action_result["result"])
+                                del action_result["result"]
+                            elif action_result.get("action") == "multiple" and "results" in action_result:
+                                for idx, result in enumerate(action_result["results"]):
+                                    if result.get("tool") == "web" and "result" in result:
+                                        web_results_list.append(result["result"])
+                                        del action_result["results"][idx]["result"]
+
+                            if web_results_list:
+                                pending_web_response = "<tool>\n" + "\n".join(web_results_list) + "\n</tool>"
+                                # Remember this web step's memory slot so the NEXT (digest)
+                                # iteration can backfill it with the scratchpad findings.
+                                web_memory_index = len(tool_responses) - 1
+                                print(f"🌐 Web results captured for digest iteration")
+                            else:
+                                pending_web_response = None
+
+                            # Check if task completed (done action was executed)
+                            if action_result.get("action") == "done":
+                                print(f"\n🎉 Task Complete: {action_result.get('summary', 'Task completed')}")
+                                print("✅ Agent has finished all tasks. Exiting loop.")
+                                final_status = "success"
+                                final_message = action_result.get("summary", "Task completed")
+                                break
+
+                            # Store the action result as last_response
+                            last_response = json.dumps(action_result, indent=2)
+
+                            # Preserve this step's tool result on the USER side: stash the
+                            # (web-compacted) result in tool_responses, aligned with this
+                            # step's assistant entry, so later iterations replay it as a
+                            # user turn ("I clicked there -> result"). Web results are
+                            # compacted to a scratchpad pointer by _tool_response_for_memory.
+                            if tool_responses:
+                                tool_responses[-1] = json.dumps(
+                                    self._tool_response_for_memory(action_result),
+                                    indent=2, ensure_ascii=False
+                                )
+
+                            # Web-result memory: on the digest step, fold the numbered
+                            # scratchpad findings the agent JUST wrote into the original web
+                            # step's tool_response — replacing the 'refer to scratchpad'
+                            # pointer. The scratchpad is wiped on the next user request, so
+                            # this keeps the distilled web info in durable conversation memory.
+                            if (is_web_digest and web_memory_index is not None
+                                    and 0 <= web_memory_index < len(tool_responses)
+                                    and tool_responses[web_memory_index]):
+                                entries = [
+                                    str(a.get("value", "")).strip()
+                                    for a in (agent_response.get("action") or [])
+                                    if isinstance(a, dict) and a.get("type") == "scratchpad" and a.get("value")
+                                ]
+                                if entries:
+                                    numbered = "\n".join(f"{i + 1}. {e}" for i, e in enumerate(entries))
+                                    tool_responses[web_memory_index] = self._backfill_web_findings(
+                                        tool_responses[web_memory_index], numbered
+                                    )
+                                web_memory_index = None
+
+                            # Wait before next scan (default 3 seconds, unless wait action was used)
+                            wait_time = 3.0  # Default wait
+                            if action_result.get("tool") == "wait":
+                                # If wait was explicitly called, use that duration
+                                wait_time = action_result.get("duration", 3.0)
+                            elif action_result.get("action") == "multiple":
+                                # Check if wait was in multiple actions
+                                for result in action_result.get("results", []):
+                                    if result.get("tool") == "wait":
+                                        wait_time = result.get("duration", 3.0)
+                                        break
+
+                            print(f"⏳ Waiting {wait_time}s before next scan...")
+                            elapsed = 0.0
+                            while elapsed < wait_time:
+                                if self.stop_event and self.stop_event.is_set():
+                                    break
+                                time.sleep(min(0.5, wait_time - elapsed))
+                                elapsed += 0.5
+
+                            # Print action result
+                            if action_result.get("status") == "success":
+                                print(f"✓ Action executed successfully")
+
+                                # Check if this was a todo creation
+                                if action_result.get("action") == "todo_created":
+                                    print("📋 Todo list created")
+
+                                # Check if this was a todo update
+                                elif action_result.get("action") == "todo_updated":
+                                    print("✓ Todo task marked complete")
+                            else:
+                                print(f"⚠ Action result: {action_result.get('message', 'Unknown error')}")
+
+                        # Mark first iteration as done
+                        is_first_iteration = False
+
+                except Exception as e:
+                    print(f"⚠ Error processing action: {str(e)}")
+                    # Even on error, continue the loop
+                    last_response = json.dumps({"status": "error", "message": str(e)})
+                    is_first_iteration = False
+
             except Exception as e:
-                return f"❌ Error in loop #{loop_count}: {str(e)}"
+                error_msg = f"❌ Error processing request: {str(e)}"
+                print(error_msg)
+                # On critical error, record it and break the loop so the caller
+                # can report the failure instead of a false "done".
+                final_status, final_message = "error", str(e)
+                break
+
+        # tool-flow chain: if the run didn't finish cleanly, cap it with a "!" drop.
+        if final_status == "error":
+            self._emit_flow("error", {"text": "llm service not responding"})
+        elif final_status == "incomplete" and final_message and "stop" in final_message.lower():
+            self._emit_flow("error", {"text": "agent interrupted"})
+        self._emit_flow("run_end")   # tool-flow chain: run finished
+
+        # Expose the final conversation lists so the conversation service (NOT the
+        # agent) can optimize + persist them after the run. Memory management is
+        # kept entirely out of the agent. Return shape is unchanged.
+        self.assistant_messages = assistant_messages
+        self.tool_responses = tool_responses
+
+        return {"status": final_status, "message": final_message}

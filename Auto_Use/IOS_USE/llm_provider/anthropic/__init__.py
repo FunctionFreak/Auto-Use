@@ -17,7 +17,7 @@
 # A small attribution goes a long way toward a healthy open-source
 # community — thank you for contributing.
 
-from .service import GoogleProvider
+from .service import AnthropicProvider
 from .view import MODEL_MAPPINGS, get_model_info
 
-__all__ = ['GoogleProvider', 'MODEL_MAPPINGS', 'get_model_info']
+__all__ = ['AnthropicProvider', 'MODEL_MAPPINGS', 'get_model_info']
