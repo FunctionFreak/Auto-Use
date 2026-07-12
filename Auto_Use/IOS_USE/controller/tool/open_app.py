@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-app.py - iPhone App Launcher Service
+open_app.py - iPhone App Launcher Service
 Handles app launching and navigation on iPhone via WebDriverAgent
 """
 
@@ -108,6 +108,10 @@ class AppLauncherService:
     
     def launch_app(self, app_name):
         """Launch app by searching for it first, then calling WDA"""
+        # Lazy-load the installed apps list on first launch
+        if not self.apps_dict:
+            self.scan_apps()
+
         # Search for the app
         matches = self.search_app(app_name)
         

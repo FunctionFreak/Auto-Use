@@ -115,6 +115,7 @@ packaging/
 *.icns
 screen_record.py
 /Auto_Use/macOS_use/scratchpad
+/Auto_Use/IOS_USE/scratchpad
 /cli_minion_result
 /Auto_Use/windows_use/scratchpad/cli_minion
 
