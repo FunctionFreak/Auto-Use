@@ -1,0 +1,157 @@
+// Notes stage loader — injects the full-grid 5th container into #mainGrid and
+// drives its visibility. Also OWNS the Agent Notes hooks (moved here from
+// container/top_left): window.showAgentNotes renders the numbered scratchpad
+// into the stage and reveals it; window.hideAgentNotes hides + clears it.
+//
+// SHOW on:  • run end — frontend/service.py pushes window.showAgentNotes(...)
+//           • stop-button click (the stop orb iframe posts 'pcbtn:clicked' to the
+//             app window — passive listener; chat_input.js keeps handling the stop.
+//             The stage appears immediately, the notes land when the backend pushes)
+//           • saved chat reopened ('chat:opened' from chat/chat.js, whose fetch
+//             then calls showAgentNotes with that chat's last done message)
+// HIDE on:  • a new task sent (.chat-input gains 'agent-active' — observed
+//             passively, mode_dial-style; resetChatUi also calls hideAgentNotes)
+//           • New chat ('chat:new' from chat/chat.js)
+(function () {
+    'use strict';
+
+    function stage() { return document.getElementById('zoneNotesStage'); }
+    function show() { var z = stage(); if (z) z.classList.add('active'); }
+    function hide() { var z = stage(); if (z) z.classList.remove('active'); }
+
+    // Show the agent's scratchpad notes (numbered) on the stage. Defined up front
+    // (lazy DOM lookup) so it exists before the backend calls it, even though the
+    // markup is fetch-injected below. payload = JSON array of strings.
+    window.showAgentNotes = function (payload) {
+        var entries = payload;
+        if (typeof payload === 'string') {
+            try { entries = JSON.parse(payload); } catch (e) { entries = []; }
+        }
+        if (!Array.isArray(entries)) entries = [];
+        var listEl = document.getElementById('agentNotesList');
+        if (!listEl) return;
+
+        listEl.innerHTML = '';
+        if (!entries.length) {
+            var empty = document.createElement('div');
+            empty.className = 'agent-note-empty';
+            empty.textContent = 'No notes';
+            listEl.appendChild(empty);
+        } else {
+            entries.forEach(function (t, i) {
+                var row = document.createElement('div');
+                row.className = 'agent-note';
+                var num = document.createElement('span');
+                num.className = 'agent-note-num';
+                num.textContent = (i + 1) + '.';
+                var txt = document.createElement('span');
+                txt.className = 'agent-note-text';
+                txt.textContent = String(t);
+                row.appendChild(num);
+                row.appendChild(txt);
+                listEl.appendChild(row);
+            });
+        }
+        show();
+    };
+
+    // Reopen view: the chat's WHOLE life as numbered exchanges — "N. <user
+    // request>" with how that run ended (done / stopped / error message)
+    // indented below it. Fed by chat.js from /api/chats/<id>'s `exchanges`
+    // (exchanges.json, appended per run ending). Live run-end keeps using
+    // showAgentNotes above — this renderer is only for reopening old chats.
+    window.showAgentHistory = function (exchanges) {
+        if (!Array.isArray(exchanges)) exchanges = [];
+        var listEl = document.getElementById('agentNotesList');
+        if (!listEl) return;
+
+        listEl.innerHTML = '';
+        if (!exchanges.length) {
+            var empty = document.createElement('div');
+            empty.className = 'agent-note-empty';
+            empty.textContent = 'No notes';
+            listEl.appendChild(empty);
+        } else {
+            exchanges.forEach(function (x, i) {
+                x = x || {};
+                var row = document.createElement('div');
+                row.className = 'agent-note';
+                var num = document.createElement('span');
+                num.className = 'agent-note-num';
+                num.textContent = (i + 1) + '.';
+                var txt = document.createElement('span');
+                txt.className = 'agent-note-text';
+                txt.textContent = String(x.task || '');
+                row.appendChild(num);
+                row.appendChild(txt);
+                listEl.appendChild(row);
+
+                var reply = document.createElement('div');
+                reply.className = 'agent-note-reply';
+                reply.textContent = String(x.done_message || '');
+                listEl.appendChild(reply);
+            });
+        }
+        show();
+    };
+
+    // Hide the stage and drop its content (called on a new run start / New chat),
+    // so a later stop-click can't flash the previous session's notes.
+    window.hideAgentNotes = function () {
+        hide();
+        var listEl = document.getElementById('agentNotesList');
+        if (listEl) listEl.innerHTML = '';
+    };
+
+    // --- show triggers beyond showAgentNotes itself ---
+    window.addEventListener('message', function (e) {
+        if (e.data === 'pcbtn:clicked') show();
+    });
+    document.addEventListener('chat:opened', function () { show(); });
+
+    // --- hide triggers ---
+    document.addEventListener('chat:new', function () { hide(); });
+
+    // A new task sent: agent-active appears on .chat-input the moment the send
+    // fires (chat_input.js startAgent) — the live 4-zone view takes over again.
+    var runWatchWired = false;
+    function watchRunState() {
+        if (runWatchWired) return;
+        var chatInput = document.querySelector('.chat-input');
+        if (!chatInput) return;
+        runWatchWired = true;
+
+        var running = chatInput.classList.contains('agent-active');
+        var observer = new MutationObserver(function () {
+            var now = chatInput.classList.contains('agent-active');
+            if (now === running) return;
+            running = now;
+            if (now) hide();   // run starting; stop-teardown (false) leaves the stage alone
+        });
+        observer.observe(chatInput, { attributes: true, attributeFilter: ['class'] });
+    }
+    // .chat-input is itself fetch-injected by chat_input.js.
+    document.addEventListener('chatinput:ready', watchRunState);
+
+    function mount() {
+        var grid = document.getElementById('mainGrid');
+        if (!grid || grid.querySelector('.notes-stage-zone')) return;
+        fetch('notes_stage/notes_stage.html')
+            .then(function (r) { return r.text(); })
+            .then(function (html) {
+                if (grid.querySelector('.notes-stage-zone')) return; // guard race
+                var holder = document.createElement('div');
+                holder.innerHTML = html.trim();
+                var zone = holder.querySelector('.notes-stage-zone');
+                if (zone) grid.appendChild(zone);
+            })
+            .catch(function () { /* non-fatal */ });
+        watchRunState();   // in case chat_input mounted before this script ran
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', mount);
+    } else {
+        mount();
+    }
+})();

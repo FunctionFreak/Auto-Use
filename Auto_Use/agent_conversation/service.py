@@ -96,6 +96,12 @@ class ConversationService:
         # The TRUE, human-readable memory log (exact payload sent to the model).
         return self._session_dir(session_id) / "memory_log.txt"
 
+    def _exchanges_file(self, session_id) -> Path:
+        # The reopen-view transcript: one {task, done_message, status} per run
+        # ending, appended by save_run — separate from conversation.json (which
+        # is REWRITTEN each run) so the full request/outcome history survives.
+        return self._session_dir(session_id) / "exchanges.json"
+
     # ── index.json (session -> display meta) ───────────────────────────────
     def _read_index(self) -> dict:
         f = self._index_file()
@@ -172,6 +178,38 @@ class ConversationService:
                 json.dump({"session_id": str(session_id), "history": history}, fh, indent=2)
         except Exception:
             logger.exception("write session %s", session_id)
+
+    # ── per-session exchanges.json (reopen-view transcript) ────────────────
+    def _read_exchanges(self, session_id) -> list:
+        f = self._exchanges_file(session_id)
+        if f.exists():
+            try:
+                with open(f, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                if isinstance(data, list):
+                    return data
+            except Exception:
+                logger.exception("read exchanges %s", session_id)
+        return []
+
+    def _append_exchange(self, session_id, task, done_message, status) -> None:
+        """Append this run's (user request, terminal message) pair. Every run
+        ending records one — completion, user stop, error alike — so a reopened
+        chat can replay '1. request / outcome' for its whole life."""
+        items = self._read_exchanges(session_id)
+        items.append({
+            "task": str(task or ""),
+            "done_message": str(done_message or ""),
+            "status": str(status or ""),
+            "at": int(time.time()),
+        })
+        f = self._exchanges_file(session_id)
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            with open(f, "w", encoding="utf-8") as fh:
+                json.dump(items, fh, indent=2, ensure_ascii=False)
+        except Exception:
+            logger.exception("write exchanges %s", session_id)
 
     # ── helpers ────────────────────────────────────────────────────────────
     def _new_id(self) -> str:
@@ -273,6 +311,8 @@ class ConversationService:
             )
             self._write_session(session_id, payload)
             done_message = payload["done_message"]
+            # Reopen-view transcript: this run's request + how it ended.
+            self._append_exchange(session_id, task, done_message, status)
 
             # TRUE memory log (debug): render the exact payload the model received.
             if last_messages:
@@ -350,12 +390,14 @@ class ConversationService:
         return items
 
     def get_session(self, session_id):
-        """{id, name, last_done_message, context_tokens, context_cap} for the
-        reopen view, or None if unknown. The full transcript is intentionally NOT
-        returned — reopen shows only the last done message (+ the memory-bar
-        latest context size and its cap). Legacy rows that only carried the old
-        cumulative `tokens_used` are ignored (context_tokens defaults to 0, so the
-        bar starts empty and the next run corrects it)."""
+        """{id, name, last_done_message, exchanges, context_tokens, context_cap}
+        for the reopen view, or None if unknown. `exchanges` is the full
+        request/outcome transcript ({task, done_message, status} per run) shown
+        as the numbered Agent Notes on reopen; last_done_message stays for
+        legacy sessions saved before exchanges.json existed. Legacy rows that
+        only carried the old cumulative `tokens_used` are ignored
+        (context_tokens defaults to 0, so the bar starts empty and the next run
+        corrects it)."""
         meta = self._read_index().get(str(session_id))
         if not meta:
             return None
@@ -365,6 +407,7 @@ class ConversationService:
             "context_tokens": int(meta.get("context_tokens", 0) or 0),
             "context_cap": int(meta.get("context_cap", 0) or 0),
             "last_done_message": meta.get("last_done_message", ""),
+            "exchanges": self._read_exchanges(session_id),
         }
 
     def delete_session(self, session_id) -> bool:

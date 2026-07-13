@@ -5,7 +5,7 @@
 //     reset the screen, ready for a fresh start.
 //   • History   -> GET /api/chats; click a row to reopen that session (adopts
 //     its id so the next send CONTINUES it, and shows its last "done" message
-//     in the top-left container via window.showAgentNotes).
+//     on the full-grid notes stage via window.showAgentNotes).
 //   • Delete    -> DELETE /api/chats/<id>.
 // All persistence lives in the backend (Auto_Use/agent_conversation); this file
 // is pure UI. Same self-contained fetch-inject pattern as settings/settings.js.
@@ -62,14 +62,22 @@
         });
         if (window.resetChatUi) window.resetChatUi();   // clear leftover live view
         if (window.hideWelcomeHero) window.hideWelcomeHero();   // reopening != empty state
+        // Announce the reopen (the notes stage shows itself on this).
+        document.dispatchEvent(new CustomEvent('chat:opened', { detail: { id: id } }));
         fetch('/api/chats/' + encodeURIComponent(id))
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 if (!data || data.error) return;
-                var msg = data.last_done_message || '';
-                // showAgentNotes expects a JSON string of an array of strings; a
-                // single-element array shows the last done message as note "1.".
-                if (window.showAgentNotes) {
+                // Full life of the chat: numbered request/outcome pairs
+                // (exchanges.json). Legacy sessions saved before exchanges
+                // existed fall back to the old single last-done-message note.
+                var exchanges = Array.isArray(data.exchanges) ? data.exchanges : [];
+                if (exchanges.length && window.showAgentHistory) {
+                    window.showAgentHistory(exchanges);
+                } else if (window.showAgentNotes) {
+                    var msg = data.last_done_message || '';
+                    // showAgentNotes expects a JSON string of an array of strings; a
+                    // single-element array shows the last done message as note "1.".
                     window.showAgentNotes(JSON.stringify(msg ? [msg] : []));
                 }
                 // Restore the memory bar to this chat's last context size + cap and
@@ -167,6 +175,8 @@
         if (window.showWelcomeHero) window.showWelcomeHero();   // bring back the hero
         var input = document.querySelector('.chat-input');
         if (input) { input.disabled = false; input.focus(); }
+        // Announce the fresh start (the notes stage hides itself on this).
+        document.dispatchEvent(new CustomEvent('chat:new'));
         document.dispatchEvent(new CustomEvent('chats:refresh'));   // clears highlight
     }
 
