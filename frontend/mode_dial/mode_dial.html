@@ -1,0 +1,9 @@
+<!-- Mode dial component — the Computer use / Mobile use dial at the bottom-LEFT of
+     the composer, on the same row as the model picker + send orb (which sit at the
+     right). Display-only for now: the dial flips and posts 'modedial:mode:*' upward,
+     but nothing consumes it yet (agent wiring comes later). Injected into
+     .input-area-wrapper by mode_dial.js; hidden while a run is active. -->
+<div class="mode-dial-slot" id="modeDialSlot">
+    <iframe id="modeDialFrame" class="mode-dial-frame" src="mode_dial/dial.html"
+            title="Computer / Mobile mode" scrolling="no" frameborder="0"></iframe>
+</div>

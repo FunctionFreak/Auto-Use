@@ -1,0 +1,35 @@
+/* =====================================================================
+   Mode dial — Computer use / Mobile use dial (mode_dial/dial.html in an
+   iframe). Sits at the bottom-LEFT of the composer box, mirroring the
+   .input-toolbar's bottom-right anchor, so it shares the idle bottom row
+   with the model picker + send orb. Shown while the composer is idle;
+   mode_dial.js posts modedial:vanish on send (the dial plays its own
+   pop-vanish) and modedial:show when the composer returns to idle.
+   ===================================================================== */
+.mode-dial-slot {
+    position: absolute;
+    /* .input-area-wrapper's own row vars; pulled 10px further left of the pad
+       to offset the dial's own dead space (words are centred in its 120px box) */
+    left: calc(var(--pad-x) - 10px);
+    bottom: var(--pad-y);
+    height: var(--orb);
+    width: 120px;                       /* dial.html --orb-w */
+    display: flex;
+    align-items: center;
+    overflow: visible;
+    z-index: 6;                         /* same layer as .input-toolbar */
+}
+
+.mode-dial-frame {
+    display: block;
+    width: 120px;                       /* dial.html --orb-w x --orb-h, 1:1 */
+    height: 40px;
+    border: none;
+    background: transparent;
+}
+
+/* RUNNING: the dial plays its own pop-vanish (posted by mode_dial.js); this
+   only guarantees the invisible iframe can't swallow clicks meanwhile. */
+.input-area-wrapper:has(.chat-input.agent-active) .mode-dial-slot {
+    pointer-events: none;
+}

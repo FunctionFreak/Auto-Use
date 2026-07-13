@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mode Toggle</title>
+    <style>
+        :root {
+            /* Layout box. No pill outline any more - this is just geometry. */
+            --orb-w: 140px;
+            --orb-h: 32px;
+            --core-w: 130px;
+            --core-h: 22px;
+
+            /* Indicator bar (the lit one slides between the two halves) */
+            --bar-w: 46px;
+            --bar-h: 3px;
+            --bar-gap: 1px;   /* bar -> label */
+            /* Rotating color disc inside the bar. Must be >= the bar's diagonal
+               (sqrt(46^2+3^2) = 47) or the bar ends flash white as it spins. */
+            --bg-size: 48px;
+
+            /* Text */
+            --label-size: 8px;
+            --label-idle: #a3a7b3;
+            --label-active: #9292d8;   /* base of the color cycle */
+
+            --slide: 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+        }
+
+        /* wrapper to give the absolutely-positioned button a frame */
+        .button-host {
+            position: relative;
+            width: var(--orb-w);
+            height: var(--orb-h);
+        }
+        body.preview {
+            background: #ffffff;
+        }
+        body.preview .button-host {
+            transform: scale(4);
+            transform-origin: center;
+        }
+
+        .stop-agent-button {
+            position: absolute;
+            left: 0;
+            top: 50%;
+
+            width: var(--orb-w);
+            height: var(--orb-h);
+            flex-shrink: 0;
+
+            background: transparent;
+            border-radius: 999px;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
+            /* Initially Hidden */
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(-50%) scale(0.8);
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+
+            overflow: visible;
+            z-index: 20;
+        }
+
+        .stop-agent-button.active {
+            opacity: 1;
+            pointer-events: auto;
+            transform: translateY(-50%) scale(1);
+        }
+
+        .stop-agent-button.pop-vanish {
+            animation: stopPopVanish 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            pointer-events: none;
+            transition: none;
+        }
+
+        @keyframes stopPopVanish {
+            0%   { transform: translateY(-50%) scale(1); opacity: 1; }
+            35%  { transform: translateY(-50%) scale(1.3); opacity: 1; }
+            100% { transform: translateY(-50%) scale(0); opacity: 0; }
+        }
+
+        .stop-orb {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;   /* children re-enable themselves */
+        }
+
+        /* Invisible track. Holds the two halves - no shape, no fill, no border. */
+        .pill {
+            position: absolute;
+            inset: 0;
+            margin: auto;
+            width: var(--core-w);
+            height: var(--core-h);
+            box-sizing: border-box;
+            background: transparent;
+        }
+
+        /* Two halves. Each: a rail slot with its word under it. */
+        .segments {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            z-index: 4;
+        }
+        .seg {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: var(--bar-gap);
+            pointer-events: auto;
+            cursor: pointer;
+        }
+        .seg-rail {
+            /* Spacer only. The unselected side shows no bar - the lit one is the
+               only bar, and it slides. Keeps the label's vertical position fixed. */
+            width: var(--bar-w);
+            height: var(--bar-h);
+            background: transparent;
+        }
+        .seg-label {
+            position: relative;
+            font-family: -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+            font-size: var(--label-size);
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            line-height: 1;
+            color: var(--label-idle);
+            white-space: nowrap;
+            user-select: none;
+            transition: color 0.35s ease;
+        }
+        .stop-agent-button.mode-computer .seg[data-mode="computer"] .seg-label,
+        .stop-agent-button.mode-mobile   .seg[data-mode="mobile"]   .seg-label {
+            color: var(--label-active);
+            /* labelColor: same 4s timeline as stop-bgColor, so the word drifts
+               through the same hues the bar does. label-pop: one spring on select. */
+            animation:
+                stop-labelColor 4s linear infinite,
+                label-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        /* Same glint crossing the word. Shares barShine, so word and bar flash together. */
+        .stop-agent-button.mode-computer .seg[data-mode="computer"] .seg-label::after,
+        .stop-agent-button.mode-mobile   .seg[data-mode="mobile"]   .seg-label::after {
+            content: "";
+            position: absolute;
+            top: -1px;
+            bottom: -1px;
+            left: 0;
+            width: 40%;
+            pointer-events: none;
+            background: linear-gradient(90deg,
+                rgba(255,255,255,0) 0%,
+                rgba(255,255,255,0.85) 50%,
+                rgba(255,255,255,0) 100%);
+            transform: translateX(-140%);
+            animation: barShine 4s ease-in-out infinite;
+        }
+
+        /* The lit bar. Mirrors a segment's column (bar + a ghost the height of the
+           label) so it lands dead on the rail, and slides one half-width to switch. */
+        .glow-cell {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 50%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: var(--bar-gap);
+            z-index: 5;
+            pointer-events: none;
+            transition: transform var(--slide);
+        }
+        .stop-agent-button.mode-mobile .glow-cell {
+            transform: translateX(100%);
+        }
+        .glow-ghost {
+            height: var(--label-size);   /* label is line-height:1, so this matches */
+        }
+
+        /* ---- the original orb effect, living in the bar ---- */
+        .glow-bar {
+            position: relative;
+            width: var(--bar-w);
+            height: var(--bar-h);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* white capsule core, clipping the spinning disc */
+        .bar-core {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            border-radius: 999px;
+            background-color: white;
+            overflow: hidden;
+            box-shadow: 0 0 2px 2px rgba(255,255,255,0.9);
+        }
+        .bar-core::before,
+        .bar-core::after {
+            content: "";
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(6px);
+            z-index: 2;
+        }
+        .bar-core::before { background: #ff0073; width: 8px; height: 8px; top: -3px; right: 20%; }
+        .bar-core::after  { background: #00bbff; width: 6px; height: 6px; bottom: -2px; left: 34%; }
+
+        .stop-bg {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: var(--bg-size);
+            height: var(--bg-size);
+            margin-left: calc(var(--bg-size) / -2);
+            margin-top: calc(var(--bg-size) / -2);
+            border-radius: 50%;
+            background-color: #9292d8;
+            animation: stop-bgRotate 2.5s linear infinite;
+            z-index: 1;
+        }
+        .stop-bg::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            animation: stop-bgColor 4s linear infinite;
+            opacity: 0.2;
+        }
+
+        /* inner white rim - own layer, an inset shadow on .bar-core would paint
+           under .stop-bg and never show */
+        .stop-rim {
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            box-shadow: inset 0 0 2px 1px rgba(255,255,255,0.6);
+            z-index: 3;
+            pointer-events: none;
+        }
+
+        /* very light shimmer sweeping the lit bar, clipped by .bar-core */
+        .bar-shine {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            width: 35%;
+            z-index: 4;
+            pointer-events: none;
+            background: linear-gradient(90deg,
+                rgba(255,255,255,0) 0%,
+                rgba(255,255,255,0.75) 50%,
+                rgba(255,255,255,0) 100%);
+            transform: translateX(-140%);
+            animation: barShine 4s ease-in-out infinite;
+        }
+
+        @keyframes barShine {
+            0%, 55%  { transform: translateX(-140%); opacity: 0; }
+            65%      { opacity: 0.45; }
+            100%     { transform: translateX(320%); opacity: 0; }
+        }
+
+        /* While sliding, the bar stretches like it's accelerating, then squashes
+           and settles on landing. Driven by the .moving class from setMode. */
+        .stop-agent-button.moving .glow-bar {
+            animation: bar-travel 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        @keyframes bar-travel {
+            0%   { transform: scaleX(1); }
+            35%  { transform: scaleX(1.5); }
+            70%  { transform: scaleX(0.85); }
+            100% { transform: scaleX(1); }
+        }
+
+        /* Newly selected word springs in. Plays once each time the selector newly
+           matches, because the animation list changes with the mode class. */
+        @keyframes label-pop {
+            0%   { transform: scale(0.92); }
+            60%  { transform: scale(1.14); }
+            100% { transform: scale(1); }
+        }
+
+        @keyframes stop-bgRotate {
+            0%   { transform: rotate(0deg); }
+            20%  { transform: rotate(90deg); }
+            40%  { transform: rotate(180deg) scale(0.95,1); }
+            60%, 100% { transform: rotate(360deg); }
+        }
+        @keyframes stop-bgColor {
+            20% { background-color: red; }
+            40% { background-color: #5eff7e; }
+            60% { background-color: #2cb5ff; }
+            80% { background-color: #fc63ff; }
+        }
+        /* #9292d8 base with the same overlay colors blended in at the same 20% */
+        @keyframes stop-labelColor {
+            0%, 100% { color: #9292d8; }
+            20% { color: #a875ad; }   /* red   */
+            40% { color: #88a8c6; }   /* green */
+            60% { color: #7e99e0; }   /* blue  */
+            80% { color: #a789e0; }   /* pink  */
+        }
+    </style>
+</head>
+<body>
+    <div class="button-host">
+        <div class="stop-agent-button mode-computer" id="stopAgentBtn">
+            <div class="stop-orb">
+                <div class="pill">
+                    <div class="segments">
+                        <div class="seg" data-mode="computer">
+                            <div class="seg-rail"></div>
+                            <div class="seg-label">Computer</div>
+                        </div>
+                        <div class="seg" data-mode="mobile">
+                            <div class="seg-rail"></div>
+                            <div class="seg-label">Mobile</div>
+                        </div>
+                    </div>
+
+                    <div class="glow-cell">
+                        <div class="glow-bar">
+                            <div class="bar-core">
+                                <div class="stop-bg"></div>
+                                <div class="stop-rim"></div>
+                                <div class="bar-shine"></div>
+                            </div>
+                        </div>
+                        <div class="glow-ghost"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const stopBtn = document.getElementById('stopAgentBtn');
+
+        // ---- DESIGN MODE ----------------------------------------------------
+        // Set to false (or delete this and the `|| FORCE_PREVIEW` below) when you
+        // drop this file back into the app. While it's true it is always shown and
+        // zoomed 4x so we can actually see what we're editing.
+        const FORCE_PREVIEW = true;
+        // ---------------------------------------------------------------------
+
+        // window.parent === window means the file was opened directly (not embedded).
+        const standalone = FORCE_PREVIEW || window.parent === window;
+
+        if (standalone) {
+            document.body.classList.add('preview');
+            stopBtn.classList.add('active');
+        }
+
+        // 'computer' | 'mobile'. The class drives the slide; no JS geometry.
+        let moveTimer = null;
+        function setMode(mode, notify = true) {
+            const changed = (mode === 'mobile') !== stopBtn.classList.contains('mode-mobile');
+            stopBtn.classList.toggle('mode-mobile', mode === 'mobile');
+            stopBtn.classList.toggle('mode-computer', mode !== 'mobile');
+            if (changed) {
+                // Restart the travel stretch even on rapid re-toggles.
+                clearTimeout(moveTimer);
+                stopBtn.classList.remove('moving');
+                void stopBtn.offsetWidth;   // force reflow so the animation replays
+                stopBtn.classList.add('moving');
+                moveTimer = setTimeout(() => stopBtn.classList.remove('moving'), 450);
+            }
+            if (notify && !standalone) parent.postMessage('pcbtn:mode:' + mode, '*');
+        }
+
+        document.querySelectorAll('.seg').forEach(seg => {
+            seg.addEventListener('click', () => setMode(seg.dataset.mode));
+        });
+
+        // Expand a little, then completely vanish (and reset so it can show again later).
+        function vanish() {
+            if (!stopBtn.classList.contains('active')) return;
+            if (stopBtn.classList.contains('pop-vanish')) return;
+            stopBtn.classList.add('pop-vanish');
+            setTimeout(() => stopBtn.classList.remove('active', 'pop-vanish'), 600);
+        }
+
+        // Commands from the parent app.
+        window.addEventListener('message', (e) => {
+            const msg = e.data;
+            if (msg === 'pcbtn:show') {
+                stopBtn.classList.remove('pop-vanish');
+                stopBtn.classList.add('active');
+            } else if (msg === 'pcbtn:vanish') {
+                vanish();
+            } else if (msg === 'pcbtn:hide') {
+                stopBtn.classList.remove('active', 'pop-vanish');
+            } else if (msg === 'pcbtn:mode:computer') {
+                setMode('computer', false);
+            } else if (msg === 'pcbtn:mode:mobile') {
+                setMode('mobile', false);
+            }
+        });
+    </script>
+</body>
+</html>

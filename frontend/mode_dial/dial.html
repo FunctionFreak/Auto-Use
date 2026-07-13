@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mode Dial</title>
+    <style>
+        :root {
+            /* Layout box */
+            --orb-w: 120px;
+            --orb-h: 40px;
+
+            /* Dial geometry */
+            --dial-offset: 14px;   /* center slot -> small slot distance */
+            --dial-small: 1.05;    /* unselected word ≈ the old focused size (~10.5px) */
+            --dial-big: 1.3;       /* selected word: 13px — matches the model picker
+                                      (.model-dropdown-trigger clamps at 13px) */
+            --chev-x: 53px;        /* dial center -> chevron pair (clears the scaled word;
+                                      53px is the max before the 120px box clips it) */
+
+            /* Text */
+            --label-size: 10px;
+            --label-idle: rgba(0, 0, 0, 0.6);   /* same grey as the task/todo text */
+            --label-active: #9292d8;   /* base of the color cycle */
+
+            --slide: 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+        }
+
+        /* wrapper to give the absolutely-positioned button a frame */
+        .button-host {
+            position: relative;
+            width: var(--orb-w);
+            height: var(--orb-h);
+        }
+        /* Design mode (file opened directly): white bg + 4x zoom to see the 8px type. */
+        body.preview {
+            background: #ffffff;
+        }
+        body.preview .button-host {
+            transform: scale(4);
+            transform-origin: center;
+        }
+
+        .mode-dial-button {
+            position: absolute;
+            left: 0;
+            top: 50%;
+
+            width: var(--orb-w);
+            height: var(--orb-h);
+            flex-shrink: 0;
+
+            background: transparent;
+            border-radius: 999px;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
+            /* Initially Hidden */
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(-50%) scale(0.8);
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+
+            overflow: visible;
+            z-index: 20;
+        }
+
+        .mode-dial-button.active {
+            opacity: 1;
+            pointer-events: auto;
+            transform: translateY(-50%) scale(1);
+        }
+
+        .mode-dial-button.pop-vanish {
+            animation: dialPopVanish 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            pointer-events: none;
+            transition: none;
+        }
+
+        @keyframes dialPopVanish {
+            0%   { transform: translateY(-50%) scale(1); opacity: 1; }
+            35%  { transform: translateY(-50%) scale(1.3); opacity: 1; }
+            100% { transform: translateY(-50%) scale(0); opacity: 0; }
+        }
+
+        .dial-orb {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;   /* .dial re-enables itself */
+        }
+
+        /* Vertical dial. Three slots: small-top / center / small-bottom.
+           State A (mode-computer): Computer center, Mobile in the bottom slot.
+           Click -> drum rotates UP: Mobile rises to center, Computer shrinks
+           into the top slot. Click again -> rotates back down. */
+        .dial {
+            position: absolute;
+            inset: 0;
+            pointer-events: auto;
+            cursor: pointer;
+        }
+
+        .dial-word {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            font-family: -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+            font-size: var(--label-size);
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            line-height: 1;
+            color: var(--label-idle);
+            white-space: nowrap;
+            user-select: none;
+            transform: translate(-50%, -50%);
+            transition: transform var(--slide), opacity var(--slide), color 0.35s ease;
+        }
+
+        /* small slots */
+        .mode-dial-button.mode-computer .dial-word[data-mode="mobile"] {
+            transform: translate(-50%, calc(-50% + var(--dial-offset))) scale(var(--dial-small));
+            opacity: 0.65;
+        }
+        .mode-dial-button.mode-mobile .dial-word[data-mode="computer"] {
+            transform: translate(-50%, calc(-50% - var(--dial-offset))) scale(var(--dial-small));
+            opacity: 0.65;
+        }
+
+        /* center slot: scaled up (the focused word), color-cycling with the
+           original hues */
+        .mode-dial-button.mode-computer .dial-word[data-mode="computer"],
+        .mode-dial-button.mode-mobile   .dial-word[data-mode="mobile"] {
+            color: var(--label-active);
+            transform: translate(-50%, -50%) scale(var(--dial-big));
+            animation: stop-labelColor 4s linear infinite;
+        }
+
+        /* light glint crossing the center word — ON THE LETTERS, not the box:
+           the ::before repeats the label (attr(data-label), same inherited font,
+           so it overlays glyph-for-glyph) and the white streak is a background
+           swept through it, clipped to the text. background-size 300% keeps the
+           streak (40%-60% of the image) fully off-glyph at both rest positions;
+           position 100%->0% drives it left-to-right across the word. */
+        .mode-dial-button.mode-computer .dial-word[data-mode="computer"]::before,
+        .mode-dial-button.mode-mobile   .dial-word[data-mode="mobile"]::before {
+            content: attr(data-label);
+            position: absolute;
+            left: 0;
+            top: 0;
+            pointer-events: none;
+            color: transparent;
+            background: linear-gradient(90deg,
+                rgba(255,255,255,0) 40%,
+                rgba(255,255,255,0.85) 50%,
+                rgba(255,255,255,0) 60%) no-repeat;
+            background-size: 300% 100%;
+            background-position: 100% 0;
+            -webkit-background-clip: text;
+            background-clip: text;
+            opacity: 0;
+            animation: word-shine 4s ease-in-out infinite;
+        }
+
+        /* Up + down chevrons stacked (^ over v) - the dial-goes-both-ways hint.
+           One static element pinned beside the center slot: it does NOT ride the
+           words, so it stays put while the dial rotates. */
+        .chev {
+            position: absolute;
+            left: calc(50% + var(--chev-x));
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            pointer-events: none;
+            color: var(--label-active);
+            animation: stop-labelColor 4s linear infinite;
+        }
+        .chev i {
+            display: block;
+            position: relative;
+            width: 4px;
+            height: 4px;
+            border-top: 1.2px solid currentColor;
+            border-right: 1.2px solid currentColor;
+        }
+        .chev i.up { transform: rotate(-45deg); }   /* ^ */
+        /* The rotated 4px boxes are mostly empty around the glyphs, so the pair
+           reads far apart even at gap 0. Overlap the boxes to bring the actual
+           chevrons together. */
+        .chev i.dn { transform: rotate(135deg); margin-top: -2px; }   /* v */
+        /* The chevrons catch the same light: a white copy of each glyph laid
+           exactly over its borders, flashing on the word-shine timeline (at 4px
+           a traveling streak isn't readable — the strokes lighting up is). */
+        .chev i::after {
+            content: "";
+            position: absolute;
+            top: -1.2px;
+            right: -1.2px;
+            width: 4px;
+            height: 4px;
+            border-top: 1.2px solid rgba(255,255,255,0.85);
+            border-right: 1.2px solid rgba(255,255,255,0.85);
+            opacity: 0;
+            animation: chev-shine 4s ease-in-out infinite;
+        }
+
+        /* #9292d8 base with the original overlay colors blended in at 20% -
+           same hues the old rotating disc drifted through. */
+        @keyframes stop-labelColor {
+            0%, 100% { color: #9292d8; }
+            20% { color: #a875ad; }   /* red   */
+            40% { color: #88a8c6; }   /* green */
+            60% { color: #7e99e0; }   /* blue  */
+            80% { color: #a789e0; }   /* pink  */
+        }
+
+        /* barShine's envelope, driving the clipped streak via background-position
+           (100% = parked off the left glyphs, 0% = exited right). */
+        @keyframes word-shine {
+            0%, 55%  { background-position: 100% 0; opacity: 0; }
+            65%      { opacity: 0.45; }
+            100%     { background-position: 0% 0; opacity: 0; }
+        }
+        @keyframes chev-shine {
+            0%, 55%  { opacity: 0; }
+            65%      { opacity: 0.45; }
+            100%     { opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="button-host">
+        <div class="mode-dial-button mode-computer" id="modeDialBtn">
+            <div class="dial-orb">
+                <div class="dial" id="dial">
+                    <div class="dial-word" data-mode="computer" data-label="Computer Use">Computer Use</div>
+                    <div class="dial-word" data-mode="mobile" data-label="Mobile Use">Mobile Use</div>
+                    <span class="chev"><i class="up"></i><i class="dn"></i></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const dialBtn = document.getElementById('modeDialBtn');
+        const dial = document.getElementById('dial');
+
+        // window.parent === window means the file was opened directly (design mode:
+        // white bg + 4x zoom). Embedded in the app it renders 1:1 on transparent.
+        const standalone = window.parent === window;
+        if (standalone) document.body.classList.add('preview');
+
+        // Visible by default — the composer is idle when the app loads. The parent
+        // (mode_dial.js) drives hide/show around the agent run via modedial:* messages.
+        dialBtn.classList.add('active');
+
+        function currentMode() {
+            return dialBtn.classList.contains('mode-mobile') ? 'mobile' : 'computer';
+        }
+
+        // 'computer' | 'mobile'. The class drives the dial; no JS geometry.
+        function setMode(mode, notify = true) {
+            dialBtn.classList.toggle('mode-mobile', mode === 'mobile');
+            dialBtn.classList.toggle('mode-computer', mode !== 'mobile');
+            // Announced for the future agent wiring; nothing listens yet.
+            if (notify && !standalone) parent.postMessage('modedial:mode:' + mode, '*');
+        }
+
+        // Click anywhere on the dial flips it.
+        dial.addEventListener('click', () => {
+            setMode(currentMode() === 'computer' ? 'mobile' : 'computer');
+        });
+
+        // Expand a little, then completely vanish (and reset so it can show again later).
+        // The cleanup timer is kept so 'modedial:show' can cancel it — a send that
+        // errors out within 600ms re-shows the dial, and the stale timeout would
+        // otherwise strip .active and leave the dial hidden for the whole idle.
+        let vanishTimer = null;
+        function vanish() {
+            if (!dialBtn.classList.contains('active')) return;
+            if (dialBtn.classList.contains('pop-vanish')) return;
+            dialBtn.classList.add('pop-vanish');
+            vanishTimer = setTimeout(() => dialBtn.classList.remove('active', 'pop-vanish'), 600);
+        }
+
+        // Commands from the parent app (mode_dial.js).
+        window.addEventListener('message', (e) => {
+            const msg = e.data;
+            if (msg === 'modedial:show') {
+                clearTimeout(vanishTimer);
+                dialBtn.classList.remove('pop-vanish');
+                dialBtn.classList.add('active');
+            } else if (msg === 'modedial:vanish') {
+                vanish();
+            } else if (msg === 'modedial:hide') {
+                dialBtn.classList.remove('active', 'pop-vanish');
+            } else if (msg === 'modedial:mode:computer') {
+                setMode('computer', false);
+            } else if (msg === 'modedial:mode:mobile') {
+                setMode('mobile', false);
+            }
+        });
+    </script>
+</body>
+</html>

@@ -64,7 +64,18 @@
     width: 15px;
     height: 15px;
     flex: 0 0 auto;
-    color: #8b5cf6;
+    color: #9292d8;
+    animation: an-accentColor 4s linear infinite;
+}
+/* #9292d8 base drifting through the same hues as the mode-toggle label
+   (color_test.html stop-labelColor) — same colors, same 4s linear loop.
+   The pen SVG strokes with currentColor, so animating color covers it. */
+@keyframes an-accentColor {
+    0%, 100% { color: #9292d8; }
+    20% { color: #a875ad; }   /* red   */
+    40% { color: #88a8c6; }   /* green */
+    60% { color: #7e99e0; }   /* blue  */
+    80% { color: #a789e0; }   /* pink  */
 }
 
 .agent-notes-list {
@@ -94,8 +105,9 @@
     flex: 0 0 auto;
     min-width: 1.4em;
     text-align: right;
-    color: #8b5cf6;
+    color: #9292d8;
     font-weight: 700;
+    animation: an-accentColor 4s linear infinite;
 }
 .agent-note-text {
     flex: 1 1 auto;

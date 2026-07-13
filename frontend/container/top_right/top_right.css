@@ -113,7 +113,9 @@
 .br-item:last-child::after { transform: translateX(-50%) scaleY(0); }
 
 /* small FILLED dot, centred on the line (16px slot so its centre sits at x=8).
-   Revealed when the segment reaches it (.icon-in). */
+   Revealed when the segment reaches it (.icon-in). Solid accent fill drifting
+   through the same hues as the todo tick / agent-notes accents (color_test.html
+   stop-labelColor), with the same barShine glint sweeping INSIDE the circle. */
 .br-circle {
     flex: 0 0 auto;
     width: 16px;
@@ -121,6 +123,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    position: relative;         /* anchors the ::before glint over the dot */
     opacity: 0;
     transition: opacity 0.3s ease;
 }
@@ -129,9 +132,49 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: rgba(60, 62, 70, 0.6);
+    background: #9292d8;
+    animation: tr-dotColor 4s linear infinite;
+}
+/* The glint: an 8px circle over the dot whose own border-radius clips a white
+   streak (background-image) sweeping through as animated background-position —
+   a transform-based streak can't be clipped inside a pseudo-element, so the
+   sweep is driven in px (streak = 40% of 8px = 3.2px; -140%/320% of that). */
+.br-circle::before {
+    content: "";
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    pointer-events: none;
+    background-image: linear-gradient(90deg,
+        rgba(255, 255, 255, 0) 0%,
+        rgba(255, 255, 255, 0.85) 50%,
+        rgba(255, 255, 255, 0) 100%);
+    background-size: 3.2px 8px;
+    background-repeat: no-repeat;
+    background-position: -4.5px 0;
+    opacity: 0;
+    animation: tr-dotShine 4s ease-in-out infinite;
 }
 .br-item.icon-in .br-circle { opacity: 1; }
+/* #9292d8 base drifting through the same hues as the mode-toggle label
+   (color_test.html stop-labelColor) — same colors, same 4s linear loop. */
+@keyframes tr-dotColor {
+    0%, 100% { background-color: #9292d8; }
+    20% { background-color: #a875ad; }   /* red   */
+    40% { background-color: #88a8c6; }   /* green */
+    60% { background-color: #7e99e0; }   /* blue  */
+    80% { background-color: #a789e0; }   /* pink  */
+}
+/* barShine's timeline (0/55 hidden → peak at 65 → gone at 100), position-driven.
+   Peak kept subtle (0.2). */
+@keyframes tr-dotShine {
+    0%, 55%  { background-position: -4.5px 0; opacity: 0; }
+    65%      { opacity: 0.2; }
+    100%     { background-position: 10.5px 0; opacity: 0; }
+}
 
 /* entry text — typed char-by-char; WRAPS to as many lines as it needs (never
    chopped). line-height matches the 16px dot slot so the dot sits on line 1. */
