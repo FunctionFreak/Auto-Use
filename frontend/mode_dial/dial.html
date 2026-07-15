@@ -7,8 +7,9 @@
     <style>
         :root {
             /* Layout box */
-            --orb-w: 120px;
+            --orb-w: 120px;    /* the dial box itself (words + chevrons) */
             --orb-h: 40px;
+            --frame-w: 188px;  /* dial box + the platform logos to its right */
 
             /* Dial geometry */
             --dial-offset: 14px;   /* center slot -> small slot distance */
@@ -35,10 +36,11 @@
             background: transparent;
         }
 
-        /* wrapper to give the absolutely-positioned button a frame */
+        /* wrapper to give the absolutely-positioned button a frame (wider than
+           the dial box: the mobile platform logos live in the right margin) */
         .button-host {
             position: relative;
-            width: var(--orb-w);
+            width: var(--frame-w);
             height: var(--orb-h);
         }
         /* Design mode (file opened directly): white bg + 4x zoom to see the 8px type. */
@@ -217,6 +219,43 @@
             animation: chev-shine 4s ease-in-out infinite;
         }
 
+        /* Mobile platform picker — Android / Apple logos in the right margin,
+           only while Mobile Use is the focused mode. Radio behaviour (exactly
+           one selected, driven by .selected from JS); the selected logo runs
+           the same accent color cycle as the focused word / todo tick. */
+        .platform-pick {
+            position: absolute;
+            left: calc(100% + 18px);   /* clear breathing room right of the dial box */
+            top: 50%;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(-50%) scale(0.85);
+            transition: opacity var(--slide), transform var(--slide);
+        }
+        .mode-dial-button.mode-mobile .platform-pick {
+            opacity: 1;
+            pointer-events: auto;
+            transform: translateY(-50%) scale(1);
+        }
+        .plat {
+            display: inline-flex;
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+            color: rgba(0, 0, 0, 0.35);   /* unselected: quiet grey */
+            transition: color 0.35s ease, transform 0.35s ease;
+        }
+        .plat svg { width: 100%; height: 100%; display: block; }
+        .plat:hover { color: rgba(0, 0, 0, 0.55); }
+        .plat.selected {
+            color: var(--label-active);
+            transform: scale(1.15);
+            animation: stop-labelColor 4s linear infinite;
+        }
+
         /* #9292d8 base with the original overlay colors blended in at 20% -
            same hues the old rotating disc drifted through. */
         @keyframes stop-labelColor {
@@ -249,6 +288,23 @@
                     <div class="dial-word" data-mode="computer" data-label="Computer Use">Computer Use</div>
                     <div class="dial-word" data-mode="mobile" data-label="Mobile Use">Mobile Use</div>
                     <span class="chev"><i class="up"></i><i class="dn"></i></span>
+                </div>
+
+                <!-- Mobile platform picker (visible only in mode-mobile). Exact
+                     brand marks (simple-icons paths), fill = currentColor so the
+                     .selected accent cycle colors them. -->
+                <div class="platform-pick" id="platformPick" aria-label="Mobile platform">
+                    <span class="plat" data-platform="android" role="button" aria-label="Android" title="Android">
+                        <!-- Full Android robot (head + arms + body + legs), not just the head -->
+                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                            <path d="M6,18C6,18.55 6.45,19 7,19H8V22.5C8,23.33 8.67,24 9.5,24C10.33,24 11,23.33 11,22.5V19H13V22.5C13,23.33 13.67,24 14.5,24C15.33,24 16,23.33 16,22.5V19H17C17.55,19 18,18.55 18,18V8H6V18M3.5,8C2.67,8 2,8.67 2,9.5V16.5C2,17.33 2.67,18 3.5,18C4.33,18 5,17.33 5,16.5V9.5C5,8.67 4.33,8 3.5,8M20.5,8C19.67,8 19,8.67 19,9.5V16.5C19,17.33 19.67,18 20.5,18C21.33,18 22,17.33 22,16.5V9.5C22,8.67 21.33,8 20.5,8M15.53,2.16L16.84,0.85C17.03,0.66 17.03,0.34 16.84,0.14C16.64,-0.05 16.32,-0.05 16.13,0.14L14.65,1.62C13.85,1.23 12.95,1 12,1C11.04,1 10.14,1.23 9.34,1.63L7.85,0.14C7.66,-0.05 7.34,-0.05 7.15,0.14C6.95,0.34 6.95,0.66 7.15,0.85L8.46,2.16C6.97,3.26 6,5.01 6,7H18C18,5.01 17.03,3.25 15.53,2.16M10,5H9V4H10V5M15,5H14V4H15V5Z"/>
+                        </svg>
+                    </span>
+                    <span class="plat" data-platform="ios" role="button" aria-label="Apple" title="Apple">
+                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                            <path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/>
+                        </svg>
+                    </span>
                 </div>
             </div>
         </div>
@@ -284,6 +340,21 @@
             setMode(currentMode() === 'computer' ? 'mobile' : 'computer');
         });
 
+        // Mobile platform — radio behaviour: NOTHING selected until the user
+        // picks; from then on exactly one of android/ios (never both). The
+        // parent can also set it via modedial:platform:*.
+        let platform = null;
+        function setPlatform(p, notify = true) {
+            platform = (p === 'android' || p === 'ios') ? p : null;
+            document.querySelectorAll('.plat').forEach((el) => {
+                el.classList.toggle('selected', platform !== null && el.dataset.platform === platform);
+            });
+            if (notify && !standalone && platform) parent.postMessage('modedial:platform:' + platform, '*');
+        }
+        document.querySelectorAll('.plat').forEach((el) => {
+            el.addEventListener('click', () => setPlatform(el.dataset.platform));
+        });
+
         // Expand a little, then completely vanish (and reset so it can show again later).
         // The cleanup timer is kept so 'modedial:show' can cancel it — a send that
         // errors out within 600ms re-shows the dial, and the stale timeout would
@@ -311,6 +382,10 @@
                 setMode('computer', false);
             } else if (msg === 'modedial:mode:mobile') {
                 setMode('mobile', false);
+            } else if (msg === 'modedial:platform:android') {
+                setPlatform('android', false);
+            } else if (msg === 'modedial:platform:ios') {
+                setPlatform('ios', false);
             }
         });
     </script>

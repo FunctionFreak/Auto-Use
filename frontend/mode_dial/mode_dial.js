@@ -4,7 +4,8 @@
 // back when the composer returns to idle. Same self-contained fetch-inject
 // pattern as chat_input/chat_input.js and the container/* zones.
 //
-// No agent wiring yet: the dial's 'modedial:mode:*' messages are emitted but not
+// No agent wiring yet: the dial's 'modedial:mode:*' and 'modedial:platform:*'
+// (android/ios, radio-selected in Mobile Use) messages are emitted but not
 // consumed — integration comes later. Run state is read passively off the
 // .chat-input's 'agent-active' class (a MutationObserver), so chat_input.js
 // needs no knowledge of this component.
