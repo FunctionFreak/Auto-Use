@@ -443,6 +443,28 @@ def _developer_label(team):
     return "your Apple Development certificate"
 
 
+def installed_bundle_ids(udid=None):
+    """Bundle ids of the apps installed on the device (pymobiledevice3
+    `apps list`). Empty list on any failure — callers treat that as 'unknown',
+    not 'not installed'."""
+    pmd = pymobiledevice3_path()
+    if not pmd:
+        return []
+    cmd = [pmd, "apps", "list"]
+    if udid:
+        cmd += ["--udid", udid]
+    rc, out = sh(cmd)
+    if rc != 0:
+        return []
+    try:
+        start = out.find("{")
+        if start < 0:
+            return []
+        return list(json.loads(out[start:]).keys())
+    except Exception:
+        return []
+
+
 def kill_current():
     with PROC_LOCK:
         p = CURRENT_PROC
@@ -462,6 +484,13 @@ def kill_current():
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass  # keep the console clean; the browser shows everything
+
+    def end_headers(self):
+        # The desktop app drives these endpoints from its own clean UI on a
+        # different local port (fetch + EventSource), so allow cross-origin.
+        # All routes are GET, so no preflight is involved.
+        self.send_header("Access-Control-Allow-Origin", "*")
+        super().end_headers()
 
     # ---- tiny response helpers ----
     def _json(self, obj, code=200):
@@ -588,6 +617,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.route_add_account()
         if path == "/run":
             return self.route_run(parse_qs(parsed.query))
+        if path == "/installed":
+            # Is the AutoUse runner already on the device? (pairing = installed)
+            q = parse_qs(parsed.query)
+            udid = (q.get("udid", [""])[0] or "").strip() or None
+            bundle = (q.get("bundle", [""])[0] or "").strip() \
+                or (BUNDLE_PREFIX + ".WebDriverAgentRunner.xctrunner")
+            ids = installed_bundle_ids(udid)
+            return self._json({"installed": bundle in ids, "bundle": bundle,
+                               "checked": bool(ids)})
         if path == "/stop":
             kill_current()
             return self._json({"stopped": True})
@@ -806,10 +844,13 @@ def main():
     if not PROJECT.exists():
         print(f"  (put a fresh WebDriverAgent clone at {WDA_DIR})")
     srv = Server(("127.0.0.1", PORT), Handler)
-    try:
-        webbrowser.open(f"http://localhost:{PORT}")
-    except Exception:
-        pass
+    # When the desktop app embeds this UI in an iframe (AUTOUSE_EMBED=1) we don't
+    # want a stray browser tab — the app loads http://localhost:PORT itself.
+    if not os.environ.get("AUTOUSE_EMBED"):
+        try:
+            webbrowser.open(f"http://localhost:{PORT}")
+        except Exception:
+            pass
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

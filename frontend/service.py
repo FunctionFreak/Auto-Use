@@ -1075,6 +1075,104 @@ def api_app_quit():
 
 
 # =============================================================================
+# Flask route — iOS setup UI (Settings → Connect Device → iPhone)
+# Runs the existing ios_connector/setup.py server (the full sign/build/install/
+# trust tool with Add Apple Account, team + device select, build console) and
+# hands its URL to the frontend, which shows setup.py's index.html in an iframe.
+# We do NOT reimplement any of that flow.
+# =============================================================================
+@app.route('/api/ios/setup-server', methods=['POST'])
+def api_ios_setup_server():
+    """Ensure the WDA setup server is running; return its URL for the iframe."""
+    try:
+        from Auto_Use.ios_connector.setup_server import ensure_running
+        return jsonify(ensure_running())
+    except Exception:
+        debug_exception("api_ios_setup_server")
+        return jsonify({"ok": False, "ready": False, "error": "could not start setup server"}), 500
+
+
+# =============================================================================
+# Flask routes — iOS paired devices + WDA session toggle
+# paired_devices.json (ios_connector) is the source of truth: a device in the
+# list IS paired. The Apple logo in the chat box toggles a WDA session on the
+# newest paired device — fresh session on, stopped on off. No reinstall, ever.
+# =============================================================================
+@app.route('/api/ios/paired', methods=['GET'])
+def api_ios_paired():
+    """List paired devices (for Settings and the activation toggle)."""
+    try:
+        from Auto_Use.ios_connector.session import paired_devices
+        return jsonify({"devices": paired_devices()})
+    except Exception:
+        debug_exception("api_ios_paired")
+        return jsonify({"devices": []})
+
+
+@app.route('/api/ios/paired/add', methods=['POST'])
+def api_ios_paired_add():
+    """Record a device as paired (called by Settings when pairing completes)."""
+    from flask import request
+    try:
+        data = request.get_json(silent=True) or {}
+        from Auto_Use.ios_connector.session import add_paired
+        return jsonify({"ok": True,
+                        "devices": add_paired(data.get("udid"), data.get("name"),
+                                              data.get("version"))})
+    except Exception:
+        debug_exception("api_ios_paired_add")
+        return jsonify({"ok": False}), 500
+
+
+@app.route('/api/ios/paired/remove', methods=['POST'])
+def api_ios_paired_remove():
+    """Delete a device from the paired list (Settings' × button)."""
+    from flask import request
+    try:
+        data = request.get_json(silent=True) or {}
+        from Auto_Use.ios_connector.session import remove_paired
+        return jsonify({"ok": True, "devices": remove_paired(data.get("udid"))})
+    except Exception:
+        debug_exception("api_ios_paired_remove")
+        return jsonify({"ok": False}), 500
+
+
+@app.route('/api/ios/activate', methods=['POST'])
+def api_ios_activate():
+    """Apple logo ON: fresh WDA session on the paired device (no reinstall)."""
+    from flask import request
+    try:
+        data = request.get_json(silent=True) or {}
+        from Auto_Use.ios_connector.session import wda_session
+        return jsonify(wda_session.activate(data.get("udid")))
+    except Exception:
+        debug_exception("api_ios_activate")
+        return jsonify({"ok": False, "state": "error", "error": "activate failed"}), 500
+
+
+@app.route('/api/ios/session-status', methods=['GET'])
+def api_ios_session_status():
+    """Session state — 'connected' means WDA really answers on port 8100."""
+    try:
+        from Auto_Use.ios_connector.session import wda_session
+        return jsonify(wda_session.status())
+    except Exception:
+        debug_exception("api_ios_session_status")
+        return jsonify({"state": "error", "error": "status failed"})
+
+
+@app.route('/api/ios/deactivate', methods=['POST'])
+def api_ios_deactivate():
+    """Apple logo OFF: stop the session."""
+    try:
+        from Auto_Use.ios_connector.session import wda_session
+        return jsonify(wda_session.deactivate())
+    except Exception:
+        debug_exception("api_ios_deactivate")
+        return jsonify({"ok": False}), 500
+
+
+# =============================================================================
 # Flask routes — providers / keys / settings / vertex
 # =============================================================================
 @app.route('/api/providers', methods=['GET'])

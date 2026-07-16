@@ -124,3 +124,4 @@ screen_record.py
 /Auto_Use/agent_conversation/index.json
 /Auto_Use/agent_conversation/chat_*/
 automation_grant.json
+Auto_Use/ios_connector/paired_devices.json

@@ -340,19 +340,24 @@
             setMode(currentMode() === 'computer' ? 'mobile' : 'computer');
         });
 
-        // Mobile platform — radio behaviour: NOTHING selected until the user
-        // picks; from then on exactly one of android/ios (never both). The
-        // parent can also set it via modedial:platform:*.
+        // Mobile platform — a TOGGLE: nothing selected by default; click to
+        // select (never both), click the selected one again to unselect. Every
+        // change is announced upward ('modedial:platform:ios|android|none') so
+        // the app can activate/deactivate the device session. The parent can
+        // also set it via the same messages.
         let platform = null;
         function setPlatform(p, notify = true) {
             platform = (p === 'android' || p === 'ios') ? p : null;
             document.querySelectorAll('.plat').forEach((el) => {
                 el.classList.toggle('selected', platform !== null && el.dataset.platform === platform);
             });
-            if (notify && !standalone && platform) parent.postMessage('modedial:platform:' + platform, '*');
+            if (notify && !standalone) parent.postMessage('modedial:platform:' + (platform || 'none'), '*');
         }
         document.querySelectorAll('.plat').forEach((el) => {
-            el.addEventListener('click', () => setPlatform(el.dataset.platform));
+            el.addEventListener('click', () => {
+                // click the selected logo -> switch it off; otherwise select it
+                setPlatform(platform === el.dataset.platform ? null : el.dataset.platform);
+            });
         });
 
         // Expand a little, then completely vanish (and reset so it can show again later).
@@ -386,6 +391,8 @@
                 setPlatform('android', false);
             } else if (msg === 'modedial:platform:ios') {
                 setPlatform('ios', false);
+            } else if (msg === 'modedial:platform:none') {
+                setPlatform(null, false);    // e.g. activation failed -> revert
             }
         });
     </script>

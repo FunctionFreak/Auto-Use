@@ -4,11 +4,13 @@
 // back when the composer returns to idle. Same self-contained fetch-inject
 // pattern as chat_input/chat_input.js and the container/* zones.
 //
-// No agent wiring yet: the dial's 'modedial:mode:*' and 'modedial:platform:*'
-// (android/ios, radio-selected in Mobile Use) messages are emitted but not
-// consumed — integration comes later. Run state is read passively off the
-// .chat-input's 'agent-active' class (a MutationObserver), so chat_input.js
-// needs no knowledge of this component.
+// The dial's Apple logo is the WDA session toggle: selecting it activates the
+// paired iPhone (fresh session over the cable — no reinstall; the pairing
+// itself happens once in Settings → Connect Device), unselecting deactivates.
+// If activation fails (no paired device / cable out / trust missing) the logo
+// reverts to unselected. 'modedial:mode:*' stays display-only for now. Run
+// state is read passively off the .chat-input's 'agent-active' class (a
+// MutationObserver), so chat_input.js needs no knowledge of this component.
 (function () {
     'use strict';
 
@@ -16,6 +18,47 @@
         var frame = document.getElementById('modeDialFrame');
         if (frame && frame.contentWindow) frame.contentWindow.postMessage(msg, '*');
     }
+
+    // ---- Apple-logo session toggle ----
+    var statusTimer = null;
+    function stopStatusPoll() { if (statusTimer) { clearInterval(statusTimer); statusTimer = null; } }
+
+    function activateIOS() {
+        stopStatusPoll();
+        fetch('/api/ios/activate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})            // backend picks the newest paired device
+        }).then(function (r) { return r.json(); }).then(function (d) {
+            if (d.state === 'connected') return;                 // already live
+            if (!d.ok) { postToDial('modedial:platform:none'); return; }
+            // connecting -> poll until the phone really answers (or fails)
+            var deadline = Date.now() + 90000;
+            statusTimer = setInterval(function () {
+                if (Date.now() > deadline) { fail(); return; }
+                fetch('/api/ios/session-status').then(function (r) { return r.json(); }).then(function (s) {
+                    if (s.state === 'connected') { stopStatusPoll(); }
+                    else if (s.state === 'error' || s.state === 'disconnected') { fail(); }
+                }).catch(function () { /* transient */ });
+            }, 2000);
+            function fail() {                                    // clean up + revert the logo
+                stopStatusPoll();
+                fetch('/api/ios/deactivate', { method: 'POST' }).catch(function () {});
+                postToDial('modedial:platform:none');
+            }
+        }).catch(function () { postToDial('modedial:platform:none'); });
+    }
+
+    function deactivateIOS() {
+        stopStatusPoll();
+        fetch('/api/ios/deactivate', { method: 'POST' }).catch(function () {});
+    }
+
+    window.addEventListener('message', function (e) {
+        if (e.data === 'modedial:platform:ios') activateIOS();
+        else if (e.data === 'modedial:platform:none') deactivateIOS();
+        else if (e.data === 'modedial:platform:android') deactivateIOS();   // switching platform ends the iOS session
+    });
 
     // Mirror the composer's run state onto the dial. agent-active appears the
     // moment a task is sent (chat_input.js startAgent) and leaves on restoreIdle
