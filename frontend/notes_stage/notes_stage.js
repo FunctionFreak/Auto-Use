@@ -10,7 +10,7 @@
 //           • saved chat reopened ('chat:opened' from chat/chat.js, whose fetch
 //             then calls showAgentNotes with that chat's last done message)
 // HIDE on:  • a new task sent (.chat-input gains 'agent-active' — observed
-//             passively, mode_dial-style; resetChatUi also calls hideAgentNotes)
+//             passively via a MutationObserver; resetChatUi also calls hideAgentNotes)
 //           • New chat ('chat:new' from chat/chat.js)
 (function () {
     'use strict';

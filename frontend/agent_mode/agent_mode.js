@@ -4,10 +4,11 @@
 // Computer use); picking the other swaps trigger label + logo. Same
 // fetch-inject pattern as the other components.
 //
-// DESIGN-ONLY for now: each change dispatches 'agentmode:changed'
-// (detail.mode = 'computer' | 'mobile') and nothing listens yet. The proven
-// iOS connect logic is parked in agent_mode/ios_session.js (window.iosSession)
-// and gets attached once the design is finalized.
+// Each change dispatches 'agentmode:changed' (detail {mode, sub});
+// agent_mode/ios_session.js listens and drives the iPhone's WDA session
+// (Mobile use → iOS pairs it; anything else disconnects). 'agentmode:set'
+// (detail {mode, sub?}) sets the selection SILENTLY — used by ios_session.js
+// to revert the menu when pairing fails.
 (function () {
     'use strict';
 
@@ -43,6 +44,9 @@
         }
 
         function commit() {
+            // Leaving Mobile use drops its platform tick: iOS/Android are only
+            // ticked while they ARE the selection (pairing closed = no tick).
+            if (state.mode !== 'mobile') state.subs.mobile = null;
             paint();
             // Announced for the future wiring (ios_session etc.); nothing
             // listens yet — connection stays unattached by design.
@@ -91,6 +95,18 @@
 
         document.addEventListener('click', function (e) {
             if (open && !e.target.closest('.agent-mode-wrap')) setOpen(false);
+        });
+
+        // Programmatic, SILENT selection (no agentmode:changed) — e.g. pairing
+        // failed and ios_session.js puts the menu back on Computer use.
+        document.addEventListener('agentmode:set', function (e) {
+            var d = e.detail || {};
+            if (d.mode && (d.mode === 'computer' || d.mode === 'mobile')) {
+                state.mode = d.mode;
+                if (d.sub !== undefined) state.subs[d.mode] = d.sub;
+            }
+            if (state.mode !== 'mobile') state.subs.mobile = null;   // same rule as commit()
+            paint();
         });
 
         paint();
