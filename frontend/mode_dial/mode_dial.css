@@ -13,7 +13,7 @@
     left: calc(var(--pad-x) - 10px);
     bottom: var(--pad-y);
     height: var(--orb);
-    width: 188px;                       /* dial.html --frame-w (dial + platform logos) */
+    width: 228px;                       /* dial.html --orb-w (toggle + platform tab) */
     display: flex;
     align-items: center;
     overflow: visible;
@@ -22,8 +22,8 @@
 
 .mode-dial-frame {
     display: block;
-    width: 188px;                       /* dial.html --frame-w x --orb-h, 1:1 */
-    height: 40px;
+    width: 228px;                       /* dial.html --orb-w x --orb-h, 1:1 */
+    height: 75px;
     border: none;
     background: transparent;
 }

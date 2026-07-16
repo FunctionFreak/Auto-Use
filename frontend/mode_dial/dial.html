@@ -3,25 +3,51 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mode Dial</title>
+    <title>Mode Toggle</title>
     <style>
         :root {
-            /* Layout box */
-            --orb-w: 120px;    /* the dial box itself (words + chevrons) */
-            --orb-h: 40px;
-            --frame-w: 188px;  /* dial box + the platform logos to its right */
+            /* Layout box. No pill outline - just geometry.
+               ALL px values are the original design x1.625 so the labels land
+               at 13px — the exact size of the model picker across the row
+               (.model-dropdown-trigger clamps at 13px). Proportions unchanged. */
+            --orb-w: 228px;
+            --orb-h: 75px;
+            --core-w: 211px;
+            --core-h: 28px;
+            --stack-gap: 0px;        /* panel sits joined on the toggle's top line */
+            --plat-color: #7a7e8a;   /* text/logos in the platform box */
+            --plat-h: 16px;          /* platform panel height */
+            --plat-size: 11.5px;     /* platform box font */
+            --plat-pad: 13px;        /* platform panel side padding */
 
-            /* Dial geometry */
-            --dial-offset: 14px;   /* center slot -> small slot distance */
-            --dial-small: 1.05;    /* unselected word ≈ the old focused size (~10.5px) */
-            --dial-big: 1.3;       /* selected word: 13px — matches the model picker
-                                      (.model-dropdown-trigger clamps at 13px) */
-            --chev-x: 53px;        /* dial center -> chevron pair (clears the scaled word;
-                                      53px is the max before the 120px box clips it) */
+            /* Indicator bar (the lit one slides between the two halves) */
+            --bar-h: 5px;
+            --bar-gap: 2px;   /* bar -> label */
+            /* The bar extends this much past the word on EACH side - exactly
+               word-width read too tight. */
+            --bar-extra: 6.5px;
+            /* Bar width = word width + 2 x --bar-extra. These are no-JS
+               fallbacks; the script overwrites them with measured widths. */
+            --bar-w-c: 101px;
+            --bar-w-m: 85px;
+            /* Rotating color disc inside the bar. It squashes to 0.95 X-scale
+               mid-spin, so it must be >= widestBar / 0.95 to never expose the
+               bar ends. This is the no-JS fallback; the script sets the exact
+               size from the measured word width. */
+            --bg-size: 104px;
 
             /* Text */
-            --label-size: 10px;
-            --label-idle: rgba(0, 0, 0, 0.6);   /* same grey as the task/todo text */
+            /* Where the two halves split. "Computer use" is wider than "Mobile
+               use", so an uneven split gives EQUAL air between each word and its
+               outer border. Nudge this if the words change. */
+            --seg-split: 53.5%;
+            /* Grey outline around the whole toggle. Darker than the design
+               file's #d3d6dd: in the app the dial sits on the greige composer
+               (#d8d7d2), where that light grey vanished — this reads on both. */
+            --track-border: #b4b7c2;
+            --track-radius: 8px;       /* rounded-rectangle corners, not a capsule */
+            --label-size: 13px;        /* == model picker font size */
+            --label-idle: #a3a7b3;
             --label-active: #9292d8;   /* base of the color cycle */
 
             --slide: 0.45s cubic-bezier(0.22, 1, 0.36, 1);
@@ -36,23 +62,22 @@
             background: transparent;
         }
 
-        /* wrapper to give the absolutely-positioned button a frame (wider than
-           the dial box: the mobile platform logos live in the right margin) */
+        /* wrapper to give the absolutely-positioned button a frame */
         .button-host {
             position: relative;
-            width: var(--frame-w);
+            width: var(--orb-w);
             height: var(--orb-h);
         }
-        /* Design mode (file opened directly): white bg + 4x zoom to see the 8px type. */
+        /* Design mode (file opened directly): white bg + 4x zoom. */
         body.preview {
             background: #ffffff;
         }
         body.preview .button-host {
-            transform: scale(4);
+            transform: scale(2);   /* the box is already at in-app size (x1.625) */
             transform-origin: center;
         }
 
-        .mode-dial-button {
+        .stop-agent-button {
             position: absolute;
             left: 0;
             top: 50%;
@@ -78,46 +103,167 @@
             z-index: 20;
         }
 
-        .mode-dial-button.active {
+        .stop-agent-button.active {
             opacity: 1;
             pointer-events: auto;
             transform: translateY(-50%) scale(1);
         }
 
-        .mode-dial-button.pop-vanish {
-            animation: dialPopVanish 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        .stop-agent-button.pop-vanish {
+            animation: stopPopVanish 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
             pointer-events: none;
             transition: none;
         }
 
-        @keyframes dialPopVanish {
+        @keyframes stopPopVanish {
             0%   { transform: translateY(-50%) scale(1); opacity: 1; }
             35%  { transform: translateY(-50%) scale(1.3); opacity: 1; }
             100% { transform: translateY(-50%) scale(0); opacity: 0; }
         }
 
-        .dial-orb {
+        .stop-orb {
             position: relative;
             width: 100%;
             height: 100%;
-            pointer-events: none;   /* .dial re-enables itself */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: var(--stack-gap);
+            pointer-events: none;   /* children re-enable themselves */
         }
 
-        /* Vertical dial. Three slots: small-top / center / small-bottom.
-           State A (mode-computer): Computer center, Mobile in the bottom slot.
-           Click -> drum rotates UP: Mobile rises to center, Computer shrinks
-           into the top slot. Click again -> rotates back down. */
-        .dial {
+        /* Platform panel: not a separate floating rectangle any more - a tab
+           joined onto the toggle, like a panel sticking out from behind it.
+           Rounded top corners, OPEN bottom: the toggle's own top line closes
+           the shape, so the two read as one structure. */
+        .platform-box {
+            position: relative;
+            display: grid;
+            height: var(--plat-h);
+            padding: 0 var(--plat-pad);
+            box-sizing: border-box;
+            border: 1px solid var(--track-border);
+            border-bottom: 0;
+            border-radius: var(--track-radius) var(--track-radius) 0 0;
+        }
+        .plat {
+            grid-area: 1 / 1;
+            align-self: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            opacity: 0;
+            transform: translateY(5px);
+            transition: opacity var(--slide), transform var(--slide);
+            pointer-events: none;
+        }
+        .stop-agent-button.mode-computer .plat-mac,
+        .stop-agent-button.mode-mobile   .plat-mobile {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .plat-item {
+            position: relative;
+            display: inline-flex;
+            align-items: baseline;   /* logo bottom sits ON the text baseline,
+                                        like a glyph - box-centering was what
+                                        made them float at odd heights */
+            gap: 5px;
+            font-family: -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+            font-size: var(--plat-size);
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            line-height: 1;
+            color: var(--plat-color);
+            white-space: nowrap;
+            user-select: none;
+            pointer-events: auto;
+            cursor: pointer;
+            transition: color 0.35s ease;
+        }
+        /* Selected platform: same treatment as the active toggle word — the
+           color cycle, with the WORD getting the letter-clipped traveling
+           shine (same as the toggle words) and the LOGO a brief catch-light.
+           Nothing box-shaped ever flashes. */
+        .plat-item.sel {
+            color: var(--label-active);
+            animation: stop-labelColor 4s linear infinite;
+        }
+        .plat-word { position: relative; display: inline-block; }
+        .plat-item.sel .plat-word::after {
+            content: attr(data-label);
+            position: absolute;
+            left: 0;
+            top: 0;
+            pointer-events: none;
+            color: transparent;
+            background: linear-gradient(90deg,
+                rgba(255,255,255,0) 40%,
+                rgba(255,255,255,0.85) 50%,
+                rgba(255,255,255,0) 60%) no-repeat;
+            background-size: 300% 100%;
+            background-position: 100% 0;
+            -webkit-background-clip: text;
+            background-clip: text;
+            opacity: 0;
+            animation: word-shine 4s ease-in-out infinite;
+        }
+        .plat-item.sel svg {
+            animation: plat-flash 4s ease-in-out infinite;
+        }
+        .plat-item svg {
+            fill: currentColor;
+            display: block;   /* flex synthesizes its baseline from the bottom
+                                 edge, so the mark's feet land on the text
+                                 baseline like a letter */
+        }
+        /* Heights match the 11.5px type's cap zone, so mid-logo = mid-word.
+           Robot runs a touch taller: antennas poke over like ascenders. */
+        .svg-android { width: 6.2px; height: 9.4px; }
+        .svg-ios     { width: 7px; height: 8.6px; }
+
+        /* The track: ONE rounded rectangle around both words - a single combined
+           border, not a box per side. Thin grey line, transparent fill. */
+        .pill {
+            position: relative;
+            flex: none;
+            width: var(--core-w);
+            height: var(--core-h);
+            box-sizing: border-box;
+            background: transparent;
+            border: 1px solid var(--track-border);
+            border-radius: var(--track-radius);
+        }
+
+        /* Two halves. Each: a rail slot with its word under it. */
+        .segments {
             position: absolute;
             inset: 0;
+            display: flex;
+            z-index: 4;
+        }
+        .seg {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end;   /* stack sits on the bottom border */
+            gap: var(--bar-gap);
             pointer-events: auto;
             cursor: pointer;
         }
-
-        .dial-word {
-            position: absolute;
-            left: 50%;
-            top: 50%;
+        .seg[data-mode="computer"] { flex: 0 0 var(--seg-split); }
+        .seg[data-mode="mobile"]   { flex: 1; }
+        .seg-rail {
+            /* Height spacer only - reserves the bar's row so the label never
+               moves. The lit bar is the only visible bar, and it slides. */
+            width: 0;
+            height: var(--bar-h);
+            background: transparent;
+        }
+        .seg-label {
+            position: relative;
             font-family: -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
             font-size: var(--label-size);
             font-weight: 600;
@@ -126,37 +272,22 @@
             color: var(--label-idle);
             white-space: nowrap;
             user-select: none;
-            transform: translate(-50%, -50%);
-            transition: transform var(--slide), opacity var(--slide), color 0.35s ease;
+            transition: color 0.35s ease;
         }
-
-        /* small slots */
-        .mode-dial-button.mode-computer .dial-word[data-mode="mobile"] {
-            transform: translate(-50%, calc(-50% + var(--dial-offset))) scale(var(--dial-small));
-            opacity: 0.65;
-        }
-        .mode-dial-button.mode-mobile .dial-word[data-mode="computer"] {
-            transform: translate(-50%, calc(-50% - var(--dial-offset))) scale(var(--dial-small));
-            opacity: 0.65;
-        }
-
-        /* center slot: scaled up (the focused word), color-cycling with the
-           original hues */
-        .mode-dial-button.mode-computer .dial-word[data-mode="computer"],
-        .mode-dial-button.mode-mobile   .dial-word[data-mode="mobile"] {
+        .stop-agent-button.mode-computer .seg[data-mode="computer"] .seg-label,
+        .stop-agent-button.mode-mobile   .seg[data-mode="mobile"]   .seg-label {
             color: var(--label-active);
-            transform: translate(-50%, -50%) scale(var(--dial-big));
+            /* Same 4s timeline as stop-bgColor, so the word drifts through the
+               same hues the bar does. */
             animation: stop-labelColor 4s linear infinite;
         }
 
-        /* light glint crossing the center word — ON THE LETTERS, not the box:
-           the ::before repeats the label (attr(data-label), same inherited font,
-           so it overlays glyph-for-glyph) and the white streak is a background
-           swept through it, clipped to the text. background-size 300% keeps the
-           streak (40%-60% of the image) fully off-glyph at both rest positions;
-           position 100%->0% drives it left-to-right across the word. */
-        .mode-dial-button.mode-computer .dial-word[data-mode="computer"]::before,
-        .mode-dial-button.mode-mobile   .dial-word[data-mode="mobile"]::before {
+        /* Shine ON THE LETTERS, not the box: the ::after repeats the word
+           (attr(data-label), same inherited font, so it overlays glyph-for-
+           glyph) and the white streak is a background swept through it,
+           clipped to the text. Same 4s timeline as the bar's shine. */
+        .stop-agent-button.mode-computer .seg[data-mode="computer"] .seg-label::after,
+        .stop-agent-button.mode-mobile   .seg[data-mode="mobile"]   .seg-label::after {
             content: attr(data-label);
             position: absolute;
             left: 0;
@@ -175,89 +306,163 @@
             animation: word-shine 4s ease-in-out infinite;
         }
 
-        /* Up + down chevrons stacked (^ over v) - the dial-goes-both-ways hint.
-           One static element pinned beside the center slot: it does NOT ride the
-           words, so it stays put while the dial rotates. */
-        .chev {
+        /* The lit bar. Mirrors a segment's column (bar + a ghost the height of the
+           label) so it lands dead on the rail, and slides one half-width to switch. */
+        .glow-cell {
             position: absolute;
-            left: calc(50% + var(--chev-x));
-            top: 50%;
-            transform: translateY(-50%);
+            top: 0;
+            left: 0;
+            width: var(--seg-split);
+            height: 100%;
             display: flex;
             flex-direction: column;
-            gap: 0;
+            align-items: center;
+            justify-content: flex-end;   /* mirrors .seg so the bar lands on the rail */
+            gap: var(--bar-gap);
+            z-index: 5;
             pointer-events: none;
-            color: var(--label-active);
-            animation: stop-labelColor 4s linear infinite;
+            transition: left var(--slide), width var(--slide);
         }
-        .chev i {
-            display: block;
-            position: relative;
-            width: 4px;
-            height: 4px;
-            border-top: 1.2px solid currentColor;
-            border-right: 1.2px solid currentColor;
+        .stop-agent-button.mode-mobile .glow-cell {
+            left: var(--seg-split);
+            width: calc(100% - var(--seg-split));
         }
-        .chev i.up { transform: rotate(-45deg); }   /* ^ */
-        /* The rotated 4px boxes are mostly empty around the glyphs, so the pair
-           reads far apart even at gap 0. Overlap the boxes to bring the actual
-           chevrons together. */
-        .chev i.dn { transform: rotate(135deg); margin-top: -2px; }   /* v */
-        /* The chevrons catch the same light: a white copy of each glyph laid
-           exactly over its borders, flashing on the word-shine timeline (at 4px
-           a traveling streak isn't readable — the strokes lighting up is). */
-        .chev i::after {
-            content: "";
-            position: absolute;
-            top: -1.2px;
-            right: -1.2px;
-            width: 4px;
-            height: 4px;
-            border-top: 1.2px solid rgba(255,255,255,0.85);
-            border-right: 1.2px solid rgba(255,255,255,0.85);
-            opacity: 0;
-            animation: chev-shine 4s ease-in-out infinite;
+        .glow-ghost {
+            height: var(--label-size);   /* label is line-height:1, so this matches */
         }
 
-        /* Mobile platform picker — Android / Apple logos in the right margin,
-           only while Mobile Use is the focused mode. Radio behaviour (exactly
-           one selected, driven by .selected from JS); the selected logo runs
-           the same accent color cycle as the focused word / todo tick. */
-        .platform-pick {
-            position: absolute;
-            left: calc(100% + 18px);   /* clear breathing room right of the dial box */
-            top: 50%;
+        /* ---- the original orb effect, living in the bar ---- */
+        /* Shape: flat on the bottom line, sides curving out at the base so the
+           bar looks fused to the grey line. Width = the word above it, so it
+           stretches/shrinks as it slides between the two. Flare geometry lives
+           in the SVG mask below. */
+        .glow-bar {
+            position: relative;
+            width: var(--bar-w-c);
+            height: var(--bar-h);
             display: flex;
             align-items: center;
-            gap: 10px;
-            opacity: 0;
-            pointer-events: none;
-            transform: translateY(-50%) scale(0.85);
-            transition: opacity var(--slide), transform var(--slide);
+            justify-content: center;
+            transition: width var(--slide);
+            /* Melt shape as an SVG mask instead of a clip-path polygon. The
+               polygon tapered to razor-thin points at the feet and the raster
+               dropped the last sliver - the "cut" at both ends. This path's
+               feet leave the tips horizontally (tangent to the bottom line),
+               so they fade out flat, like the bar spread onto the line. The
+               mask stretches with the bar, so the flare scales with the word. */
+            -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 173 10' preserveAspectRatio='none'%3E%3Cpath d='M0 10C5 10 9 7 12 3Q14 0 18 0L155 0Q159 0 161 3C164 7 168 10 173 10Z'/%3E%3C/svg%3E");
+                    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 173 10' preserveAspectRatio='none'%3E%3Cpath d='M0 10C5 10 9 7 12 3Q14 0 18 0L155 0Q159 0 161 3C164 7 168 10 173 10Z'/%3E%3C/svg%3E");
+            -webkit-mask-size: 100% 100%;
+                    mask-size: 100% 100%;
+            -webkit-mask-repeat: no-repeat;
+                    mask-repeat: no-repeat;
         }
-        .mode-dial-button.mode-mobile .platform-pick {
-            opacity: 1;
-            pointer-events: auto;
-            transform: translateY(-50%) scale(1);
-        }
-        .plat {
-            display: inline-flex;
-            width: 16px;
-            height: 16px;
-            cursor: pointer;
-            color: rgba(0, 0, 0, 0.35);   /* unselected: quiet grey */
-            transition: color 0.35s ease, transform 0.35s ease;
-        }
-        .plat svg { width: 100%; height: 100%; display: block; }
-        .plat:hover { color: rgba(0, 0, 0, 0.55); }
-        .plat.selected {
-            color: var(--label-active);
-            transform: scale(1.15);
-            animation: stop-labelColor 4s linear infinite;
+        .stop-agent-button.mode-mobile .glow-bar {
+            width: var(--bar-w-m);
         }
 
-        /* #9292d8 base with the original overlay colors blended in at 20% -
-           same hues the old rotating disc drifted through. */
+        /* core, clipping the spinning disc. Square: the melt polygon above is
+           the visible shape. */
+        .bar-core {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background-color: white;
+            overflow: hidden;
+        }
+        .bar-core::before,
+        .bar-core::after {
+            content: "";
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(10px);
+            z-index: 2;
+        }
+        .bar-core::before { background: #ff0073; width: 13px; height: 13px; top: -5px; right: 20%; }
+        .bar-core::after  { background: #00bbff; width: 10px; height: 10px; bottom: -3px; left: 34%; }
+
+        .stop-bg {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: var(--bg-size);
+            height: var(--bg-size);
+            margin-left: calc(var(--bg-size) / -2);
+            margin-top: calc(var(--bg-size) / -2);
+            border-radius: 50%;
+            background-color: #9292d8;
+            animation: stop-bgRotate 2.5s linear infinite;
+            z-index: 1;
+        }
+        .stop-bg::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            animation: stop-bgColor 4s linear infinite;
+            opacity: 0.2;
+        }
+
+        /* inner white rim - own layer, an inset shadow on .bar-core would paint
+           under .stop-bg and never show */
+        .stop-rim {
+            position: absolute;
+            inset: 0;
+            box-shadow: inset 0 0 3px 2px rgba(255,255,255,0.6);
+            z-index: 3;
+            pointer-events: none;
+        }
+
+        /* very light shimmer sweeping the lit bar, clipped by .bar-core */
+        .bar-shine {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            width: 35%;
+            z-index: 4;
+            pointer-events: none;
+            background: linear-gradient(90deg,
+                rgba(255,255,255,0) 0%,
+                rgba(255,255,255,0.75) 50%,
+                rgba(255,255,255,0) 100%);
+            transform: translateX(-140%);
+            animation: barShine 4s ease-in-out infinite;
+        }
+
+        @keyframes barShine {
+            0%, 55%  { transform: translateX(-140%); opacity: 0; }
+            65%      { opacity: 0.45; }
+            100%     { transform: translateX(320%); opacity: 0; }
+        }
+        /* barShine's envelope for the text-clipped word shine: the streak is a
+           background swept via position (100% = parked off the left glyphs,
+           0% = exited right), so only the letters ever light up. */
+        @keyframes word-shine {
+            0%, 55%  { background-position: 100% 0; opacity: 0; }
+            65%      { opacity: 0.45; }
+            100%     { background-position: 0% 0; opacity: 0; }
+        }
+        /* Same timeline as a soft brightness pulse for the platform items. */
+        @keyframes plat-flash {
+            0%, 55%  { filter: brightness(1); }
+            65%      { filter: brightness(1.65); }
+            100%     { filter: brightness(1); }
+        }
+
+        @keyframes stop-bgRotate {
+            0%   { transform: rotate(0deg); }
+            20%  { transform: rotate(90deg); }
+            40%  { transform: rotate(180deg) scale(0.95,1); }
+            60%, 100% { transform: rotate(360deg); }
+        }
+        @keyframes stop-bgColor {
+            20% { background-color: red; }
+            40% { background-color: #5eff7e; }
+            60% { background-color: #2cb5ff; }
+            80% { background-color: #fc63ff; }
+        }
+        /* #9292d8 base with the same overlay colors blended in at the same 20% */
         @keyframes stop-labelColor {
             0%, 100% { color: #9292d8; }
             20% { color: #a875ad; }   /* red   */
@@ -265,111 +470,147 @@
             60% { color: #7e99e0; }   /* blue  */
             80% { color: #a789e0; }   /* pink  */
         }
-
-        /* barShine's envelope, driving the clipped streak via background-position
-           (100% = parked off the left glyphs, 0% = exited right). */
-        @keyframes word-shine {
-            0%, 55%  { background-position: 100% 0; opacity: 0; }
-            65%      { opacity: 0.45; }
-            100%     { background-position: 0% 0; opacity: 0; }
-        }
-        @keyframes chev-shine {
-            0%, 55%  { opacity: 0; }
-            65%      { opacity: 0.45; }
-            100%     { opacity: 0; }
-        }
     </style>
 </head>
 <body>
     <div class="button-host">
-        <div class="mode-dial-button mode-computer" id="modeDialBtn">
-            <div class="dial-orb">
-                <div class="dial" id="dial">
-                    <div class="dial-word" data-mode="computer" data-label="Computer Use">Computer Use</div>
-                    <div class="dial-word" data-mode="mobile" data-label="Mobile Use">Mobile Use</div>
-                    <span class="chev"><i class="up"></i><i class="dn"></i></span>
+        <div class="stop-agent-button mode-computer" id="stopAgentBtn">
+            <div class="stop-orb">
+                <div class="platform-box">
+                    <div class="plat plat-mac">
+                        <span class="plat-item sel" data-plat="macos"><span class="plat-word" data-label="macOS">macOS</span></span>
+                    </div>
+                    <div class="plat plat-mobile">
+                        <span class="plat-item" data-plat="android">
+                            <svg class="svg-android" viewBox="14 0 72 109" xmlns="http://www.w3.org/2000/svg"><line x1="36" y1="14" x2="29" y2="3" stroke="currentColor" stroke-width="5" stroke-linecap="round"/><line x1="64" y1="14" x2="71" y2="3" stroke="currentColor" stroke-width="5" stroke-linecap="round"/><path d="M27 36a23 23 0 0 1 46 0z"/><circle cx="41" cy="26" r="3" fill="#fff"/><circle cx="59" cy="26" r="3" fill="#fff"/><rect x="27" y="40" width="46" height="42" rx="7"/><rect x="14" y="40" width="9" height="28" rx="4.5"/><rect x="77" y="40" width="9" height="28" rx="4.5"/><rect x="38" y="86" width="9" height="22" rx="4.5"/><rect x="53" y="86" width="9" height="22" rx="4.5"/></svg>
+                            <span class="plat-word" data-label="Android">Android</span>
+                        </span>
+                        <span class="plat-item" data-plat="ios">
+                            <svg class="svg-ios" viewBox="2.5 0 19.5 24" xmlns="http://www.w3.org/2000/svg"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.03 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.56-1.702"/></svg>
+                            <span class="plat-word" data-label="iOS">iOS</span>
+                        </span>
+                    </div>
                 </div>
 
-                <!-- Mobile platform picker (visible only in mode-mobile). Exact
-                     brand marks (simple-icons paths), fill = currentColor so the
-                     .selected accent cycle colors them. -->
-                <div class="platform-pick" id="platformPick" aria-label="Mobile platform">
-                    <span class="plat" data-platform="android" role="button" aria-label="Android" title="Android">
-                        <!-- Full Android robot (head + arms + body + legs), not just the head -->
-                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                            <path d="M6,18C6,18.55 6.45,19 7,19H8V22.5C8,23.33 8.67,24 9.5,24C10.33,24 11,23.33 11,22.5V19H13V22.5C13,23.33 13.67,24 14.5,24C15.33,24 16,23.33 16,22.5V19H17C17.55,19 18,18.55 18,18V8H6V18M3.5,8C2.67,8 2,8.67 2,9.5V16.5C2,17.33 2.67,18 3.5,18C4.33,18 5,17.33 5,16.5V9.5C5,8.67 4.33,8 3.5,8M20.5,8C19.67,8 19,8.67 19,9.5V16.5C19,17.33 19.67,18 20.5,18C21.33,18 22,17.33 22,16.5V9.5C22,8.67 21.33,8 20.5,8M15.53,2.16L16.84,0.85C17.03,0.66 17.03,0.34 16.84,0.14C16.64,-0.05 16.32,-0.05 16.13,0.14L14.65,1.62C13.85,1.23 12.95,1 12,1C11.04,1 10.14,1.23 9.34,1.63L7.85,0.14C7.66,-0.05 7.34,-0.05 7.15,0.14C6.95,0.34 6.95,0.66 7.15,0.85L8.46,2.16C6.97,3.26 6,5.01 6,7H18C18,5.01 17.03,3.25 15.53,2.16M10,5H9V4H10V5M15,5H14V4H15V5Z"/>
-                        </svg>
-                    </span>
-                    <span class="plat" data-platform="ios" role="button" aria-label="Apple" title="Apple">
-                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                            <path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/>
-                        </svg>
-                    </span>
+                <div class="pill">
+                    <div class="segments">
+                        <div class="seg" data-mode="computer">
+                            <div class="seg-label" data-label="Computer Use">Computer Use</div>
+                            <div class="seg-rail"></div>
+                        </div>
+                        <div class="seg" data-mode="mobile">
+                            <div class="seg-label" data-label="Mobile Use">Mobile Use</div>
+                            <div class="seg-rail"></div>
+                        </div>
+                    </div>
+
+                    <div class="glow-cell">
+                        <div class="glow-ghost"></div>
+                        <div class="glow-bar">
+                            <div class="bar-core">
+                                <div class="stop-bg"></div>
+                                <div class="stop-rim"></div>
+                                <div class="bar-shine"></div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
     <script>
-        const dialBtn = document.getElementById('modeDialBtn');
-        const dial = document.getElementById('dial');
+        const stopBtn = document.getElementById('stopAgentBtn');
 
-        // window.parent === window means the file was opened directly (design mode:
-        // white bg + 4x zoom). Embedded in the app it renders 1:1 on transparent.
+        // ---- self-balancing split -------------------------------------------
+        // Equal air on both outer edges: gap(border -> "C") == gap("e" -> border).
+        // Condition: leftCol - w1 == rightCol - w2, with leftCol + rightCol = W.
+        // => leftCol = (W + w1 - w2) / 2. Measured at runtime so it's exact on
+        // any platform font, not dependent on the CSS fallback estimate.
+        function balanceSplit() {
+            const track = document.querySelector('.pill');
+            const w1 = document.querySelector('.seg[data-mode="computer"] .seg-label')
+                .getBoundingClientRect().width;
+            const w2 = document.querySelector('.seg[data-mode="mobile"] .seg-label')
+                .getBoundingClientRect().width;
+            const r = track.getBoundingClientRect();
+            const border = 1;                       // .pill border, px (pre-scale)
+            const scale = r.width / track.offsetWidth;   // preview zoom factor
+            const W = r.width - 2 * border * scale;      // inner width, same units as w1/w2
+            const left = (W + w1 - w2) / 2;
+            document.documentElement.style.setProperty(
+                '--seg-split', (left / W * 100).toFixed(2) + '%');
+            // Bar width = word width + overhang on each side.
+            const extra = 2 * (parseFloat(getComputedStyle(document.documentElement)
+                .getPropertyValue('--bar-extra')) || 0);
+            const w1u = w1 / scale + extra, w2u = w2 / scale + extra;
+            document.documentElement.style.setProperty('--bar-w-c', w1u.toFixed(2) + 'px');
+            document.documentElement.style.setProperty('--bar-w-m', w2u.toFixed(2) + 'px');
+            // The disc squashes to 0.95 X-scale mid-spin (stop-bgRotate), so it
+            // must be >= widestBar / 0.95 or its edge slips inside the bar ends
+            // and the feet pulse white in rhythm. +4px safety.
+            const disc = Math.ceil(Math.max(w1u, w2u) / 0.95 + 4);
+            document.documentElement.style.setProperty('--bg-size', disc + 'px');
+        }
+        if (document.fonts && document.fonts.ready) {
+            document.fonts.ready.then(balanceSplit);
+        }
+        window.addEventListener('load', balanceSplit);
+        // ----------------------------------------------------------------------
+
+        // window.parent === window means the file was opened directly (design
+        // mode: white bg + 4x zoom). Embedded in the app it renders 1:1.
         const standalone = window.parent === window;
         if (standalone) document.body.classList.add('preview');
 
-        // Visible by default — the composer is idle when the app loads. The parent
-        // (mode_dial.js) drives hide/show around the agent run via modedial:* messages.
-        dialBtn.classList.add('active');
+        // Visible by default — the composer is idle when the app loads. The
+        // parent (mode_dial.js) drives hide/show around runs via modedial:*.
+        stopBtn.classList.add('active');
 
-        function currentMode() {
-            return dialBtn.classList.contains('mode-mobile') ? 'mobile' : 'computer';
-        }
-
-        // 'computer' | 'mobile'. The class drives the dial; no JS geometry.
+        // 'computer' | 'mobile'. The class drives the slide; no JS geometry.
         function setMode(mode, notify = true) {
-            dialBtn.classList.toggle('mode-mobile', mode === 'mobile');
-            dialBtn.classList.toggle('mode-computer', mode !== 'mobile');
-            // Announced for the future agent wiring; nothing listens yet.
+            stopBtn.classList.toggle('mode-mobile', mode === 'mobile');
+            stopBtn.classList.toggle('mode-computer', mode !== 'mobile');
             if (notify && !standalone) parent.postMessage('modedial:mode:' + mode, '*');
         }
 
-        // Click anywhere on the dial flips it.
-        dial.addEventListener('click', () => {
-            setMode(currentMode() === 'computer' ? 'mobile' : 'computer');
+        document.querySelectorAll('.seg').forEach(seg => {
+            seg.addEventListener('click', () => setMode(seg.dataset.mode));
         });
 
-        // Mobile platform — a TOGGLE: nothing selected by default; click to
-        // select (never both), click the selected one again to unselect. Every
-        // change is announced upward ('modedial:platform:ios|android|none') so
-        // the app can activate/deactivate the device session. The parent can
-        // also set it via the same messages.
-        let platform = null;
-        function setPlatform(p, notify = true) {
-            platform = (p === 'android' || p === 'ios') ? p : null;
-            document.querySelectorAll('.plat').forEach((el) => {
-                el.classList.toggle('selected', platform !== null && el.dataset.platform === platform);
-            });
-            if (notify && !standalone) parent.postMessage('modedial:platform:' + (platform || 'none'), '*');
-        }
-        document.querySelectorAll('.plat').forEach((el) => {
-            el.addEventListener('click', () => {
-                // click the selected logo -> switch it off; otherwise select it
-                setPlatform(platform === el.dataset.platform ? null : el.dataset.platform);
+        // Platform picker in the panel. Click selects (color + glint), clicking
+        // the selected one again unselects it - grey means "no preference".
+        // Android/iOS are one group, so picking one drops the other. The app
+        // listens on modedial:platform:* — selecting iOS activates the paired
+        // phone's WebDriver session, none/android switches it off.
+        document.querySelectorAll('.plat-item[data-plat]').forEach(item => {
+            item.addEventListener('click', () => {
+                const wasSel = item.classList.contains('sel');
+                item.closest('.plat').querySelectorAll('.plat-item')
+                    .forEach(i => i.classList.remove('sel'));
+                if (!wasSel) item.classList.add('sel');
+                const val = wasSel ? 'none' : item.dataset.plat;
+                if (!standalone) parent.postMessage('modedial:platform:' + val, '*');
             });
         });
+
+        // Silent platform set from the app (e.g. activation failed -> revert
+        // the iOS selection). Only touches the mobile group.
+        function setPlat(val) {
+            document.querySelectorAll('.plat-mobile .plat-item').forEach(i =>
+                i.classList.toggle('sel', !!val && i.dataset.plat === val));
+        }
 
         // Expand a little, then completely vanish (and reset so it can show again later).
-        // The cleanup timer is kept so 'modedial:show' can cancel it — a send that
-        // errors out within 600ms re-shows the dial, and the stale timeout would
-        // otherwise strip .active and leave the dial hidden for the whole idle.
+        // The cleanup timer is kept so 'modedial:show' can cancel it — a send
+        // that errors out within 600ms re-shows the dial, and the stale timeout
+        // would otherwise strip .active and leave the dial hidden.
         let vanishTimer = null;
         function vanish() {
-            if (!dialBtn.classList.contains('active')) return;
-            if (dialBtn.classList.contains('pop-vanish')) return;
-            dialBtn.classList.add('pop-vanish');
-            vanishTimer = setTimeout(() => dialBtn.classList.remove('active', 'pop-vanish'), 600);
+            if (!stopBtn.classList.contains('active')) return;
+            if (stopBtn.classList.contains('pop-vanish')) return;
+            stopBtn.classList.add('pop-vanish');
+            vanishTimer = setTimeout(() => stopBtn.classList.remove('active', 'pop-vanish'), 600);
         }
 
         // Commands from the parent app (mode_dial.js).
@@ -377,22 +618,22 @@
             const msg = e.data;
             if (msg === 'modedial:show') {
                 clearTimeout(vanishTimer);
-                dialBtn.classList.remove('pop-vanish');
-                dialBtn.classList.add('active');
+                stopBtn.classList.remove('pop-vanish');
+                stopBtn.classList.add('active');
             } else if (msg === 'modedial:vanish') {
                 vanish();
             } else if (msg === 'modedial:hide') {
-                dialBtn.classList.remove('active', 'pop-vanish');
+                stopBtn.classList.remove('active', 'pop-vanish');
             } else if (msg === 'modedial:mode:computer') {
                 setMode('computer', false);
             } else if (msg === 'modedial:mode:mobile') {
                 setMode('mobile', false);
-            } else if (msg === 'modedial:platform:android') {
-                setPlatform('android', false);
             } else if (msg === 'modedial:platform:ios') {
-                setPlatform('ios', false);
+                setPlat('ios');
+            } else if (msg === 'modedial:platform:android') {
+                setPlat('android');
             } else if (msg === 'modedial:platform:none') {
-                setPlatform(null, false);    // e.g. activation failed -> revert
+                setPlat(null);
             }
         });
     </script>

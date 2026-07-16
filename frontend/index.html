@@ -18,8 +18,8 @@
     <link rel="stylesheet" href="notes_stage/notes_stage.css">
     <!-- Chat input (bottom text box) component -->
     <link rel="stylesheet" href="chat_input/chat_input.css">
-    <!-- Mode dial — Computer/Mobile dial at the composer's bottom-left -->
-    <link rel="stylesheet" href="mode_dial/mode_dial.css">
+    <!-- Agent mode — pill + floating menu at the composer's bottom-left -->
+    <link rel="stylesheet" href="agent_mode/agent_mode.css">
     <!-- Connect Device — Settings section (iPhone/Android) -->
     <link rel="stylesheet" href="device_connect/device_connect.css">
     <!-- Memory bar — far-right vertical token gauge (background) -->
@@ -467,8 +467,10 @@
     <script src="notes_stage/notes_stage.js"></script>
     <!-- Chat input (bottom text box): injects into #chatWrapper, fires 'chatinput:ready' -->
     <script src="chat_input/chat_input.js"></script>
-    <!-- Mode dial: injects into .input-area-wrapper on 'chatinput:ready' (display-only for now) -->
-    <script src="mode_dial/mode_dial.js"></script>
+    <!-- Agent mode: injects into .input-area-wrapper on 'chatinput:ready' (design-only for now) -->
+    <script src="agent_mode/agent_mode.js"></script>
+    <!-- Parked: the proven iOS connect logic (window.iosSession) — attached once the design is final -->
+    <script src="agent_mode/ios_session.js"></script>
     <!-- Connect Device: wires the Settings iPhone/Android device-connect section -->
     <script src="device_connect/device_connect.js"></script>
     <!-- Memory bar loader (defines window.updateMemoryBar before script.js) -->

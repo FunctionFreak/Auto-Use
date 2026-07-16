@@ -92,8 +92,10 @@
     /* IDLE: reserve a row below the text for the model + orb. */
     padding-bottom: calc(var(--pad-y) + var(--orb) + var(--tools-gap));
     /* Opaque greige fill (no backdrop-filter: it flickers in WebView2/Chromium while
-       the top-left globe/shell animations run — same reasoning as the old .chat-input). */
-    background: rgba(216, 215, 210, 0.96);
+       the top-left globe/shell animations run — same reasoning as the old .chat-input).
+       Lightened a step from the original rgba(216,215,210) so the bar sits airier
+       against the page. */
+    background: rgba(232, 231, 227, 0.96);
     border-radius: clamp(16px, 1.8vw, 22px);
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
     overflow: visible;
@@ -363,8 +365,8 @@
 /* keep it clickable in the no-provider "disabled" state so the click can still toast */
 .chat-model-dropdown.disabled { opacity: 1; pointer-events: auto; }
 
-/* DROP-UP menu: opens upward (above the orb); tinted to MATCH the input's greige
-   tone (not white); height-capped so it SCROLLS. */
+/* DROP-UP menu: opens upward (above the orb); white card matching the
+   Agent-mode menu across the row; height-capped so it SCROLLS. */
 .chat-model-dropdown .model-dropdown-menu {
     top: auto;
     bottom: calc(100% + 8px);
@@ -380,7 +382,14 @@
        which left the model list unscrollable. Standard overflow scrolling works. */
     overscroll-behavior: contain;
     z-index: 22;
-    background: rgba(223, 222, 215, 0.92);
+    /* Same card language as the Agent-mode menu across the row: solid white,
+       hairline border, 14px radius — no frosted glass. */
+    background: #ffffff;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    border: 1px solid rgba(0, 0, 0, 0.14);
+    border-radius: 14px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
 }
 
 /* The drop-up opens UPWARD into screen space owned by #mainGrid (position:fixed,
@@ -394,6 +403,26 @@
    dropdown closes, so the grid stays interactive the rest of the time. */
 .chat-container-wrapper:has(.chat-model-dropdown.open) {
     z-index: 40;
+}
+
+/* Menu rows — same colors AND type as the Agent-mode menu (system sans, same
+   size, hover #f2f1ed, green accent instead of the old blue) so the two
+   drop-ups across the row read as one set. Without the explicit font-family
+   the rows inherit the page serif. */
+.chat-model-dropdown .model-dropdown-option {
+    color: #1a1a1a;
+    border-radius: 9px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    font-size: clamp(12.5px, 1.2vw, 14px);
+    min-height: 38px;
+    padding: 0 12px;
+}
+.chat-model-dropdown .model-dropdown-option:hover {
+    background-color: #f2f1ed;
+    color: #1a1a1a;
+}
+.chat-model-dropdown .model-dropdown-option.selected {
+    background-color: rgba(29, 158, 117, 0.13);   /* agent-mode green, tinted */
 }
 
 /* Keyframes for the gradient animation */
