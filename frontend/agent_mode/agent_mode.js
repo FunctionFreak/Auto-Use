@@ -25,6 +25,7 @@
         // Mobile use starts with NO platform picked.
         var state = { mode: 'computer', subs: { computer: 'thispc', mobile: null } };
         var MODE_LABEL = { computer: 'Computer use', mobile: 'Mobile use' };
+        var SUB_LABEL = { thispc: 'This PC', daisy: 'Daisy chain', ios: 'iOS', android: 'Android' };
 
         function paint() {
             opts.forEach(function (o) {
@@ -96,6 +97,31 @@
         document.addEventListener('click', function (e) {
             if (open && !e.target.closest('.agent-mode-wrap')) setOpen(false);
         });
+
+        // While a run is ACTIVE the collapsed bar shouldn't say "Type your
+        // task..." — it shows what the agent is running as instead, e.g.
+        // "Agent mode: Computer use on This PC" / "Agent mode: Mobile use on
+        // iOS". Restored to the idle text when the run ends. (agent-active is
+        // observed passively, same pattern as the other components.)
+        var chatInput = document.querySelector('.chat-input');
+        if (chatInput) {
+            var idlePlaceholder = null;
+            var running = chatInput.classList.contains('agent-active');
+            new MutationObserver(function () {
+                var now = chatInput.classList.contains('agent-active');
+                if (now === running) return;
+                running = now;
+                if (now) {
+                    idlePlaceholder = chatInput.placeholder;
+                    var sub = state.subs[state.mode];
+                    chatInput.placeholder = 'Agent mode: ' + MODE_LABEL[state.mode] +
+                        (sub ? ' on ' + SUB_LABEL[sub] : '');
+                } else if (idlePlaceholder !== null) {
+                    chatInput.placeholder = idlePlaceholder;
+                    idlePlaceholder = null;
+                }
+            }).observe(chatInput, { attributes: true, attributeFilter: ['class'] });
+        }
 
         // Programmatic, SILENT selection (no agentmode:changed) — e.g. pairing
         // failed and ios_session.js puts the menu back on Computer use.

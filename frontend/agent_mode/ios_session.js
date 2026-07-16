@@ -52,11 +52,55 @@
         fetch('/api/ios/deactivate', { method: 'POST' }).catch(function () {});
     }
 
-    // ---- chat placeholder animation ----
+    // ---- chat placeholder animation + breathing glow ----
     function chatInput() { return document.querySelector('.chat-input'); }
+    function composer() { return document.querySelector('.input-area-wrapper'); }
     var dotsTimer = null, restoreTimer = null, savedPlaceholder = null;
 
+    // Breathing glow via the Web Animations API. The rest frame EQUALS the
+    // steady iOS glow (agent_mode.css), and stopping asks the browser to end
+    // the animation exactly at the current cycle's boundary — so the settle
+    // into the stable glow is frame-perfect, no JS-timing snap.
+    var BREATHE_MS = 1800;
+    var GLOW_REST = '0 2px 10px rgba(0,0,0,0.05), ' +
+        'inset 0 14px 28px -16px rgba(191,90,242,0.32), ' +
+        'inset 14px 0 28px -16px rgba(191,90,242,0.19), ' +
+        'inset 0 -14px 28px -16px rgba(94,92,230,0.30), ' +
+        'inset -14px 0 28px -16px rgba(94,92,230,0.19)';
+    var GLOW_PEAK = '0 2px 10px rgba(0,0,0,0.05), ' +
+        'inset 0 16px 32px -12px rgba(191,90,242,0.55), ' +
+        'inset 16px 0 32px -12px rgba(191,90,242,0.32), ' +
+        'inset 0 -16px 32px -12px rgba(94,92,230,0.50), ' +
+        'inset -16px 0 32px -12px rgba(94,92,230,0.32)';
+    var breatheAnim = null;
+
+    function startBreathing() {
+        var box = composer();
+        if (!box || !box.animate || breatheAnim) return;
+        breatheAnim = box.animate(
+            [{ boxShadow: GLOW_REST }, { boxShadow: GLOW_PEAK }, { boxShadow: GLOW_REST }],
+            { duration: BREATHE_MS, iterations: Infinity, easing: 'ease-in-out' }
+        );
+    }
+    function stopBreathing(graceful) {
+        if (!breatheAnim) return;
+        var anim = breatheAnim;
+        breatheAnim = null;
+        if (!graceful) { anim.cancel(); return; }
+        // Finish the in-flight cycle: cap iterations at the next whole cycle;
+        // the browser ends it ON the boundary frame (== steady glow), then
+        // cancel() drops the effect with zero visual delta.
+        try {
+            var cycles = Math.max(1, Math.ceil((anim.currentTime || 1) / BREATHE_MS));
+            anim.effect.updateTiming({ iterations: cycles });
+            anim.onfinish = function () { anim.cancel(); };
+        } catch (e) {
+            anim.cancel();
+        }
+    }
+
     function startPairingAnim() {
+        startBreathing();                            // violet glow breathes while pairing
         var el = chatInput();
         if (!el) return;
         clearTimeout(restoreTimer); restoreTimer = null;
@@ -70,7 +114,8 @@
             if (e2) e2.placeholder = 'Pairing' + '...'.slice(0, n);
         }, 400);
     }
-    function endPairingAnim(message, holdMs) {
+    function endPairingAnim(message, holdMs, gracefulGlow) {
+        stopBreathing(gracefulGlow);
         clearInterval(dotsTimer); dotsTimer = null;
         var el = chatInput();
         if (!el) { savedPlaceholder = null; return; }
@@ -100,7 +145,8 @@
             startPairingAnim();
             activate({
                 onConnected: function () {
-                    endPairingAnim('Device connected', 2200);
+                    // graceful: the current breath completes, THEN the glow settles
+                    endPairingAnim('Device connected', 2200, true);
                 },
                 onFail: function () {
                     iosActive = false;
