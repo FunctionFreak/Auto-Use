@@ -27,6 +27,13 @@
         var MODE_LABEL = { computer: 'Computer use', mobile: 'Mobile use' };
         var SUB_LABEL = { thispc: 'This PC', daisy: 'Daisy chain', ios: 'iOS', android: 'Android' };
 
+        // Per-chat mode lock: once a chat has run in one mode it stays there —
+        // the OTHER mode's row greys out with an "Open a new chat" hover hint.
+        // Driven by 'agentmode:lock' (detail {mode:'computer'|'mobile'|null});
+        // null unlocks (fresh chat that never ran).
+        var lockedMode = null;
+        var wrapRows = wrap.querySelectorAll('.agent-opt-wrap');
+
         function paint() {
             opts.forEach(function (o) {
                 var on = (o.dataset.mode === state.mode);
@@ -42,6 +49,9 @@
             wrap.dataset.mode = state.mode;                       // mode logo (CSS)
             wrap.dataset.sub = state.subs[state.mode] || 'none';  // sub logo; This PC/none -> nothing
             curLabel.textContent = MODE_LABEL[state.mode];
+            Array.prototype.forEach.call(wrapRows, function (w) {
+                w.classList.toggle('mode-locked', !!lockedMode && w.dataset.mode !== lockedMode);
+            });
         }
 
         function commit() {
@@ -74,6 +84,7 @@
         opts.forEach(function (opt) {
             opt.addEventListener('click', function () {
                 var mode = opt.dataset.mode;
+                if (lockedMode && mode !== lockedMode) return;   // chat is locked to the other mode
                 if (!state.subs[mode]) {
                     setTimeout(function () { setOpen(false); }, 120);
                     return;               // no platform picked -> no selection change
@@ -88,6 +99,7 @@
             s.addEventListener('click', function (e) {
                 e.stopPropagation();
                 var mode = s.closest('.agent-opt-wrap').dataset.mode;
+                if (lockedMode && mode !== lockedMode) return;   // chat is locked to the other mode
                 state.mode = mode;
                 state.subs[mode] = s.dataset.sub;
                 commit();
@@ -122,6 +134,14 @@
                 }
             }).observe(chatInput, { attributes: true, attributeFilter: ['class'] });
         }
+
+        // Per-chat mode lock (chat.js on reopen/new-chat, chat_input.js on run
+        // start). Locking to a mode greys the other row; null unlocks.
+        document.addEventListener('agentmode:lock', function (e) {
+            var d = e.detail || {};
+            lockedMode = (d.mode === 'computer' || d.mode === 'mobile') ? d.mode : null;
+            paint();
+        });
 
         // Programmatic, SILENT selection (no agentmode:changed) — e.g. pairing
         // failed and ios_session.js puts the menu back on Computer use.

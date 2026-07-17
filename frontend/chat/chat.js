@@ -84,6 +84,18 @@
                 // show it (the bar hides only for a brand-new chat).
                 if (window.updateMemoryBar) window.updateMemoryBar(data.context_tokens || 0, data.context_cap || 300000);
                 if (window.showMemoryBar) window.showMemoryBar();
+                // Per-chat mode lock: the chat follows the agent that ran it.
+                // ios_use -> Mobile use with the device tick CLEARED (the phone
+                // session is gone — the user re-picks iOS/Android to re-pair);
+                // any desktop pkg -> Computer use; untagged (never ran) -> free.
+                var pkg = data.run_pkg || '';
+                var lockMode = pkg === 'ios_use' ? 'mobile' : (pkg ? 'computer' : null);
+                document.dispatchEvent(new CustomEvent('agentmode:lock', { detail: { mode: lockMode } }));
+                if (lockMode) {
+                    document.dispatchEvent(new CustomEvent('agentmode:set', {
+                        detail: lockMode === 'mobile' ? { mode: 'mobile', sub: null } : { mode: 'computer' }
+                    }));
+                }
             })
             .catch(function () { /* non-fatal */ });
     }
@@ -169,6 +181,8 @@
 
     function startNewChat() {
         window.currentSessionId = null;          // fresh start: no memory loaded
+        // A fresh chat has no mode history — unlock the mode picker.
+        document.dispatchEvent(new CustomEvent('agentmode:lock', { detail: { mode: null } }));
         if (window.resetChatUi) window.resetChatUi();
         if (window.resetMemoryBar) window.resetMemoryBar();     // empty the memory bar
         if (window.hideMemoryBar) window.hideMemoryBar();       // hide it (only new chat hides)

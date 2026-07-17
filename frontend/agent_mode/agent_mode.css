@@ -120,6 +120,32 @@
 /* ---------- Sub-option flyout (opens to the row's right on hover) ---------- */
 .agent-opt-wrap { position: relative; }
 
+/* ---------- Per-chat mode lock: the other mode's row greys out ---------- */
+.agent-opt-wrap.mode-locked .agent-opt {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+.agent-opt-wrap.mode-locked .agent-opt:hover { background: transparent; }
+.agent-opt-wrap.mode-locked .agent-sub { display: none; }   /* no sub flyout */
+/* Hover hint where the flyout would sit: "Open a new chat" */
+.agent-opt-wrap.mode-locked::after {
+    content: "Open a new chat";
+    position: absolute;
+    left: calc(100% + 10px);
+    top: 50%;
+    transform: translateY(-50%);
+    white-space: nowrap;
+    background: rgba(40, 40, 40, 0.92);
+    color: #fff;
+    font-size: 11.5px;
+    padding: 5px 10px;
+    border-radius: 7px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease;
+}
+.agent-opt-wrap.mode-locked:hover::after { opacity: 1; }
+
 .agent-sub {
     position: absolute;
     left: 100%;

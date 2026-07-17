@@ -57,6 +57,15 @@
             const sel = window.getModelSelection ? window.getModelSelection() : {};
             if (!message || !sel.provider || !sel.model) return;
 
+            // Agent mode at send time from the picker's DOM mirror (#agentModeWrap
+            // data-mode/data-sub — correct even before interaction or after reverts).
+            const modeWrap = document.getElementById('agentModeWrap');
+            const agentMode = (modeWrap && modeWrap.dataset.mode) || 'computer';
+            const agentSub = (modeWrap && modeWrap.dataset.sub !== 'none') ? modeWrap.dataset.sub : null;
+            // Mobile use with no device picked yet (e.g. a reopened mobile chat
+            // before re-pairing) — the user must select iOS/Android first.
+            if (agentMode === 'mobile' && !agentSub) return;
+
             // The moment a task is sent, drop the empty-state hero.
             if (window.hideWelcomeHero) window.hideWelcomeHero();
             // ...and reveal the memory bar (only shown while the agent runs).
@@ -91,12 +100,6 @@
                 resetChatUi();
             }
 
-            // Agent mode at send time from the picker's DOM mirror (#agentModeWrap
-            // data-mode/data-sub — correct even before interaction or after reverts).
-            const modeWrap = document.getElementById('agentModeWrap');
-            const agentMode = (modeWrap && modeWrap.dataset.mode) || 'computer';
-            const agentSub = (modeWrap && modeWrap.dataset.sub !== 'none') ? modeWrap.dataset.sub : null;
-
             fetch('/api/start-agent', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -119,6 +122,8 @@
                     // Adopt the backend's session id (a brand-new chat is minted
                     // server-side) so the run-end save + future sends target it.
                     if (data.session_id) window.currentSessionId = data.session_id;
+                    // First run commits the chat to this mode — lock the picker.
+                    document.dispatchEvent(new CustomEvent('agentmode:lock', { detail: { mode: agentMode } }));
                     // Show the just-created chat in the sidebar immediately.
                     document.dispatchEvent(new CustomEvent('chats:refresh'));
                 } else if (data.error) {

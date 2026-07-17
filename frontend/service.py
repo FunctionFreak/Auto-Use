@@ -1592,12 +1592,17 @@ def start_agent():
         # so a reopened chat restores where memory was.
         _sess = conversation.get_session(chat_session_id) or {}
 
-        # A chat's memory belongs to the agent that produced it. Resuming it
-        # under a different mode (desktop chat -> iOS run or vice versa) would
-        # replay the other device's steps as if this agent performed them, so
-        # start the agent fresh on the same chat thread instead. Sessions saved
-        # before run_pkg existed were host-desktop runs by construction.
-        saved_pkg = _sess.get("run_pkg") or (PLATFORM_PKG if _sess else "")
+        # Per-chat mode lock: a chat that already ran in one mode only accepts
+        # that mode (the UI greys the other option; this is the backstop).
+        locked_pkg = _sess.get("run_pkg") or ""
+        if locked_pkg and locked_pkg != run_pkg:
+            locked_label = 'Mobile use' if locked_pkg == 'ios_use' else 'Computer use'
+            return jsonify({'error': f'This chat is locked to {locked_label} — open a new chat to switch mode'}), 400
+
+        # Backstop for legacy UNTAGGED sessions (saved before run_pkg existed —
+        # host-desktop runs by construction): never replay their memory into a
+        # different agent; start fresh on the same chat thread instead.
+        saved_pkg = locked_pkg or (PLATFORM_PKG if _sess else "")
         if prior_history is not None and saved_pkg and saved_pkg != run_pkg:
             prior_history = None
 
