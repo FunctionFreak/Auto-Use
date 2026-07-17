@@ -4,6 +4,8 @@ open_app.py - iPhone App Launcher Service
 Handles app launching and navigation on iPhone via WebDriverAgent
 """
 
+import json
+import os
 import subprocess
 import requests
 import logging
@@ -20,24 +22,36 @@ class AppLauncherService:
         self.apps_dict = {}
         
     def scan_apps(self):
-        """Scan all installed apps using ideviceinstaller"""
+        """Scan all installed apps using pymobiledevice3 (same CLI the WDA session uses)"""
         try:
+            from Auto_Use.ios_connector.session import _pmd3_base
+            base = _pmd3_base()
+            if not base:
+                logger.error("❌ Error: pymobiledevice3 not found.")
+                logger.error("💡 Install it with: pip install pymobiledevice3")
+                return False
+
             logger.info("📱 Scanning installed apps...")
             result = subprocess.run(
-                ['ideviceinstaller', '-l', '-o', 'list_all'], 
-                capture_output=True, 
+                base + ['apps', 'list'],
+                capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
+                env={**os.environ, "NO_COLOR": "1"},
             )
-            
+            if result.returncode != 0:
+                tail = (result.stderr or '').strip().splitlines()
+                logger.error(f"❌ App scan failed: {tail[-1] if tail else 'pymobiledevice3 error'}")
+                return False
+
             # Parse the apps
             self.parse_apps(result.stdout)
             logger.info(f"✅ Found {len(self.apps_dict)} apps")
             return True
-            
+
         except FileNotFoundError:
-            logger.error("❌ Error: ideviceinstaller not found.")
-            logger.error("💡 Install it with: brew install ideviceinstaller")
+            logger.error("❌ Error: pymobiledevice3 not found.")
+            logger.error("💡 Install it with: pip install pymobiledevice3")
             return False
         except subprocess.TimeoutExpired:
             logger.error("❌ Timeout while scanning apps")
@@ -45,28 +59,21 @@ class AppLauncherService:
         except Exception as e:
             logger.error(f"❌ Error scanning apps: {e}")
             return False
-    
+
     def parse_apps(self, apps_output):
-        """Parse apps.txt format into searchable dictionary"""
+        """Parse `pymobiledevice3 apps list` JSON into searchable dictionary"""
         self.apps_dict = {}
-        
-        for line in apps_output.strip().split('\n'):
-            # Skip header line
-            if line.startswith('CFBundleIdentifier'):
-                continue
-            
-            # Parse format: bundle_id, "version", "display_name"
-            parts = line.split(', ')
-            if len(parts) >= 3:
-                bundle_id = parts[0].strip()
-                display_name = parts[2].strip().strip('"')
-                
-                # Store both by bundle ID and display name (lowercase for searching)
-                self.apps_dict[display_name.lower()] = {
-                    'bundle_id': bundle_id,
-                    'display_name': display_name,
-                    'version': parts[1].strip().strip('"')
-                }
+
+        for bundle_id, info in json.loads(apps_output).items():
+            display_name = info.get('CFBundleDisplayName') or info.get('CFBundleName') or bundle_id
+            version = info.get('CFBundleShortVersionString') or str(info.get('CFBundleVersion', ''))
+
+            # Store both by bundle ID and display name (lowercase for searching)
+            self.apps_dict[display_name.lower()] = {
+                'bundle_id': bundle_id,
+                'display_name': display_name,
+                'version': version
+            }
     
     def search_app(self, search_term):
         """Search for app by name or bundle ID (case-insensitive, partial matching)"""

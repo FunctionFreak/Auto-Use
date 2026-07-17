@@ -312,7 +312,7 @@ class UIElementScanner:
                     if not font:
                         font = ImageFont.load_default()
                     
-                    # Draw orange boxes on detected elements with scaled coordinates
+                    # Draw magenta boxes on detected elements with scaled coordinates (same color as macOS tree)
                     for i, elem in enumerate(found_elements, 1):
                         # Apply scale factors to coordinates
                         x = elem['x'] * scale_x
@@ -327,11 +327,11 @@ class UIElementScanner:
                         if width <= 0 or height <= 0:
                             continue
                         
-                        # Draw orange rectangle (box outline) with thicker lines
+                        # Draw magenta rectangle (box outline) with thicker lines
                         for offset in range(3):
                             draw.rectangle(
                                 [x - offset, y - offset, x + width + offset, y + height + offset],
-                                outline='orange',
+                                outline=(255, 0, 255),
                                 width=1
                             )
                         
@@ -349,7 +349,7 @@ class UIElementScanner:
                         padding = 3
                         draw.rectangle([(text_x - padding, text_y - padding), 
                                        (text_x + tw + padding, text_y + th + padding)],
-                                     fill='white', outline='#FF8800', width=2)
+                                     fill='white', outline=(255, 0, 255), width=2)
                         draw.text((text_x, text_y), text, fill='black', font=font)
                     
                     # Convert image to base64 for memory storage
