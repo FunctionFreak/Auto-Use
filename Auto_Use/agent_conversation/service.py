@@ -125,7 +125,7 @@ class ConversationService:
             logger.exception("write index.json")
 
     def _touch_index(self, session_id, *, title=None, last_done_message=None,
-                     context_tokens=None, context_cap=None) -> dict:
+                     context_tokens=None, context_cap=None, run_pkg=None) -> dict:
         """Create-or-update one index entry. created_at + title are set ONCE
         (title never overwritten, so the original objective stays the label);
         updated_at + last_done_message + context_tokens/context_cap refresh
@@ -150,6 +150,10 @@ class ConversationService:
             entry["context_tokens"] = int(context_tokens or 0)
         if context_cap is not None:
             entry["context_cap"] = int(context_cap or 0)
+        if run_pkg:
+            # Which agent package produced this chat's memory (macOS_use /
+            # windows_use / ios_use) — lets a resume detect a mode switch.
+            entry["run_pkg"] = run_pkg
         entry["updated_at"] = now
         index[str(session_id)] = entry
         self._write_index(index)
@@ -296,7 +300,7 @@ class ConversationService:
 
     def save_run(self, session_id, assistant_messages, tool_responses, status,
                  message, task, last_messages=None, context_tokens=None,
-                 context_cap=None):
+                 context_cap=None, run_pkg=None):
         """Persist a finished run + refresh index meta. Writes TWO things:
           - conversation.json  — the lean resume seed (assistant/tool turns).
           - memory_log.txt      — the TRUE debug memory: the exact final payload
@@ -335,6 +339,7 @@ class ConversationService:
                 last_done_message=done_message,
                 context_tokens=context_tokens,  # latest context size for the memory bar
                 context_cap=context_cap,        # fixed 300k memory budget (MEMORY_CAP)
+                run_pkg=run_pkg,                # which agent produced this memory
             )
             return done_message
         except Exception:
@@ -407,6 +412,7 @@ class ConversationService:
             "context_tokens": int(meta.get("context_tokens", 0) or 0),
             "context_cap": int(meta.get("context_cap", 0) or 0),
             "last_done_message": meta.get("last_done_message", ""),
+            "run_pkg": meta.get("run_pkg", ""),
             "exchanges": self._read_exchanges(session_id),
         }
 

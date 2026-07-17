@@ -1591,6 +1591,16 @@ def start_agent():
         # memory-compression system). Seed from the chat's last saved context size
         # so a reopened chat restores where memory was.
         _sess = conversation.get_session(chat_session_id) or {}
+
+        # A chat's memory belongs to the agent that produced it. Resuming it
+        # under a different mode (desktop chat -> iOS run or vice versa) would
+        # replay the other device's steps as if this agent performed them, so
+        # start the agent fresh on the same chat thread instead. Sessions saved
+        # before run_pkg existed were host-desktop runs by construction.
+        saved_pkg = _sess.get("run_pkg") or (PLATFORM_PKG if _sess else "")
+        if prior_history is not None and saved_pkg and saved_pkg != run_pkg:
+            prior_history = None
+
         token_tracker = MemoryTracker(initial_context=_sess.get("context_tokens", 0))
 
         def send_token_to_frontend(usage):
@@ -1739,6 +1749,7 @@ def start_agent():
                         getattr(agent, "last_messages", None),  # exact payload -> true memory log
                         context_tokens=token_tracker.current,   # latest context size for the bar
                         context_cap=token_tracker.cap,          # fixed 300k memory budget
+                        run_pkg=run_pkg,                        # which agent produced this memory
                     )
                 except Exception:
                     debug_exception("persist chat session on finish")
