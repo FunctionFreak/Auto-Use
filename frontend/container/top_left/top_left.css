@@ -32,6 +32,17 @@
     object-position: center;
 }
 
+/* Portrait (phone) frames: the full HEIGHT must fit — contain keeps the whole
+   screen visible. Parked on the LEFT of the cell (centered looked lost in the
+   wide box), indented by the same clamp as .bottom-left-zone's horizontal
+   padding so the phone lines up with the "Tool response" label below.
+   Landscape desktop frames keep the cover crop above. Toggled per-frame by
+   updateAgentImage(). */
+.screenshot-frame .stream-image.portrait {
+    object-fit: contain;
+    object-position: clamp(12px, 1.4vw, 16px) center;
+}
+
 /* While the notes stage covers the grid (run ended / stopped / old chat
    reopened) the last screenshot must be GONE — the stage is transparent, so a
    stale frame would sit behind and clash with the notes. Purely CSS-synced to

@@ -1,0 +1,1360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Auto-Use · Tool Logo Gallery</title>
+<style>
+    /* =====================================================================
+       TOOL LOGO GALLERY — standalone showcase of every logo/animation used
+       across the app. All canvas painters are copied 1:1 from:
+         - container/bottom_left/bottom_left.js  (main agent tool flow)
+         - cli/cli_container/tool_icons.js       (coder card chain)
+       plus the chat-input orbs (pc_button.html / send_button.html) and the
+       small UI chrome SVGs (memory bar / new chat / settings cog).
+       Open this file directly in a browser — no dependencies.
+       ===================================================================== */
+    * { box-sizing: border-box; }
+    body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        background: #f4f5f7;
+        color: #3a3f4a;
+        -webkit-font-smoothing: antialiased;
+    }
+    .page {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 48px 28px 80px;
+    }
+    header.hero { margin-bottom: 10px; }
+    header.hero h1 {
+        margin: 0 0 6px;
+        font-size: 26px;
+        font-weight: 650;
+        letter-spacing: 0.2px;
+        color: #2b303b;
+    }
+    header.hero p {
+        margin: 0;
+        font-size: 13.5px;
+        color: #7a8090;
+    }
+
+    section { margin-top: 40px; }
+    section > h2 {
+        font-size: 15px;
+        font-weight: 600;
+        color: #555a64;
+        margin: 0 0 4px;
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
+    }
+    section > .sec-note {
+        font-size: 12.5px;
+        color: #9aa0ad;
+        margin: 0 0 18px;
+    }
+
+    .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+        gap: 14px;
+    }
+    .card {
+        background: #ffffff;
+        border: 1px solid rgba(85, 90, 100, 0.10);
+        border-radius: 16px;
+        padding: 22px 14px 16px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        transition: transform 0.18s ease, box-shadow 0.18s ease;
+    }
+    .card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 10px 26px rgba(40, 45, 60, 0.10);
+    }
+    .icon-box {
+        width: 96px;
+        height: 96px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 14px;
+    }
+    .card .name {
+        font-size: 13.5px;
+        font-weight: 600;
+        color: #3a3f4a;
+        margin-bottom: 3px;
+    }
+    .card .label {
+        font-size: 12px;
+        color: #8b91a0;
+        min-height: 15px;
+    }
+    .card .tag {
+        margin-top: 9px;
+        font-size: 10px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #b3b8c4;
+        background: rgba(85, 90, 100, 0.055);
+        border-radius: 6px;
+        padding: 2px 7px;
+    }
+
+    /* chrome SVG icons (memory / pencil / cog) rendered in the app's icon grey */
+    .chrome-svg { color: rgba(85, 90, 100, 0.92); }
+    .chrome-svg svg { display: block; }
+
+    /* ============================================================
+       ORBS — copied from chat_input/pc_button.html + send_button.html
+       (namespaced, shown at 1.7x so they read at gallery size)
+       ============================================================ */
+    .orb-host { position: relative; width: 42px; height: 42px; transform: scale(1.7); }
+    .orb {
+        position: absolute; inset: 0;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+    }
+    .orb-c1 {
+        width: 42px; height: 42px; border-radius: 50%; position: absolute;
+        background: transparent; display: flex; align-items: center; justify-content: center;
+        z-index: 1;
+    }
+    .orb-c2 {
+        width: 32px; height: 32px; border-radius: 50%;
+        position: absolute; inset: 0; margin: auto;
+        z-index: 9;
+    }
+    .orb-bg {
+        position: absolute; inset: 0; border-radius: 50%;
+        box-shadow: inset 0 0 5px 2px rgba(255,255,255,0.8), 0 0 2px 2px rgba(255,255,255,0.9);
+    }
+    /* --- stop orb (colorful, pulsing) --- */
+    .stop .orb-c1 { animation: orbPulse 4.2s ease-in-out infinite 0.3s; }
+    .stop .orb-c1::before, .stop .orb-c1::after {
+        content: ""; position: absolute; border-radius: 50%;
+        filter: blur(8px); width: 30%; height: 30%;
+    }
+    .stop .orb-c1::before { background: #ff0073; top: 30%; right: 30%; }
+    .stop .orb-c1::after  { background: #00baff; bottom: 10%; left: 30%; }
+    .stop .orb-c2 { background-color: white; animation: orbPulse2 4.2s ease-in-out infinite; }
+    .stop .orb-c2::before, .stop .orb-c2::after {
+        content: ""; position: absolute; border-radius: 50%; filter: blur(6px); z-index: 1;
+    }
+    .stop .orb-c2::before { background: #ff0073; width: 30%; height: 30%; top: 20%; right: 20%; }
+    .stop .orb-c2::after  { background: #00bbff; width: 20%; height: 20%; bottom: 10%; left: 40%; }
+    .stop .orb-bg { background-color: #9292d8; animation: orbBgRotate 2.5s linear infinite; }
+    .stop .orb-bg::before {
+        content: ""; position: absolute; inset: 0; border-radius: inherit;
+        animation: orbBgColor 4s linear infinite;
+        box-shadow: inset 0 0 5px 2px rgba(255,255,255,0.8);
+        opacity: 0.2;
+    }
+    /* --- send orb (grey, PC <-> arrow flip) --- */
+    .send .orb-c2 { background-color: #9ca3af; }
+    .send .orb-bg { background-color: #9ca3af; }
+    .icon-stage {
+        position: absolute; inset: 0; margin: auto;
+        width: 32px; height: 32px; z-index: 10; perspective: 130px;
+    }
+    .icon-flip {
+        position: absolute; inset: 0;
+        transform-style: preserve-3d;
+        animation: iconFlip 10s ease-in-out infinite;
+    }
+    .face {
+        position: absolute; inset: 0;
+        display: flex; align-items: center; justify-content: center;
+        -webkit-backface-visibility: hidden; backface-visibility: hidden;
+    }
+    .face-pc   { transform: rotateY(0deg); }
+    .face-send { transform: rotateY(180deg); }
+    .send-arrow { width: 18px; height: 18px; }
+    .send-arrow path { fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+    /* --- PC mascot (monitor + blinking eyes + base) --- */
+    .orb-pc {
+        position: absolute; left: 50%; top: 50%;
+        transform: translate(-50%, -50%) scale(0.5);
+        width: 64px; height: 64px; z-index: 10;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 2px;
+    }
+    .pc-monitor { width: 24px; height: 20px; border: 2px solid white; border-radius: 2px; }
+    .pc-screen  { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; gap: 4px; }
+    .pc-eye {
+        width: 3px; height: 6px; border-radius: 2px; background: white;
+        position: relative; top: -2px;
+        animation: pcBlink 4s infinite;
+    }
+    .pc-base { width: 32px; height: 2px; background: white; border-radius: 1px; }
+
+    @keyframes orbPulse {
+        0% { transform: scale(0.97); } 15% { transform: scale(1); } 30% { transform: scale(0.98); }
+        45% { transform: scale(1); } 60% { transform: scale(0.97); } 85% { transform: scale(1); }
+        100% { transform: scale(0.97); }
+    }
+    @keyframes orbPulse2 {
+        0% { transform: scale(1); } 15% { transform: scale(1.03); } 30% { transform: scale(0.98); }
+        45% { transform: scale(1.04); } 60% { transform: scale(0.97); } 85% { transform: scale(1.03); }
+        100% { transform: scale(1); }
+    }
+    @keyframes orbBgRotate {
+        0% { transform: rotate(0deg); } 20% { transform: rotate(90deg); }
+        40% { transform: rotate(180deg) scale(0.95, 1); } 60%, 100% { transform: rotate(360deg); }
+    }
+    @keyframes orbBgColor {
+        20% { background-color: red; } 40% { background-color: #5eff7e; }
+        60% { background-color: #2cb5ff; } 80% { background-color: #fc63ff; }
+    }
+    @keyframes pcBlink {
+        0%, 85%, 100% { transform: scaleY(1); }
+        92% { transform: scaleY(0.1); }
+    }
+    @keyframes iconFlip {
+        0%   { transform: rotateY(0deg)   scale(1); }
+        45%  { transform: rotateY(0deg)   scale(1); }
+        48%  { transform: rotateY(90deg)  scale(0.74); }
+        50%  { transform: rotateY(180deg) scale(1); }
+        95%  { transform: rotateY(180deg) scale(1); }
+        98%  { transform: rotateY(270deg) scale(0.74); }
+        100% { transform: rotateY(360deg) scale(1); }
+    }
+
+    footer {
+        margin-top: 56px;
+        font-size: 11.5px;
+        color: #a7adba;
+        text-align: center;
+        line-height: 1.7;
+    }
+    footer code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; }
+</style>
+</head>
+<body>
+<div class="page">
+    <header class="hero">
+        <h1>Auto-Use · Tool Logo Gallery</h1>
+        <p>Every animated logo used across the app, live, with the caption it appears with. Painters are 1:1 copies of the in-app canvas code, rendered large.</p>
+    </header>
+
+    <section>
+        <h2>Main agent — tool flow</h2>
+        <p class="sec-note">The chain in the bottom-left zone (<code>container/bottom_left/bottom_left.js</code>): opening phases, every mapped tool, and the two terminal badges.</p>
+        <div class="grid" id="gridMain"></div>
+    </section>
+
+    <section>
+        <h2>Coder agent — CLI card chain</h2>
+        <p class="sec-note">Logos unique to the coder card (<code>cli/cli_container/tool_icons.js</code>). It also reuses shell / pen / globe / loader / agent / book from above. View/grep/glob/replace animations restored from the original <code>tool_animaation.html</code> (deleted; recovered from git history — the in-app versions show only the rest state).</p>
+        <div class="grid" id="gridCoder"></div>
+    </section>
+
+    <section>
+        <h2>Chat input — orb buttons</h2>
+        <p class="sec-note">The composer orbs (<code>chat_input/send_button.html</code> / <code>pc_button.html</code>), CSS-animated.</p>
+        <div class="grid" id="gridOrbs"></div>
+    </section>
+
+    <section>
+        <h2>UI chrome</h2>
+        <p class="sec-note">Small fixed SVG marks: memory gauge chip, new-chat pencil, settings cog.</p>
+        <div class="grid" id="gridChrome"></div>
+    </section>
+
+    <footer>
+        Standalone gallery — safe to delete, nothing in the app references it.<br>
+        Sources: <code>bottom_left.js</code> · <code>tool_icons.js</code> · <code>send_button.html</code> · <code>pc_button.html</code> · <code>memory_bar.html</code> · <code>chat.html</code> · <code>settings.html</code>
+    </footer>
+</div>
+
+<script>
+(function () {
+    'use strict';
+
+    /* =====================================================================
+       Painters — copied 1:1 from bottom_left.js / tool_icons.js, rendered at
+       gallery size. Vector shapes are authored in source coords (~±44) and
+       scale via VSCALE; the few device-space painters (globe/loader/tick/bang)
+       scale their raw pixel values by K = ICON / 16 (the in-app icon size).
+       ===================================================================== */
+    var ICON = 76;                                // gallery icon size (in-app: 16 / 20)
+    var K = ICON / 16;                            // device-space scale factor
+    var COLOR = 'rgba(85, 90, 100, 0.92)';
+    var VSCALE = (ICON / 2) / 44;
+
+    function rrect(ctx, x, y, w, h, r) { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h); }
+    function easeInOutCubic(x) { return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; }
+    function vecPaint(ctx, cx, cy, alpha, fn) {
+        ctx.save();
+        ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+        ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = COLOR; ctx.fillStyle = COLOR;
+        fn(ctx); ctx.restore();
+    }
+    function vecPainter(fn) { return function (ctx, cx, cy, now, alpha) { vecPaint(ctx, cx, cy, alpha, fn); }; }
+
+    /* ---------- main agent shapes (bottom_left.js) ---------- */
+
+    // monitor + stand — "screenshot taken"
+    function vecScreen(ctx) {
+        ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        rrect(ctx, -35, -25, 70, 45, 6); ctx.stroke();
+        rrect(ctx, -20, 30, 40, 6, 3); ctx.fill();
+        ctx.beginPath(); ctx.rect(-6, 20, 12, 10); ctx.fill();
+    }
+
+    // element tree — "mapping pixel and element"
+    var TREE_NODES = [{x:0,y:-25},{x:-20,y:0},{x:20,y:0},{x:-35,y:25},{x:-20,y:25},{x:-5,y:25},{x:5,y:25},{x:20,y:25},{x:35,y:25}];
+    var TREE_EDGES = [[0,1],[0,2],[1,3],[1,4],[1,5],[2,6],[2,7],[2,8]];
+    function vecTree(ctx) {
+        ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.beginPath();
+        TREE_EDGES.forEach(function (e) { ctx.moveTo(TREE_NODES[e[0]].x, TREE_NODES[e[0]].y); ctx.lineTo(TREE_NODES[e[1]].x, TREE_NODES[e[1]].y); });
+        ctx.stroke();
+        TREE_NODES.forEach(function (nd) { ctx.beginPath(); ctx.arc(nd.x, nd.y, 4.5, 0, Math.PI * 2); ctx.fill(); });
+    }
+
+    // server rack — "communicating with llm service"
+    function vecServer(ctx) {
+        ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        rrect(ctx, -25, -35, 50, 70, 4); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-25, -12); ctx.lineTo(25, -12); ctx.moveTo(-25, 12); ctx.lineTo(25, 12); ctx.stroke();
+        [-23.5, 0, 23.5].forEach(function (yc) {
+            ctx.beginPath(); ctx.arc(-15, yc, 2.5, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(-5, yc); ctx.lineTo(15, yc); ctx.stroke();
+        });
+    }
+
+    // counter-rotating particle spinner — "thinking / waiting"
+    var L_OUTER = 12, L_INNER = 8, L_PER = 14;
+    function genLoader() {
+        var d = [], i, j, t;
+        for (i = 0; i < L_OUTER; i++) { var a = (i / L_OUTER) * Math.PI * 2; for (j = 0; j < L_PER; j++) { t = j / (L_PER - 1); d.push({ type: 'o', angle: a, r: 32 + t * 10 }); } }
+        for (i = 0; i < L_INNER; i++) { var a2 = (i / L_INNER) * Math.PI * 2; for (j = 0; j < L_PER; j++) { t = j / (L_PER - 1); d.push({ type: 'i', angle: a2, r: 16 + t * 6 }); } }
+        return d;
+    }
+    function loaderPainter() {
+        var loader = genLoader();
+        return function (ctx, cx, cy, now, alpha) {
+            ctx.fillStyle = COLOR; ctx.globalAlpha = alpha * 0.9;
+            for (var i = 0; i < loader.length; i++) {
+                var l = loader[i];
+                var a = l.angle + (l.type === 'o' ? now * 0.0015 : -now * 0.0025);
+                ctx.beginPath();
+                ctx.arc(cx + Math.cos(a) * l.r * VSCALE, cy + Math.sin(a) * l.r * VSCALE, 0.6 * K, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        };
+    }
+
+    // rotating wireframe globe — "searching the web"
+    function globePainter() {
+        var R = ICON / 2 - 1.5 * K, TILT = 0.34;
+        return function (ctx, cx, cy, now, alpha) {
+            ctx.strokeStyle = COLOR; ctx.globalAlpha = alpha * 0.9; ctx.lineWidth = 0.8 * K;
+            ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); ctx.ellipse(cx, cy, R, R * TILT, 0, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); ctx.ellipse(cx, cy - R * 0.52, R * 0.85, R * 0.85 * TILT, 0, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); ctx.ellipse(cx, cy + R * 0.52, R * 0.85, R * 0.85 * TILT, 0, 0, Math.PI * 2); ctx.stroke();
+            var spin = now * 0.0012;
+            for (var k = 0; k < 3; k++) {
+                var rx = Math.abs(Math.cos(spin + k * (Math.PI / 3))) * R;
+                ctx.beginPath(); ctx.ellipse(cx, cy, rx, R, 0, 0, Math.PI * 2); ctx.stroke();
+            }
+        };
+    }
+
+    // AI mascot head, blinking eyes — "sub agent trigger"
+    function agentPainter() {
+        return function (ctx, cx, cy, now, alpha) {
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            ctx.globalAlpha = alpha * 0.92; ctx.fillStyle = COLOR;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-30, -30, 60, 60, 13); else ctx.rect(-30, -30, 60, 60);
+            ctx.fill();
+            var bt = now % 1800, sy = 1;
+            if (bt > 1620) sy = bt < 1710 ? 1 - ((bt - 1620) / 90) * 0.92 : 0.08 + ((bt - 1710) / 90) * 0.92;
+            var eh = 14 * sy, ey = -5 - eh / 2, er = Math.min(4, eh / 2);
+            ctx.globalAlpha = alpha; ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            if (ctx.roundRect) { ctx.roundRect(-12, ey, 8, eh, er); ctx.roundRect(4, ey, 8, eh, er); }
+            else { ctx.rect(-12, ey, 8, eh); ctx.rect(4, ey, 8, eh); }
+            ctx.fill();
+            ctx.restore();
+        };
+    }
+
+    // Apple terminal — "executing applescript"
+    var APPLE_PATH = (typeof Path2D !== 'undefined')
+        ? new Path2D("M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701z")
+        : null;
+    function vecApple(ctx) {
+        ctx.lineWidth = 3.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(-35, -25, 70, 50, 4); else ctx.rect(-35, -25, 70, 50);
+        ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-35, -15); ctx.lineTo(35, -15); ctx.stroke();
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(-26, -9); ctx.lineTo(-21, -5); ctx.lineTo(-26, -1); ctx.stroke();
+        if (APPLE_PATH) { ctx.save(); ctx.translate(0, 4); ctx.scale(1.3, 1.3); ctx.translate(-12, -12); ctx.fill(APPLE_PATH); ctx.restore(); }
+    }
+
+    // terminal window + prompt + output lines — "executing shell"
+    function vecShell(ctx) {
+        ctx.lineWidth = 3.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(-35, -25, 70, 50, 4); else ctx.rect(-35, -25, 70, 50);
+        ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-35, -15); ctx.lineTo(35, -15); ctx.stroke();
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(-26, -9); ctx.lineTo(-21, -5); ctx.lineTo(-26, -1); ctx.stroke();
+        [[-16, 14, -5], [-26, 20, 5], [-26, 4, 15]].forEach(function (L) {
+            ctx.beginPath(); ctx.moveTo(L[0], L[2]); ctx.lineTo(L[1], L[2]); ctx.stroke();
+        });
+    }
+
+    // clock face at 10:10 — "waiting for a while"
+    var _hourA = (10 + 10 / 60) * 30 * Math.PI / 180, _minA = 10 * 6 * Math.PI / 180;
+    var CLOCK_HOUR_END = { x: Math.sin(_hourA) * 16, y: -Math.cos(_hourA) * 16 };
+    var CLOCK_MIN_END  = { x: Math.sin(_minA) * 25,  y: -Math.cos(_minA) * 25 };
+    function vecClock(ctx) {
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.lineWidth = 3.5; ctx.beginPath(); ctx.arc(0, 0, 32, 0, Math.PI * 2); ctx.stroke();
+        ctx.lineWidth = 2.5;
+        for (var i = 0; i < 12; i++) {
+            var a = i * 30 * Math.PI / 180, dx = Math.sin(a), dy = -Math.cos(a);
+            ctx.beginPath(); ctx.moveTo(dx * 28, dy * 28); ctx.lineTo(dx * 31.5, dy * 31.5); ctx.stroke();
+        }
+        ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(CLOCK_HOUR_END.x, CLOCK_HOUR_END.y); ctx.stroke();
+        ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(CLOCK_MIN_END.x, CLOCK_MIN_END.y); ctx.stroke();
+        ctx.beginPath(); ctx.arc(0, 0, 2.6, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // keyboard — "pressing hotkeys"
+    var KEY_XS = [-27.5, -16.5, -5.5, 5.5, 16.5, 27.5], KEY_YS = [-11, -1];
+    function vecKeyboard(ctx) {
+        ctx.lineWidth = 3.5; ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(-38, -20, 76, 40, 5); else ctx.rect(-38, -20, 76, 40);
+        ctx.stroke();
+        KEY_YS.forEach(function (ky) {
+            KEY_XS.forEach(function (kx) {
+                ctx.beginPath();
+                if (ctx.roundRect) ctx.roundRect(kx - 3.5, ky - 3.5, 7, 7, 1.5); else ctx.rect(kx - 3.5, ky - 3.5, 7, 7);
+                ctx.fill();
+            });
+        });
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(-18, 7, 36, 6, 2); else ctx.rect(-18, 7, 36, 6);
+        ctx.fill();
+    }
+
+    // mouse with oscillating scroll tick — "scrolling the screen"
+    var MOUSE_SCROLL_CENTER = -15.5;
+    function mousePainter() {
+        return function (ctx, cx, cy, now, alpha) {
+            var scrollY = MOUSE_SCROLL_CENTER + 3.0 * Math.sin(now / 200);
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = COLOR; ctx.fillStyle = COLOR;
+            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            ctx.lineWidth = 3.5; ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-15, -26, 30, 48, [15, 15, 12, 12]); else ctx.rect(-15, -26, 30, 48);
+            ctx.stroke();
+            ctx.lineWidth = 2.5; ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-3, -20, 6, 9, 3); else ctx.rect(-3, -20, 6, 9);
+            ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(0, -9); ctx.lineTo(0, 4); ctx.stroke();
+            ctx.lineWidth = 2.2; ctx.beginPath(); ctx.moveTo(-1.8, scrollY); ctx.lineTo(1.8, scrollY); ctx.stroke();
+            ctx.restore();
+        };
+    }
+
+    // cursor arrow with 1/2/3 click pulses (flip = right click)
+    var CURSOR_PTS = [[-11, -27], [-11, 16], [2, 6], [20, 4]], CURSOR_PIVOT = { x: -1, y: -4 };
+    function clickScale(now, clicks) {
+        var local = now % 2000, dip;
+        if (clicks === 3) dip = Math.min(1, Math.exp(-Math.pow((local - 700) / 80, 2)) + Math.exp(-Math.pow((local - 960) / 80, 2)) + Math.exp(-Math.pow((local - 1220) / 80, 2)));
+        else if (clicks === 2) dip = Math.min(1, Math.exp(-Math.pow((local - 850) / 85, 2)) + Math.exp(-Math.pow((local - 1150) / 85, 2)));
+        else dip = Math.exp(-Math.pow((local - 1000) / 160, 2));
+        return 1.0 - 0.15 * dip;
+    }
+    function cursorPainter(clicks, flip) {
+        return function (ctx, cx, cy, now, alpha) {
+            var s = clickScale(now, clicks);
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            if (flip) ctx.scale(-1, 1);
+            ctx.globalAlpha = alpha * 0.92; ctx.fillStyle = COLOR; ctx.strokeStyle = COLOR;
+            ctx.translate(CURSOR_PIVOT.x, CURSOR_PIVOT.y); ctx.scale(s, s); ctx.translate(-CURSOR_PIVOT.x, -CURSOR_PIVOT.y);
+            ctx.lineWidth = 6; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+            ctx.beginPath(); ctx.moveTo(CURSOR_PTS[0][0], CURSOR_PTS[0][1]);
+            for (var i = 1; i < CURSOR_PTS.length; i++) ctx.lineTo(CURSOR_PTS[i][0], CURSOR_PTS[i][1]);
+            ctx.closePath(); ctx.fill(); ctx.stroke();
+            ctx.restore();
+        };
+    }
+
+    // phone + hand tapping the screen, with touch ripple — "tapping the screen"
+    var TAP_TOUCH = { x: -14, y: -6 };   // touch point on the phone screen
+    var TAP_TILT = -0.55;                // hand tilt: finger points up-left, fist to bottom-right
+    function drawTapPhone(ctx) {
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(-36, -34, 42, 64, 8); else ctx.rect(-36, -34, 42, 64);
+        ctx.stroke();
+        ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.moveTo(-22, -27); ctx.lineTo(-8, -27); ctx.stroke();   // speaker slit
+    }
+    function tapHandPath(ctx) {
+        // one closed outline: index finger up, two knuckle bumps, rounded fist
+        ctx.beginPath();
+        ctx.moveTo(-3.5, 3);
+        ctx.quadraticCurveTo(-3.5, -1.5, 0, -1.5);    // rounded fingertip
+        ctx.quadraticCurveTo(3.5, -1.5, 3.5, 3);
+        ctx.lineTo(3.5, 13);                          // right edge of the finger
+        ctx.quadraticCurveTo(6, 9.5, 8.5, 12.5);      // knuckle bump 1
+        ctx.quadraticCurveTo(11.5, 9.5, 14, 13);      // knuckle bump 2
+        ctx.quadraticCurveTo(17.5, 13, 17.5, 18);     // round into the fist's right side
+        ctx.lineTo(17.5, 24);
+        ctx.quadraticCurveTo(17.5, 30.5, 11, 30.5);   // bottom-right corner
+        ctx.lineTo(3, 30.5);
+        ctx.quadraticCurveTo(-3.5, 30.5, -3.5, 24);   // bottom-left corner
+        ctx.closePath();                              // straight left edge back to the finger
+    }
+    function drawTapHand(ctx, tx, ty, lift) {
+        ctx.save();
+        ctx.translate(tx, ty);
+        ctx.rotate(TAP_TILT);
+        ctx.translate(0, lift);          // pull back along the finger axis when lifted
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        // knock out the phone lines underneath so the unfilled hand stays readable
+        ctx.save();
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.globalAlpha = 1;
+        tapHandPath(ctx);
+        ctx.fill();
+        ctx.lineWidth = 7;
+        ctx.stroke();
+        ctx.restore();
+        ctx.lineWidth = 3;               // outline only — no fill
+        tapHandPath(ctx);
+        ctx.stroke();
+        ctx.restore();
+    }
+    function tapPainter() {
+        var CYCLE = 1700;
+        return function (ctx, cx, cy, now, alpha) {
+            var t = now % CYCLE;
+            var press;                   // 0 = lifted, 1 = touching
+            if (t < 260) press = easeInOutCubic(t / 260);
+            else if (t < 700) press = 1;
+            else if (t < 1000) press = 1 - easeInOutCubic((t - 700) / 300);
+            else press = 0;
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = COLOR; ctx.fillStyle = COLOR;
+            drawTapPhone(ctx);
+            // ripple rings spread from the touch point while the finger is down
+            if (t > 260 && t < 960) {
+                var rp = (t - 260) / 700;
+                ctx.save();
+                ctx.lineWidth = 2.5;
+                ctx.globalAlpha = alpha * 0.92 * Math.max(0, 1 - rp);
+                ctx.beginPath(); ctx.arc(TAP_TOUCH.x, TAP_TOUCH.y, 6 + rp * 13, 0, Math.PI * 2); ctx.stroke();
+                if (rp > 0.35) {
+                    var rp2 = (rp - 0.35) / 0.65;
+                    ctx.globalAlpha = alpha * 0.92 * Math.max(0, 1 - rp2);
+                    ctx.beginPath(); ctx.arc(TAP_TOUCH.x, TAP_TOUCH.y, 6 + rp2 * 13, 0, Math.PI * 2); ctx.stroke();
+                }
+                ctx.restore();
+            }
+            drawTapHand(ctx, TAP_TOUCH.x, TAP_TOUCH.y, 8 * (1 - press));
+            ctx.restore();
+        };
+    }
+
+    // phone + finger swiping, content lines scroll with the drag — "swiping to scroll"
+    var MSCROLL_X = -15;                          // finger x on the screen
+    var MSCROLL_LINES = [26, 14, 22, 10, 18];     // content line lengths
+    function scrollPhonePainter() {
+        var CYCLE = 2200, DRAG = 22, Y_START = 10, Y_END = -12, WRAP = 50;
+        return function (ctx, cx, cy, now, alpha) {
+            var t = now % CYCLE, y, lift, drag;
+            if (t < 180)       { y = Y_START; lift = 8 * (1 - easeInOutCubic(t / 180)); drag = 0; }                                        // press down
+            else if (t < 900)  { var f = easeInOutCubic((t - 180) / 720); y = Y_START + (Y_END - Y_START) * f; lift = 0; drag = DRAG * f; } // drag up
+            else if (t < 1150) { y = Y_END; lift = 8 * easeInOutCubic((t - 900) / 250); drag = DRAG; }                                     // lift off
+            else if (t < 1600) { y = Y_END + (Y_START - Y_END) * easeInOutCubic((t - 1150) / 450); lift = 8; drag = DRAG; }                // move back down
+            else               { y = Y_START; lift = 8; drag = DRAG; }                                                                     // rest
+            var total = Math.floor(now / CYCLE) * DRAG + drag;    // scroll accumulates across cycles
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = COLOR; ctx.fillStyle = COLOR;
+            drawTapPhone(ctx);
+            ctx.save();                            // content lines, clipped to the screen, wrapping as they scroll
+            ctx.beginPath(); ctx.rect(-30, -19, 31, 44); ctx.clip();
+            ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+            for (var i = 0; i < MSCROLL_LINES.length; i++) {
+                var ly = -19 + ((i * 10 + 4 - total) % WRAP + WRAP) % WRAP;
+                ctx.beginPath(); ctx.moveTo(-30, ly); ctx.lineTo(-30 + MSCROLL_LINES[i], ly); ctx.stroke();
+            }
+            ctx.restore();
+            drawTapHand(ctx, MSCROLL_X, y, lift);
+            ctx.restore();
+        };
+    }
+
+    // centered phone rotates to landscape, then a media sign blinks on screen — "playing / pausing media"
+    function drawRotPhone(ctx) {
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(-21, -32, 42, 64, 8); else ctx.rect(-21, -32, 42, 64);
+        ctx.stroke();
+        ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.moveTo(-7, -25); ctx.lineTo(7, -25); ctx.stroke();   // speaker slit
+    }
+    function drawPlaySign(ctx) {
+        ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(-5.5, -9.5); ctx.lineTo(10.5, 0); ctx.lineTo(-5.5, 9.5);
+        ctx.closePath();
+        ctx.fill(); ctx.stroke();
+    }
+    function drawPauseSign(ctx) {
+        ctx.beginPath();
+        if (ctx.roundRect) { ctx.roundRect(-9.5, -9.5, 6.5, 19, 3); ctx.roundRect(3, -9.5, 6.5, 19, 3); }
+        else { ctx.rect(-9.5, -9.5, 6.5, 19); ctx.rect(3, -9.5, 6.5, 19); }
+        ctx.fill();
+    }
+    function drawCrossSign(ctx) {
+        ctx.lineWidth = 5; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(-8, -8); ctx.lineTo(8, 8); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(8, -8); ctx.lineTo(-8, 8); ctx.stroke();
+    }
+    function drawTimelineSign(ctx, p) {
+        var x0 = -23, x1 = 23, ty = 12, hx = x0 + (x1 - x0) * p;
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        // profile avatar (dp) in the center: circle with head + shoulders silhouette
+        var R = 11, acy = -4;
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(0, acy, R, 0, Math.PI * 2); ctx.stroke();
+        ctx.save();
+        ctx.beginPath(); ctx.arc(0, acy, R - 1.5, 0, Math.PI * 2); ctx.clip();
+        ctx.beginPath(); ctx.arc(0, acy - 3.5, 3.8, 0, Math.PI * 2); ctx.fill();   // head
+        ctx.beginPath(); ctx.arc(0, acy + 8.5, 7, 0, Math.PI * 2); ctx.fill();     // shoulders
+        ctx.restore();
+        // seek track (faint) + elapsed portion + playhead knob
+        ctx.save();
+        ctx.globalAlpha *= 0.35;
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(x0, ty); ctx.lineTo(x1, ty); ctx.stroke();
+        ctx.restore();
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(x0, ty); ctx.lineTo(hx, ty); ctx.stroke();
+        ctx.beginPath(); ctx.arc(hx, ty, 3.5, 0, Math.PI * 2); ctx.fill();
+    }
+    function rotatePhonePainter(drawSign, sustain) {
+        var CYCLE = 3600, ROT_S = 500, ROT_E = 1100, HOLD_E = 3100, BLINK = 500;
+        return function (ctx, cx, cy, now, alpha) {
+            var t = now % CYCLE;
+            var rot;                                  // 0 = portrait, 1 = landscape
+            if (t < ROT_S) rot = 0;                                                       // portrait hold
+            else if (t < ROT_E) rot = easeInOutCubic((t - ROT_S) / (ROT_E - ROT_S));      // turn to landscape
+            else if (t < HOLD_E) rot = 1;                                                 // landscape hold, sign blinks
+            else rot = 1 - easeInOutCubic((t - HOLD_E) / (CYCLE - HOLD_E));               // turn back
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = COLOR; ctx.fillStyle = COLOR;
+            ctx.save();
+            ctx.rotate(-rot * Math.PI / 2);
+            drawRotPhone(ctx);
+            ctx.restore();
+            if (t >= ROT_E && t < HOLD_E) {           // sign shows while landscape
+                var p = (t - ROT_E) / (HOLD_E - ROT_E);
+                var vis = sustain
+                    ? Math.min(1, p / 0.08) * Math.min(1, (1 - p) / 0.10)             // fade in, hold, fade out
+                    : 0.5 - 0.5 * Math.cos(((t - ROT_E) / BLINK) * Math.PI * 2);      // blink pulses
+                if (vis > 0.01) {
+                    ctx.globalAlpha = alpha * 0.92 * Math.min(1, vis);
+                    drawSign(ctx, p);
+                }
+            }
+            ctx.restore();
+        };
+    }
+
+    // vault with a spinning combination dial; once the code lands, the door swings open — "unlocking the vault"
+    function drawVaultDoor(ctx, dialA) {
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(-26, -23, 52, 46, 5); else ctx.rect(-26, -23, 52, 46);
+        ctx.stroke();
+        [[-20, -17], [20, -17], [-20, 17], [20, 17]].forEach(function (rv) {   // corner rivets
+            ctx.beginPath(); ctx.arc(rv[0], rv[1], 1.8, 0, Math.PI * 2); ctx.fill();
+        });
+        ctx.lineWidth = 2.5;                 // fixed index mark above the dial
+        ctx.beginPath(); ctx.moveTo(0, -17); ctx.lineTo(0, -13.5); ctx.stroke();
+        ctx.lineWidth = 3;                   // dial rim
+        ctx.beginPath(); ctx.arc(0, 0, 12, 0, Math.PI * 2); ctx.stroke();
+        ctx.save();                          // rotating dial face
+        ctx.rotate(dialA);
+        ctx.lineWidth = 2;
+        for (var i = 0; i < 8; i++) {
+            var a = i * Math.PI / 4 + Math.PI / 8;
+            ctx.beginPath();
+            ctx.moveTo(Math.cos(a) * 8.5, Math.sin(a) * 8.5);
+            ctx.lineTo(Math.cos(a) * 11, Math.sin(a) * 11);
+            ctx.stroke();
+        }
+        ctx.lineWidth = 2.5;                 // indicator spoke
+        ctx.beginPath(); ctx.moveTo(0, -3); ctx.lineTo(0, -11); ctx.stroke();
+        ctx.restore();
+        ctx.beginPath(); ctx.arc(0, 0, 2.5, 0, Math.PI * 2); ctx.fill();
+    }
+    function vaultPainter() {
+        var CYCLE = 4000;
+        function seg(t, s, e) { if (t <= s) return 0; if (t >= e) return 1; return easeInOutCubic((t - s) / (e - s)); }
+        return function (ctx, cx, cy, now, alpha) {
+            var t = now % CYCLE;
+            var dialA = 1.2 * Math.PI * seg(t, 0, 700)        // spin right…
+                      - 0.8 * Math.PI * seg(t, 750, 1300)     // …back left…
+                      + 0.5 * Math.PI * seg(t, 1350, 1750);   // …right to the last number
+            var open;                                          // 0 shut, 1 fully open
+            if (t < 1950) open = 0;
+            else if (t < 2500) open = easeInOutCubic((t - 1950) / 550);
+            else if (t < 3300) open = 1;
+            else if (t < 3800) open = 1 - easeInOutCubic((t - 3300) / 500);
+            else open = 0;
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = COLOR; ctx.fillStyle = COLOR;
+            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            ctx.lineWidth = 3.5;                 // vault body
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-33, -30, 66, 60, 8); else ctx.rect(-33, -30, 66, 60);
+            ctx.stroke();
+            ctx.beginPath();                     // feet
+            if (ctx.roundRect) { ctx.roundRect(-27, 30, 10, 5, 2); ctx.roundRect(17, 30, 10, 5, 2); }
+            else { ctx.rect(-27, 30, 10, 5); ctx.rect(17, 30, 10, 5); }
+            ctx.fill();
+            var A = open * 1.0;                  // door swings on its left hinge
+            ctx.save();
+            ctx.translate(-26, 0);
+            ctx.transform(Math.cos(A), -Math.sin(A) * 0.35, 0, 1, 0, 0);
+            ctx.translate(26, 0);
+            drawVaultDoor(ctx, dialA);
+            ctx.restore();
+            ctx.restore();
+        };
+    }
+
+    // pen writing (top line sweeps) — "typing text"
+    var PEN_LINE_REST = -26;
+    function drawPenShape(ctx, lineLeftX) {
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.lineWidth = 6.5; ctx.beginPath(); ctx.moveTo(22, -20); ctx.lineTo(0, 2); ctx.stroke();
+        ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0, 2); ctx.lineTo(-5, 7); ctx.stroke();
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(lineLeftX, 10); ctx.lineTo(-7, 10); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-27, 17); ctx.lineTo(3, 17); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-27, 24); ctx.lineTo(-11, 24); ctx.stroke();
+    }
+    function penPainter() {
+        return function (ctx, cx, cy, now, alpha) {
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = COLOR; ctx.fillStyle = COLOR;
+            drawPenShape(ctx, PEN_LINE_REST + 8 * Math.sin(now / 230));
+            ctx.restore();
+        };
+    }
+
+    // camera — "taking a snapshot"
+    function vecCamera(ctx) {
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.lineWidth = 3.5;
+        ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(-35, -16, 70, 38, 6); else ctx.rect(-35, -16, 70, 38); ctx.stroke();
+        ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(-11, -23, 22, 8, 3); else ctx.rect(-11, -23, 22, 8); ctx.stroke();
+        ctx.beginPath(); ctx.arc(0, 3, 13, 0, Math.PI * 2); ctx.stroke();
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(0, 3, 7.5, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(23, -9, 2.5, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // dashed drop-zone + gliding box — "dragging and dropping files"
+    var DRAG_START = { x: -18, y: -14 }, DRAG_TARGET = { x: 17, y: 12 };
+    function drawDragDropShape(ctx, bx, by) {
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.lineWidth = 2.5; ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(2, -2, 30, 28, 4); else ctx.rect(2, -2, 30, 28);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.lineWidth = 3; ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(bx - 9, by - 9, 18, 18, 3); else ctx.rect(bx - 9, by - 9, 18, 18);
+        ctx.stroke();
+    }
+    function dragDropPainter() {
+        return function (ctx, cx, cy, now, alpha) {
+            var theta = (now % 2400) / 2400 * Math.PI * 2, e = (1 - Math.cos(theta)) / 2;
+            var bx = DRAG_START.x + (DRAG_TARGET.x - DRAG_START.x) * e;
+            var by = DRAG_START.y + (DRAG_TARGET.y - DRAG_START.y) * e;
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = COLOR; ctx.fillStyle = COLOR;
+            drawDragDropShape(ctx, bx, by);
+            ctx.restore();
+        };
+    }
+
+    // todo list — empty ("created todo") and ticking-off ("updated todo")
+    var TODO_ROWS = [-16, 0, 16], TODO_ENDS = [22, 26, 14];
+    function drawTodoShape(ctx, alphas) {
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        for (var i = 0; i < TODO_ROWS.length; i++) {
+            var ry = TODO_ROWS[i];
+            ctx.lineWidth = 2.5; ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-31, ry - 4.5, 9, 9, 2); else ctx.rect(-31, ry - 4.5, 9, 9);
+            ctx.stroke();
+            ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(-18, ry); ctx.lineTo(TODO_ENDS[i], ry); ctx.stroke();
+        }
+        for (var j = 0; j < TODO_ROWS.length; j++) {
+            var a = alphas[j];
+            if (a > 0.01) {
+                var ry2 = TODO_ROWS[j];
+                ctx.save(); ctx.globalAlpha *= a;
+                ctx.lineWidth = 2.2; ctx.beginPath(); ctx.moveTo(-29.5, ry2); ctx.lineTo(-27, ry2 + 2.5); ctx.lineTo(-23.5, ry2 - 3); ctx.stroke();
+                ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(-18, ry2); ctx.lineTo(TODO_ENDS[j], ry2); ctx.stroke();
+                ctx.restore();
+            }
+        }
+    }
+    function vecTodo(ctx) { drawTodoShape(ctx, [0, 0, 0]); }
+    function todoUpdateAlphas(now) {
+        var t = now % 1800;
+        var tickIn = function (s) { if (t < s) return 0; if (t < s + 130) return (t - s) / 130; return 1; };
+        var fade = 1;
+        if (t > 1300 && t < 1600) fade = 1 - (t - 1300) / 300; else if (t >= 1600) fade = 0;
+        return [tickIn(0) * fade, tickIn(120) * fade, tickIn(240) * fade];
+    }
+    function todoUpdatePainter() {
+        return function (ctx, cx, cy, now, alpha) {
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = COLOR; ctx.fillStyle = COLOR;
+            drawTodoShape(ctx, todoUpdateAlphas(now));
+            ctx.restore();
+        };
+    }
+
+    // open book with turning page — "saving to agent memory" (scratchpad)
+    var BOOK_LINES = [[5, -11, 19, -10], [5, -4, 26, -3], [6, 3, 31, 4], [6, 10, 35, 11]];
+    function drawBookPage(ctx, m) {
+        ctx.beginPath();
+        ctx.moveTo(0, -19);
+        ctx.quadraticCurveTo(m * 10, -22, m * 20, -15);
+        ctx.lineTo(m * 38, 16);
+        ctx.quadraticCurveTo(m * 18, 21, 0, 19);
+        ctx.stroke();
+    }
+    function drawBookShape(ctx) {
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = 3;
+        drawBookPage(ctx, -1); drawBookPage(ctx, 1);
+        ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(0, -19); ctx.lineTo(0, 19); ctx.stroke();
+        ctx.lineWidth = 2;
+        BOOK_LINES.forEach(function (L) { ctx.beginPath(); ctx.moveTo(L[0], L[1]); ctx.lineTo(L[2], L[3]); ctx.stroke(); });
+        BOOK_LINES.forEach(function (L) { ctx.beginPath(); ctx.moveTo(-L[0], L[1]); ctx.lineTo(-L[2], L[3]); ctx.stroke(); });
+    }
+    function drawBookLeaf(ctx) {
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = 3;
+        drawBookPage(ctx, 1);
+        ctx.lineWidth = 2;
+        BOOK_LINES.forEach(function (L) { ctx.beginPath(); ctx.moveTo(L[0], L[1]); ctx.lineTo(L[2], L[3]); ctx.stroke(); });
+    }
+    function bookPainter() {
+        return function (ctx, cx, cy, now, alpha) {
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = COLOR; ctx.fillStyle = COLOR;
+            drawBookShape(ctx);
+            var ang = (now % 1500) / 1500 * Math.PI;
+            if (ang > 0.001) {
+                ctx.save();
+                ctx.transform(Math.cos(ang), -Math.sin(ang) * 0.75, 0, 1, 0, 0);
+                drawBookLeaf(ctx);
+                ctx.restore();
+            }
+            ctx.restore();
+        };
+    }
+
+    // isometric open crate — "opening app". The rising "apps" word is from the original
+    // tool_animaation.html (dropped in-app: illegible at 16px; legible at gallery size).
+    function vecAppBox(ctx) {
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(0, -14); ctx.lineTo(24, -6); ctx.lineTo(0, 2); ctx.lineTo(-24, -6); ctx.closePath(); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-24, -6); ctx.lineTo(-24, 14); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, 2); ctx.lineTo(0, 22); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(24, -6); ctx.lineTo(24, 14); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-24, 14); ctx.lineTo(0, 22); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(24, 14); ctx.lineTo(0, 22); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, -14); ctx.lineTo(-24, -6); ctx.lineTo(-39, -16); ctx.lineTo(-15, -24); ctx.closePath(); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, -14); ctx.lineTo(24, -6); ctx.lineTo(39, -16); ctx.lineTo(15, -24); ctx.closePath(); ctx.stroke();
+    }
+    function appBoxPainter() {
+        var PERIOD = 2000;
+        return function (ctx, cx, cy, now, alpha) {
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = COLOR; ctx.fillStyle = COLOR;
+            vecAppBox(ctx);
+            // "apps" emerges from the opening, floats up and fades, looping
+            var ph = (now % PERIOD) / PERIOD;
+            var wy = -8 - ph * 30, ws = 0.85 + ph * 0.4;
+            var wa = ph < 0.2 ? ph / 0.2 : (ph > 0.6 ? Math.max(0, (1 - ph) / 0.4) : 1);
+            if (wa > 0.01) {
+                ctx.globalAlpha = alpha * wa;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.font = '700 ' + (17 * ws).toFixed(1) + 'px ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif';
+                ctx.fillText('apps', 0, wy);
+            }
+            ctx.restore();
+        };
+    }
+
+    // "done" badge — filled circle + white check
+    function tickPainter() {
+        return function (ctx, cx, cy, now, alpha) {
+            var R = ICON / 2 - 1.5 * K;
+            ctx.save(); ctx.translate(cx, cy); ctx.globalAlpha = alpha;
+            ctx.fillStyle = COLOR; ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+            ctx.lineWidth = 1.6 * K; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            ctx.beginPath(); ctx.moveTo(-R * 0.42, 0); ctx.lineTo(-R * 0.12, R * 0.32); ctx.lineTo(R * 0.46, -R * 0.32); ctx.stroke();
+            ctx.restore();
+        };
+    }
+
+    // warning "!" triangle — interrupted / failed
+    function bangPainter() {
+        return function (ctx, cx, cy, now, alpha) {
+            var R = ICON / 2 - 1.5 * K;
+            ctx.save(); ctx.translate(cx + 0.5 * K, cy); ctx.globalAlpha = alpha;
+            var red = 'rgba(198, 92, 80, 0.95)';
+            ctx.fillStyle = red; ctx.strokeStyle = red;
+            ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.lineWidth = 2.2 * K;
+            ctx.beginPath();
+            ctx.moveTo(0, -R);
+            ctx.lineTo(R * 0.96, R * 0.72);
+            ctx.lineTo(-R * 0.96, R * 0.72);
+            ctx.closePath();
+            ctx.fill(); ctx.stroke();
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.97)';
+            var ey = 0.6 * K;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-0.85 * K, ey - R * 0.42, 1.7 * K, R * 0.55, 0.85 * K); else ctx.rect(-0.85 * K, ey - R * 0.42, 1.7 * K, R * 0.55);
+            ctx.fill();
+            ctx.beginPath(); ctx.arc(0, ey + R * 0.42, 1.05 * K, 0, Math.PI * 2); ctx.fill();
+            ctx.restore();
+        };
+    }
+
+    /* ---------- coder-card-only shapes (tool_icons.js) ---------- */
+
+    // document + magnifying glass that SCANS across it — "viewed a file"
+    // (animated version restored from tool_animaation.html drawViewFileShape/viewFileLensPos)
+    function drawViewFileShape(ctx, lx, ly) {
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(-19, -26); ctx.lineTo(7, -26); ctx.lineTo(18, -15);
+        ctx.lineTo(18, 26); ctx.lineTo(-19, 26); ctx.closePath(); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(7, -26); ctx.lineTo(7, -15); ctx.lineTo(18, -15); ctx.stroke();
+        ctx.lineWidth = 2.4;
+        [-7, 1, 9].forEach(function (y) { ctx.beginPath(); ctx.moveTo(-12, y); ctx.lineTo(8, y); ctx.stroke(); });
+        var r = 11;
+        ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(lx, ly, r, 0, Math.PI * 2); ctx.stroke();
+        var hx = lx + r * Math.cos(Math.PI / 4), hy = ly + r * Math.sin(Math.PI / 4);
+        ctx.lineWidth = 4.2; ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(hx + 9, hy + 9); ctx.stroke();
+    }
+    function viewPainter() {
+        return function (ctx, cx, cy, now, alpha) {
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = COLOR; ctx.fillStyle = COLOR;
+            // lens sweeps across the text columns and drifts down the lines
+            var lx = -1 + 8 * Math.cos(now / 340);
+            var ly = 1 + 8 * Math.sin(now / 560);
+            drawViewFileShape(ctx, lx, ly);
+            ctx.restore();
+        };
+    }
+
+    // gutter + text lines; a highlight box cycles between the matching rows — "used grep"
+    // (animated version restored from tool_animaation.html drawGrepShape/grepHighlight)
+    var GREP_LINES = [
+        { y: -20, x2: 18 },
+        { y: -10, x2: 28 },   // match
+        { y: 0,   x2: 6  },
+        { y: 10,  x2: 30 },   // match
+        { y: 20,  x2: 12 }
+    ];
+    var GREP_MATCH_YS = [-10, 10];
+    function grepPainter() {
+        var PERIOD = 1700;    // dwell on each hit, then hop to the next
+        return function (ctx, cx, cy, now, alpha) {
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = COLOR; ctx.fillStyle = COLOR;
+            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(-32, -26); ctx.lineTo(-32, 26); ctx.stroke();   // gutter
+            GREP_LINES.forEach(function (L) { ctx.beginPath(); ctx.moveTo(-26, L.y); ctx.lineTo(L.x2, L.y); ctx.stroke(); });
+            // match box: dwell on a hit, then ease to the next one
+            var ph = (now % (PERIOD * GREP_MATCH_YS.length)) / PERIOD;
+            var idx = Math.floor(ph) % GREP_MATCH_YS.length;
+            var nidx = (idx + 1) % GREP_MATCH_YS.length;
+            var f = ph - Math.floor(ph);
+            var move = f < 0.55 ? 0 : easeInOutCubic((f - 0.55) / 0.45);
+            var hy = GREP_MATCH_YS[idx] + (GREP_MATCH_YS[nidx] - GREP_MATCH_YS[idx]) * move;
+            ctx.globalAlpha = alpha * 0.20;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-30, hy - 6, 62, 12, 3); else ctx.rect(-30, hy - 6, 62, 12);
+            ctx.fill();
+            ctx.globalAlpha = alpha * 0.92;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-30, hy - 6, 62, 12, 3); else ctx.rect(-30, hy - 6, 62, 12);
+            ctx.stroke();
+            ctx.restore();
+        };
+    }
+
+    // "*" over 3 file cards; cards light up one-by-one as they match — "used glob"
+    // (animated version restored from tool_animaation.html drawGlobShape/globMatch)
+    var GLOB_STAR = { cx: 0, cy: -12, r: 14 };
+    var GLOB_CARDS = [{ x: -22, y: 16 }, { x: 0, y: 16 }, { x: 22, y: 16 }];
+    var GLOB_CARD_W = 15, GLOB_CARD_H = 19, GLOB_CARD_FOLD = 5;
+    function drawGlobStar(ctx, scale) {
+        var r = GLOB_STAR.r * (scale || 1), scx = GLOB_STAR.cx, scy = GLOB_STAR.cy;
+        ctx.lineWidth = 4;
+        [Math.PI / 6, Math.PI / 2, 5 * Math.PI / 6].forEach(function (ang) {
+            ctx.beginPath();
+            ctx.moveTo(scx - Math.cos(ang) * r, scy - Math.sin(ang) * r);
+            ctx.lineTo(scx + Math.cos(ang) * r, scy + Math.sin(ang) * r);
+            ctx.stroke();
+        });
+    }
+    function globCardPath(ctx, x, y) {
+        var w = GLOB_CARD_W, h = GLOB_CARD_H, fold = GLOB_CARD_FOLD;
+        ctx.beginPath();
+        ctx.moveTo(x - w / 2, y - h / 2); ctx.lineTo(x + w / 2 - fold, y - h / 2);
+        ctx.lineTo(x + w / 2, y - h / 2 + fold); ctx.lineTo(x + w / 2, y + h / 2);
+        ctx.lineTo(x - w / 2, y + h / 2); ctx.closePath();
+    }
+    function globPainter() {
+        var STEP = 480, HOLD = 700, FADE = 350;
+        var N = GLOB_CARDS.length, CYCLE = STEP * N + HOLD + FADE;
+        return function (ctx, cx, cy, now, alpha) {
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = COLOR; ctx.fillStyle = COLOR;
+            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            // cards fill cumulatively (file 1, then 2, then 3), hold, fade, loop
+            var t = now % CYCLE;
+            ctx.lineWidth = 2.6;
+            GLOB_CARDS.forEach(function (card, i) {
+                var av = t >= i * STEP ? Math.min(1, (t - i * STEP) / 130) : 0;
+                if (t > STEP * N + HOLD) av *= Math.max(0, 1 - (t - (STEP * N + HOLD)) / FADE);
+                if (av > 0.01) {
+                    ctx.save();
+                    ctx.globalAlpha = alpha * av * 0.5;
+                    globCardPath(ctx, card.x, card.y);
+                    ctx.fill();
+                    ctx.restore();
+                }
+                globCardPath(ctx, card.x, card.y);
+                ctx.stroke();
+            });
+            // the "*" pattern breathes gently
+            drawGlobStar(ctx, 1 + 0.05 * Math.sin(now / 240));
+            ctx.restore();
+        };
+    }
+
+    // wide code window; lines scroll up/down, then get REPLACED (A -> B -> A) — "edited a file"
+    // (animated version restored from tool_animaation.html drawReplaceLines/replaceAnim)
+    var REPLACE_LINES_A = [   // current lines (the resting state)
+        { y: -21, x2: 18 }, { y: -13, x2: 28 }, { y: -5, x2: 8 },
+        { y: 3, x2: 24 }, { y: 11, x2: 14 }, { y: 19, x2: 30 }
+    ];
+    var REPLACE_LINES_B = [   // replacement lines (different lengths -> reads as new code)
+        { y: -21, x2: 10 }, { y: -13, x2: 16 }, { y: -5, x2: 26 },
+        { y: 3, x2: 6 }, { y: 11, x2: 22 }, { y: 19, x2: 12 }
+    ];
+    function replacePainter() {
+        var CYCLE = 4200, SCROLL = 12;
+        return function (ctx, cx, cy, now, alpha) {
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            var base = alpha * 0.92;
+            ctx.globalAlpha = base; ctx.strokeStyle = COLOR; ctx.fillStyle = COLOR;
+            ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = 3;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-38, -20, 76, 40, 5); else ctx.rect(-38, -20, 76, 40);
+            ctx.stroke();
+            // scroll up & down first, THEN replace the lines, then revert
+            var p = (now % CYCLE) / CYCLE;
+            var scrollY = p < 0.30 ? SCROLL * Math.sin((p / 0.30) * Math.PI * 2) : 0;
+            var m;
+            if (p < 0.35) m = 0;
+            else if (p < 0.48) m = easeInOutCubic((p - 0.35) / 0.13);      // replace A -> B
+            else if (p < 0.62) m = 1;
+            else if (p < 0.75) m = 1 - easeInOutCubic((p - 0.62) / 0.13);  // revert B -> A
+            else m = 0;
+            ctx.save();
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-34, -15, 68, 30, 3); else ctx.rect(-34, -15, 68, 30);
+            ctx.clip();
+            ctx.lineWidth = 2.8;
+            if (1 - m > 0.01) {
+                ctx.globalAlpha = base * (1 - m);
+                REPLACE_LINES_A.forEach(function (L) { var y = L.y + scrollY; ctx.beginPath(); ctx.moveTo(-30, y); ctx.lineTo(L.x2, y); ctx.stroke(); });
+            }
+            if (m > 0.01) {
+                ctx.globalAlpha = base * m;
+                REPLACE_LINES_B.forEach(function (L) { var y = L.y + scrollY; ctx.beginPath(); ctx.moveTo(-30, y); ctx.lineTo(L.x2, y); ctx.stroke(); });
+            }
+            ctx.restore();
+            ctx.restore();
+        };
+    }
+
+    // three blinking AI heads (parent -> two children) — "dispatched minion"
+    var MINION_NODE = { left: [-24, 0], h1: [24, -20], h2: [24, 20], half: 12, l1: [-7, -4, 7, -16], l2: [-7, 4, 7, 16] };
+    function drawMiniHead(ctx, cx, cy, half, t, alpha) {
+        var k = half / 30;
+        ctx.globalAlpha = alpha * 0.92; ctx.fillStyle = COLOR;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(cx - half, cy - half, 2 * half, 2 * half, 13 * k); else ctx.rect(cx - half, cy - half, 2 * half, 2 * half);
+        ctx.fill();
+        var bt = t % 1800, sy = 1;
+        if (bt > 1620) sy = bt < 1710 ? 1 - ((bt - 1620) / 90) * 0.92 : 0.08 + ((bt - 1710) / 90) * 0.92;
+        var eyeH = 14 * k * sy, eyeY = cy + (-5 * k) - eyeH / 2, eyeR = Math.min(4 * k, eyeH / 2);
+        ctx.globalAlpha = alpha; ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        if (ctx.roundRect) { ctx.roundRect(cx - 12 * k, eyeY, 8 * k, eyeH, eyeR); ctx.roundRect(cx + 4 * k, eyeY, 8 * k, eyeH, eyeR); }
+        else { ctx.rect(cx - 12 * k, eyeY, 8 * k, eyeH); ctx.rect(cx + 4 * k, eyeY, 8 * k, eyeH); }
+        ctx.fill();
+    }
+    function minionPainter() {
+        return function (ctx, cx, cy, t, alpha) {
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = COLOR; ctx.lineCap = 'round'; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(MINION_NODE.l1[0], MINION_NODE.l1[1]); ctx.lineTo(MINION_NODE.l1[2], MINION_NODE.l1[3]); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(MINION_NODE.l2[0], MINION_NODE.l2[1]); ctx.lineTo(MINION_NODE.l2[2], MINION_NODE.l2[3]); ctx.stroke();
+            drawMiniHead(ctx, MINION_NODE.left[0], MINION_NODE.left[1], MINION_NODE.half, t, alpha);
+            drawMiniHead(ctx, MINION_NODE.h1[0], MINION_NODE.h1[1], MINION_NODE.half, t, alpha);
+            drawMiniHead(ctx, MINION_NODE.h2[0], MINION_NODE.h2[1], MINION_NODE.half, t, alpha);
+            ctx.restore();
+        };
+    }
+
+    /* ============================ catalog ============================ */
+    // Every canvas logo: friendly name + the exact in-app caption + shape key.
+    var MAIN = [
+        { shape: 'screen',   name: 'Screenshot',        label: 'screenshot taken',                painter: vecPainter(vecScreen) },
+        { shape: 'tree',     name: 'Element mapping',   label: 'mapping pixel and element',       painter: vecPainter(vecTree) },
+        { shape: 'server',   name: 'LLM service',       label: 'communicating with llm service',  painter: vecPainter(vecServer) },
+        { shape: 'loader',   name: 'Thinking / wait',   label: 'thinking · packet received',      painter: loaderPainter() },
+        { shape: 'click1',   name: 'Left click',        label: 'select',                          painter: cursorPainter(1) },
+        { shape: 'click2',   name: 'Double click',      label: 'double left click',               painter: cursorPainter(2) },
+        { shape: 'click3',   name: 'Triple click',      label: 'triple left click',               painter: cursorPainter(3) },
+        { shape: 'clickR',   name: 'Right click',       label: 'right click',                     painter: cursorPainter(1, true) },
+        { shape: 'tap',      name: 'Mobile tap',        label: 'tapping the screen',              painter: tapPainter(), src: 'new' },
+        { shape: 'mscroll',  name: 'Mobile scroll',     label: 'swiping to scroll',               painter: scrollPhonePainter(), src: 'new' },
+        { shape: 'rotPlay',  name: 'Rotate & play',     label: 'playing media',                   painter: rotatePhonePainter(drawPlaySign), src: 'new' },
+        { shape: 'rotPause', name: 'Rotate & pause',    label: 'pausing media',                   painter: rotatePhonePainter(drawPauseSign), src: 'new' },
+        { shape: 'rotCross', name: 'Rotate & close',    label: 'closing media',                   painter: rotatePhonePainter(drawCrossSign), src: 'new' },
+        { shape: 'rotTime',  name: 'Rotate & timeline', label: 'seeking the timeline',            painter: rotatePhonePainter(drawTimelineSign, true), src: 'new' },
+        { shape: 'vault',    name: 'Vault',             label: 'unlocking the vault',             painter: vaultPainter(), src: 'new' },
+        { shape: 'pen',      name: 'Typing',            label: 'typing text',                     painter: penPainter() },
+        { shape: 'keyboard', name: 'Hotkeys',           label: 'pressing hotkeys',                painter: vecPainter(vecKeyboard) },
+        { shape: 'mouse',    name: 'Scroll',            label: 'scrolling the screen',            painter: mousePainter() },
+        { shape: 'dragdrop', name: 'Drag & drop',       label: 'dragging and dropping files',     painter: dragDropPainter() },
+        { shape: 'globe',    name: 'Web',               label: 'searching the web',               painter: globePainter() },
+        { shape: 'agent',    name: 'Sub agent',         label: 'sub agent trigger',               painter: agentPainter() },
+        { shape: 'clock',    name: 'Wait',              label: 'waiting for a while',             painter: vecPainter(vecClock) },
+        { shape: 'camera',   name: 'Snapshot',          label: 'taking a snapshot',               painter: vecPainter(vecCamera) },
+        { shape: 'appbox',   name: 'Open app',          label: 'opening app',                     painter: appBoxPainter() },
+        { shape: 'shell',    name: 'Shell',             label: 'executing shell',                 painter: vecPainter(vecShell) },
+        { shape: 'apple',    name: 'AppleScript',       label: 'executing applescript',           painter: vecPainter(vecApple) },
+        { shape: 'todo',     name: 'Todo created',      label: 'created todo',                    painter: vecPainter(vecTodo) },
+        { shape: 'todoUpd',  name: 'Todo updated',      label: 'updated todo',                    painter: todoUpdatePainter() },
+        { shape: 'book',     name: 'Scratchpad',        label: 'saving to agent memory',          painter: bookPainter() },
+        { shape: 'tick',     name: 'Done badge',        label: 'done ✓',                          painter: tickPainter() },
+        { shape: 'error',    name: 'Error badge',       label: 'interrupted / failed',            painter: bangPainter() },
+    ];
+    var CODER = [
+        { shape: 'view',    name: 'View file',      label: 'viewed a file',     painter: viewPainter() },
+        { shape: 'grep',    name: 'Grep',           label: 'used grep',         painter: grepPainter() },
+        { shape: 'glob',    name: 'Glob',           label: 'used glob',         painter: globPainter() },
+        { shape: 'replace', name: 'Edit file',      label: 'edited a file',     painter: replacePainter() },
+        { shape: 'minion',  name: 'Minion',         label: 'dispatched minion', painter: minionPainter() },
+    ];
+
+    /* ============================ render ============================ */
+    var live = [];   // { ctx, painter }
+
+    function makeCard(entry, grid, source) {
+        var card = document.createElement('div');
+        card.className = 'card';
+        var box = document.createElement('div');
+        box.className = 'icon-box';
+        var canvas = document.createElement('canvas');
+        var ctx = canvas.getContext('2d');
+        var dpr = window.devicePixelRatio || 1;
+        canvas.width = ICON * dpr; canvas.height = ICON * dpr;
+        canvas.style.width = ICON + 'px'; canvas.style.height = ICON + 'px';
+        ctx.scale(dpr, dpr);
+        box.appendChild(canvas);
+        card.appendChild(box);
+        var name = document.createElement('div');
+        name.className = 'name'; name.textContent = entry.name;
+        card.appendChild(name);
+        var label = document.createElement('div');
+        label.className = 'label'; label.textContent = '“' + entry.label + '”';
+        card.appendChild(label);
+        var tag = document.createElement('div');
+        tag.className = 'tag'; tag.textContent = entry.shape + ' · ' + (entry.src || source);
+        card.appendChild(tag);
+        grid.appendChild(card);
+        live.push({ ctx: ctx, painter: entry.painter });
+    }
+
+    var gridMain = document.getElementById('gridMain');
+    var gridCoder = document.getElementById('gridCoder');
+    MAIN.forEach(function (e) { makeCard(e, gridMain, 'bottom_left.js'); });
+    CODER.forEach(function (e) { makeCard(e, gridCoder, 'tool_icons.js'); });
+
+    function frame(now) {
+        for (var i = 0; i < live.length; i++) {
+            var s = live[i];
+            try {
+                s.ctx.clearRect(0, 0, ICON, ICON);
+                s.painter(s.ctx, ICON / 2, ICON / 2, now, 1);
+                s.ctx.globalAlpha = 1;
+            } catch (e) { /* keep the loop alive */ }
+        }
+        requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+
+    /* ============================ DOM cards (orbs + chrome) ============================ */
+    function domCard(grid, node, name, label, tag) {
+        var card = document.createElement('div');
+        card.className = 'card';
+        var box = document.createElement('div');
+        box.className = 'icon-box';
+        box.appendChild(node);
+        card.appendChild(box);
+        var n = document.createElement('div'); n.className = 'name'; n.textContent = name; card.appendChild(n);
+        var l = document.createElement('div'); l.className = 'label'; l.textContent = label; card.appendChild(l);
+        var t = document.createElement('div'); t.className = 'tag'; t.textContent = tag; card.appendChild(t);
+        grid.appendChild(card);
+    }
+
+    function pcMascot() {
+        var pc = document.createElement('div'); pc.className = 'orb-pc';
+        pc.innerHTML =
+            '<div class="pc-monitor"><div class="pc-screen">' +
+            '<div class="pc-eye"></div><div class="pc-eye"></div>' +
+            '</div></div><div class="pc-base"></div>';
+        return pc;
+    }
+    function orbShell(kind) {
+        var host = document.createElement('div'); host.className = 'orb-host ' + kind;
+        var orb = document.createElement('div'); orb.className = 'orb';
+        var c1 = document.createElement('div'); c1.className = 'orb-c1';
+        var c2 = document.createElement('div'); c2.className = 'orb-c2';
+        var bg = document.createElement('div'); bg.className = 'orb-bg';
+        c2.appendChild(bg);
+        orb.appendChild(c1); orb.appendChild(c2);
+        host.appendChild(orb);
+        return { host: host, orb: orb };
+    }
+
+    var gridOrbs = document.getElementById('gridOrbs');
+
+    // send orb — grey, flips between the PC face and the up arrow
+    var send = orbShell('send');
+    var stage = document.createElement('div'); stage.className = 'icon-stage';
+    var flip = document.createElement('div'); flip.className = 'icon-flip';
+    var facePc = document.createElement('div'); facePc.className = 'face face-pc';
+    facePc.appendChild(pcMascot());
+    var faceSend = document.createElement('div'); faceSend.className = 'face face-send';
+    faceSend.innerHTML =
+        '<svg class="send-arrow" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">' +
+        '<path d="M12 20 V5 M5.5 11.5 L12 5 L18.5 11.5"/></svg>';
+    flip.appendChild(facePc); flip.appendChild(faceSend);
+    stage.appendChild(flip);
+    send.orb.appendChild(stage);
+    domCard(gridOrbs, send.host, 'Send orb', 'composer idle — PC ↔ arrow flip', 'send_button.html');
+
+    // stop orb — colorful pulsing orb with the blinking PC
+    var stop = orbShell('stop');
+    stop.orb.appendChild(pcMascot());
+    domCard(gridOrbs, stop.host, 'Stop orb', 'agent running — click to stop', 'pc_button.html');
+
+    /* ---- chrome SVGs ---- */
+    var gridChrome = document.getElementById('gridChrome');
+
+    function svgNode(html, w) {
+        var d = document.createElement('div');
+        d.className = 'chrome-svg';
+        d.style.width = w + 'px';
+        d.innerHTML = html;
+        d.firstElementChild.style.width = '100%';
+        d.firstElementChild.style.height = 'auto';
+        return d;
+    }
+
+    // memory chip (memory_bar.html)
+    domCard(gridChrome, svgNode(
+        '<svg viewBox="0 0 160 96" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+        '<g stroke="currentColor" stroke-width="3.5" stroke-linecap="round">' +
+        '<line x1="40" y1="13" x2="40" y2="28"/><line x1="60" y1="13" x2="60" y2="28"/>' +
+        '<line x1="80" y1="13" x2="80" y2="28"/><line x1="100" y1="13" x2="100" y2="28"/>' +
+        '<line x1="120" y1="13" x2="120" y2="28"/><line x1="40" y1="68" x2="40" y2="83"/>' +
+        '<line x1="60" y1="68" x2="60" y2="83"/><line x1="80" y1="68" x2="80" y2="83"/>' +
+        '<line x1="100" y1="68" x2="100" y2="83"/><line x1="120" y1="68" x2="120" y2="83"/></g>' +
+        '<rect x="20" y="28" width="120" height="40" rx="12" stroke="currentColor" stroke-width="3.5" stroke-linejoin="round"/>' +
+        '<text x="80" y="48" text-anchor="middle" dominant-baseline="central" fill="currentColor" ' +
+        'font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="20" ' +
+        'font-weight="400" letter-spacing="0.5">Memory</text></svg>', 96
+    ), 'Memory chip', 'context gauge (right edge)', 'memory_bar.html');
+
+    // new-chat pencil (chat.html)
+    domCard(gridChrome, svgNode(
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
+        '<path d="M12 20h9"></path>' +
+        '<path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"></path></svg>', 54
+    ), 'New chat', 'left bar — new task button', 'chat.html');
+
+    // settings cog (settings.html)
+    domCard(gridChrome, svgNode(
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
+        '<circle cx="12" cy="12" r="3"></circle>' +
+        '<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>', 54
+    ), 'Settings cog', 'left bar — settings footer', 'settings.html');
+})();
+</script>
+</body>
+</html>

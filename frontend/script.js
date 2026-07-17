@@ -838,6 +838,11 @@ document.addEventListener('DOMContentLoaded', () => {
     window.updateAgentImage = (base64Image) => {
         const imgElement = document.querySelector('.stream-image');
         if (imgElement && base64Image) {
+            // Tall (phone) frames fit by height via .portrait (object-fit:
+            // contain); landscape desktop frames keep the cover crop.
+            imgElement.onload = () => {
+                imgElement.classList.toggle('portrait', imgElement.naturalHeight > imgElement.naturalWidth);
+            };
             imgElement.src = `data:image/jpeg;base64,${base64Image}`;
             imgElement.style.display = 'block'; // Show image when data arrives
         }

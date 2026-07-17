@@ -75,7 +75,9 @@ def _cleanup_scratchpad():
 class AgentService:
     """Service for iOS automation agent"""
 
-    def __init__(self, provider: str, model: str, save_conversation: bool = False, thinking: bool = True, frontend_callback=None, text_callback=None, web_callback=None, shell_callback=None, tool_callback=None, token_callback=None, api_key: str = None, stop_event=None, prior_history: Optional[dict] = None):
+    # cli_callback is accepted for GUI parity with the desktop agents (the web UI
+    # always passes it); iOS has no CLI agent, so it is ignored.
+    def __init__(self, provider: str, model: str, save_conversation: bool = False, thinking: bool = True, frontend_callback=None, text_callback=None, web_callback=None, shell_callback=None, cli_callback=None, tool_callback=None, token_callback=None, api_key: str = None, stop_event=None, prior_history: Optional[dict] = None):
         """Initialize the Agent Service"""
         # Clean up scratchpad for a fresh start
         _cleanup_scratchpad()
@@ -115,9 +117,17 @@ class AgentService:
         # persistence live in app.py / memory_compression.
         self.token_callback = token_callback
 
-        # Initialize Controller
-        # (the iOS ControllerView doesn't take provider/model/callback args yet)
-        self.controller = ControllerView()
+        # Initialize Controller — forward the GUI callbacks and stop_event so the
+        # web/shell containers animate, web search gets its provider/model, and
+        # mid-action stop works (macOS parity; iOS has no cli/external_terminal).
+        self.controller = ControllerView(
+            provider=provider,
+            model=self.llm_manager.get_model_name(),
+            web_callback=web_callback,
+            shell_callback=shell_callback,
+            api_key=api_key,
+            stop_event=stop_event,
+        )
 
         # Save conversation flag
         self.save_conversation = save_conversation

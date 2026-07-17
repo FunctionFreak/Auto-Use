@@ -242,9 +242,10 @@ def get_auto_use_path():
     return _REPO_ROOT / "Auto_Use"
 
 
-def get_platform_use_path():
-    """Get path to the active Auto_Use/<platform>_use/ directory"""
-    return get_auto_use_path() / PLATFORM_PKG
+def get_platform_use_path(pkg=None):
+    """Get path to the active Auto_Use/<platform>_use/ directory.
+    pkg overrides the host default for mode-routed runs (e.g. "ios_use")."""
+    return get_auto_use_path() / (pkg or PLATFORM_PKG)
 
 
 def clean_scratchpad():
@@ -272,22 +273,22 @@ def clean_scratchpad():
         debug_exception("clean_scratchpad")
 
 
-def _reset_todo_file():
+def _reset_todo_file(pkg=None):
     """Delete <platform>_use/scratchpad/todo/todo.md so a new agent run starts
     with an empty top-right todo card."""
     try:
-        todo_file = get_platform_use_path() / "scratchpad" / "todo" / "todo.md"
+        todo_file = get_platform_use_path(pkg) / "scratchpad" / "todo" / "todo.md"
         if todo_file.exists():
             todo_file.unlink()
     except Exception:
         debug_exception("_reset_todo_file")
 
 
-def _reset_scratchpad_file():
+def _reset_scratchpad_file(pkg=None):
     """Delete <platform>_use/scratchpad/milestone/milestone.md so a new run starts
     with an empty scratchpad."""
     try:
-        notes_file = get_platform_use_path() / "scratchpad" / "milestone" / "milestone.md"
+        notes_file = get_platform_use_path(pkg) / "scratchpad" / "milestone" / "milestone.md"
         if notes_file.exists():
             notes_file.unlink()
     except Exception:
@@ -1572,6 +1573,14 @@ def start_agent():
         if not all([provider, model, task]):
             return jsonify({'error': 'Missing provider, model, or task'}), 400
 
+        # ── Agent mode: mobile+ios runs the iOS agent; anything else = host desktop ──
+        agent_mode = (data.get('mode') or 'computer').strip().lower()
+        device_os = (data.get('os') or '').strip().lower()
+        run_pkg = 'ios_use' if (agent_mode == 'mobile' and device_os == 'ios') else PLATFORM_PKG
+        # The run's package folder — the todo/milestone watchers and resets below
+        # must follow the agent that actually runs, not the host desktop package.
+        run_use_path = get_platform_use_path(run_pkg)
+
         api_key = get_provider_api_key(provider)
 
         # ── Resolve the CHAT session via the conversation service ────────────
@@ -1608,12 +1617,12 @@ def start_agent():
 
             # Clear stale todo/scratchpad and blank the top-right card immediately;
             # the watchers below repopulate it as soon as the agent writes its plan.
-            _reset_todo_file()
-            _reset_scratchpad_file()
+            _reset_todo_file(run_pkg)
+            _reset_scratchpad_file(run_pkg)
             send_todo_to_frontend({"objective": "", "tasks": []})
 
             def monitor_milestones():
-                milestone_path = get_platform_use_path() / "scratchpad" / "milestone" / "milestone.md"
+                milestone_path = run_use_path / "scratchpad" / "milestone" / "milestone.md"
                 last_pos = 0
 
                 while not milestone_path.exists() and not stop_event.is_set():
@@ -1652,7 +1661,7 @@ def start_agent():
             def monitor_todo():
                 # todo.md is REWRITTEN on every update (not appended), so re-read
                 # the whole file and push it whenever the content changes.
-                todo_path = get_platform_use_path() / "scratchpad" / "todo" / "todo.md"
+                todo_path = run_use_path / "scratchpad" / "todo" / "todo.md"
                 last_content = None
                 while not stop_event.is_set():
                     try:
@@ -1678,7 +1687,7 @@ def start_agent():
             agent = None  # bound below; kept defined so the finally save is safe
             try:
                 AgentService = importlib.import_module(
-                    f"Auto_Use.{PLATFORM_PKG}.agent.main_driver.service"
+                    f"Auto_Use.{run_pkg}.agent.main_driver.service"
                 ).AgentService
 
                 agent = AgentService(
@@ -1753,7 +1762,7 @@ def start_agent():
                     # Replace the screenshot with the "Agent Notes" view now the run
                     # has ended (completed OR stopped) — ALWAYS, even if empty.
                     try:
-                        notes_path = get_platform_use_path() / "scratchpad" / "milestone" / "milestone.md"
+                        notes_path = run_use_path / "scratchpad" / "milestone" / "milestone.md"
                         content = notes_path.read_text(encoding='utf-8') if notes_path.exists() else ""
                         send_agent_notes(content)
                     except Exception:

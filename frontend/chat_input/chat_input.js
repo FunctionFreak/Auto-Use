@@ -35,6 +35,11 @@
         // the box collapses to the slim bar via CSS, so don't pin an inline height.
         const adjustHeight = () => {
             if (chatInput.classList.contains('agent-active')) { chatInput.style.height = ''; return; }
+            // Empty box: no inline pin — the CSS idle height rules. Pinning a
+            // measured px here (e.g. from restoreIdle, while the collapse
+            // transition is still settling) came out a few px tall and snapped
+            // down on the next interaction — the visible top-edge jerk.
+            if (!chatInput.value) { chatInput.style.height = ''; return; }
             chatInput.style.height = 'auto';
             const cs = getComputedStyle(chatInput);
             const minH = parseFloat(cs.minHeight) || 30;   // floor matches CSS min-height (one line)
@@ -86,6 +91,12 @@
                 resetChatUi();
             }
 
+            // Agent mode at send time from the picker's DOM mirror (#agentModeWrap
+            // data-mode/data-sub — correct even before interaction or after reverts).
+            const modeWrap = document.getElementById('agentModeWrap');
+            const agentMode = (modeWrap && modeWrap.dataset.mode) || 'computer';
+            const agentSub = (modeWrap && modeWrap.dataset.sub !== 'none') ? modeWrap.dataset.sub : null;
+
             fetch('/api/start-agent', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -95,7 +106,9 @@
                     provider: sel.provider,
                     model: sel.model,
                     task: message,
-                    session_id: window.currentSessionId || null
+                    session_id: window.currentSessionId || null,
+                    mode: agentMode,
+                    os: agentMode === 'mobile' ? agentSub : null
                 })
             })
             .then(response => response.json())

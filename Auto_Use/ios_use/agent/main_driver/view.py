@@ -228,6 +228,10 @@ class AgentResponseFormatter:
                     tool["clicks"] = item.get("clicks")
                 if "direction" in item:
                     tool["direction"] = item.get("direction")
+                # video_player's sub-command (play/pause/close/streaming) picks
+                # the media sign in the frontend tool chain.
+                if name == "video_player" and "value" in item:
+                    tool["value"] = item.get("value")
                 tools.append(tool)
         except Exception:
             pass
