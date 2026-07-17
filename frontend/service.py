@@ -1844,9 +1844,70 @@ def download_chat(chat_id):
         return jsonify({'error': 'Failed to export'}), 500
 
 
+def _evict_port_squatter(host, port):
+    """Best-effort: if the port is genuinely unbindable (stale AutoUse instance,
+    macOS AirPlay Receiver holding it), kill the squatter so AutoUse can take it.
+    Does nothing when the port is free or co-bindable, and never kills ourselves."""
+    import socket
+    import signal
+    import subprocess
+
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        probe.bind((host, port))
+        return  # port is usable as-is — nothing to evict
+    except OSError:
+        pass
+    finally:
+        probe.close()
+
+    try:
+        me = os.getpid()
+        if IS_WINDOWS:
+            out = subprocess.run(["netstat", "-ano", "-p", "tcp"],
+                                 capture_output=True, text=True, timeout=8).stdout
+            pids = set()
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) >= 5 and parts[3] == "LISTENING" and parts[1].endswith(f":{port}"):
+                    pids.add(int(parts[4]))
+            pids.discard(me)
+            for pid in pids:
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                               capture_output=True, timeout=8)
+        else:
+            out = subprocess.run(["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"],
+                                 capture_output=True, text=True, timeout=8).stdout
+            pids = {int(p) for p in out.split() if p.strip()}
+            pids.discard(me)
+
+            def alive(pid):
+                try:
+                    os.kill(pid, 0)
+                    return True
+                except OSError:
+                    return False
+
+            for pid in pids:
+                os.kill(pid, signal.SIGTERM)
+            deadline = time.time() + 2.0
+            remaining = set(pids)
+            while remaining and time.time() < deadline:
+                time.sleep(0.1)
+                remaining = {p for p in remaining if alive(p)}
+            for pid in remaining:
+                os.kill(pid, signal.SIGKILL)
+        if pids:
+            print(f"[port] evicted process(es) {sorted(pids)} holding :{port} so AutoUse can start")
+    except Exception:
+        debug_exception("evict_port_squatter")
+
+
 def start_server():
     # Windows build exposes the Flask server on 0.0.0.0 so the Telegram
     # remote-pairing flow can reach it from other devices on the LAN.
     # macOS sticks to localhost since it doesn't ship Telegram yet.
     host = '0.0.0.0' if IS_WINDOWS else '127.0.0.1'
+    _evict_port_squatter(host, 5000)
     app.run(host=host, port=5000, debug=False, use_reloader=False)
