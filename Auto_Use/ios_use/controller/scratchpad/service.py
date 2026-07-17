@@ -27,7 +27,7 @@ class ScratchpadService:
     def __init__(self):
         """Initialize the Scratchpad Service"""
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        # Go up two levels from Auto_Use/IOS_USE/controller/scratchpad/ to reach IOS_USE/
+        # Go up two levels from Auto_Use/ios_use/controller/scratchpad/ to reach ios_use/
         ios_use_dir = os.path.dirname(os.path.dirname(current_dir))
 
         # On-disk storage kept as "milestone/milestone.md" to avoid the

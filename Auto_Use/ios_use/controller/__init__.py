@@ -1,4 +1,4 @@
-# Auto_Use/IOS_USE/controller/__init__.py
+# Auto_Use/ios_use/controller/__init__.py
 
 # Controller module for action block code routes
 from .view import ControllerView

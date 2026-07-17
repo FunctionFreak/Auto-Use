@@ -20,15 +20,15 @@
 """
 Standalone test runner for element.py scanner (iOS via WebDriverAgent).
 
-File location : Auto_Use/IOS_USE/tree/test.py
+File location : Auto_Use/ios_use/tree/test.py
 
 Run from project root (the Auto-Use repo folder):
 
-    python -m Auto_Use.IOS_USE.tree.test
+    python -m Auto_Use.ios_use.tree.test
 
 Or run the file directly from anywhere:
 
-    python /path/to/Auto-Use/Auto_Use/IOS_USE/tree/test.py
+    python /path/to/Auto-Use/Auto_Use/ios_use/tree/test.py
 
 Requires WebDriverAgent reachable at http://localhost:8100.
 If WDA runs on the phone over USB, forward the port first:
@@ -45,8 +45,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
 import requests
 
-import Auto_Use.IOS_USE.tree.element as element
-from Auto_Use.IOS_USE.tree.element import UIElementScanner, ELEMENT_CONFIG, wda_url
+import Auto_Use.ios_use.tree.element as element
+from Auto_Use.ios_use.tree.element import UIElementScanner, ELEMENT_CONFIG, wda_url
 
 # Force debug flags on
 element.DEBUG = True

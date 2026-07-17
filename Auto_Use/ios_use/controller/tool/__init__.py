@@ -17,7 +17,7 @@
 # A small attribution goes a long way toward a healthy open-source
 # community — thank you for contributing.
 
-# Auto_Use/IOS_USE/controller/tool/__init__.py
+# Auto_Use/ios_use/controller/tool/__init__.py
 from .open_app import app_launcher_service
 from .videoplayer import VideoPlayerService
 from .shell import ShellService

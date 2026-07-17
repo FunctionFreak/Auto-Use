@@ -53,7 +53,7 @@ def _compress_screenshot(base64_str: str, max_width: int = 1080, quality: int = 
         return base64_str  # Return original if compression fails
 
 def _cleanup_scratchpad():
-    """Clear all contents inside Auto_Use/IOS_USE/scratchpad/ for a fresh start."""
+    """Clear all contents inside Auto_Use/ios_use/scratchpad/ for a fresh start."""
     # Clear scratchpad contents
     scratchpad_dir = Path(__file__).parent.parent.parent / "scratchpad"
     if scratchpad_dir.exists():
@@ -65,7 +65,7 @@ def _cleanup_scratchpad():
     else:
         scratchpad_dir.mkdir(parents=True, exist_ok=True)
 
-    # Also clear the todo folder (on iOS it lives at IOS_USE/todo, not under
+    # Also clear the todo folder (on iOS it lives at ios_use/todo, not under
     # scratchpad/ like macOS, so it needs its own wipe for the same fresh start)
     todo_dir = Path(__file__).parent.parent.parent / "todo"
     if todo_dir.exists() and todo_dir.is_dir():

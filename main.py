@@ -18,23 +18,16 @@
 # community — thank you for contributing.
 
 #this main.py give terminal interface to the user to interact with the agent for ui refer app.py
-import platform
-
-if platform.system() == "Darwin":
-    from Auto_Use.macOS_use.agent.main_driver.service import AgentService
-elif platform.system() == "Windows":
-    from Auto_Use.windows_use.agent.main_driver.service import AgentService
-else:
-    raise RuntimeError(f"Unsupported OS: {platform.system()}")
+from Auto_Use.agent_launcher import run_agent
 
 # Configuration
+MODE = "mobile use, ios"  # "computer use" (this PC) or "mobile use, ios" / "mobile use, android"
 PROVIDER = "openrouter"
 MODEL = "gemini-3.5-flash" #refer to the model name correctly from model_list.txt.
 # Your task here
 task = """
 
-what si the price of apple stock then play youtube  video 
-
+open youtube
 """
 
 # Control conversation saving
@@ -44,12 +37,13 @@ thinking = True  # Set to True to enable reasoning for supported models
 # Control automation engineer
 automation_engineer = True  # Set to True to enable automation engineer mode by default it is False
 # Run the agent
-agent = AgentService(
+run_agent(
+    mode=MODE,
     provider=PROVIDER,
     model=MODEL,
+    task=task,
     save_conversation=conversation,
     external_terminal=True,
 )
-agent.process_request(task)
 
 # Response is displayed inside process_request

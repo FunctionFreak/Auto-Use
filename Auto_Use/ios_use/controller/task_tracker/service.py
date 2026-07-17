@@ -27,7 +27,7 @@ class TaskTrackerService:
     def __init__(self):
         """Initialize the Task Tracker Service"""
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        # Go up two levels from Auto_Use/IOS_USE/controller/task_tracker/ to reach IOS_USE/
+        # Go up two levels from Auto_Use/ios_use/controller/task_tracker/ to reach ios_use/
         ios_use_dir = os.path.dirname(os.path.dirname(current_dir))
 
         self.todo_dir = os.path.join(ios_use_dir, "scratchpad", "todo")
