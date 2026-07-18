@@ -184,6 +184,21 @@
         }
         window.resetChatUi = resetChatUi;
 
+        // Fast / Quality flip toggle — UI ONLY for now (nothing wired behind it).
+        // Click spring-slides the thumb; state lives in the .quality class. The
+        // floating label shows briefly after each flip (and on hover via CSS).
+        const flipToggle = (root || document).querySelector('#fastQualityToggle');
+        if (flipToggle) {
+            let labelTimer = null;
+            flipToggle.addEventListener('click', () => {
+                flipToggle.classList.toggle('quality');
+                flipToggle.setAttribute('aria-checked', flipToggle.classList.contains('quality') ? 'true' : 'false');
+                flipToggle.classList.add('show-label');
+                clearTimeout(labelTimer);
+                labelTimer = setTimeout(() => flipToggle.classList.remove('show-label'), 1200);
+            });
+        }
+
         // Enter (without Shift) starts the agent; Shift+Enter inserts a newline.
         chatInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {

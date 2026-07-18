@@ -34,6 +34,16 @@ from ..skills import DomainKnowledgeService
 from PIL import Image
 from io import BytesIO
 
+# Run-boundary request markers: on resume, the bridge entry that ended the prior
+# run ("Previous run concluded.", saved by agent_conversation._build_history with
+# an empty tool slot) gets its slot filled with the NEW run's request, so the
+# persisted memory attributes every run's steps to the request that drove them.
+_BRIDGE_SIGNATURE = '"decision": "Previous run concluded."'
+_REQUEST_MARKER_PREFIX = "<updated_user_request"
+
+def _request_marker(n: int, task: str) -> str:
+    return f'<updated_user_request no="{n}">\n{task}\n</updated_user_request no="{n}">'
+
 def _compress_screenshot(base64_str: str, max_width: int = 1080, quality: int = 75) -> str:
     """Compress screenshot to reduce token size while keeping UI readable"""
     try:
@@ -449,6 +459,7 @@ class AgentService:
         # ends with a terminal-note step, so on resume that note is the most-recent
         # entry — which makes the loop replay EVERY real step's tool_response.
         is_resumed = False
+        original_task = task
         if self.prior_history:
             seeded = self.prior_history.get("assistant_messages") or []
             if seeded:
@@ -458,6 +469,16 @@ class AgentService:
                 is_resumed = True
                 is_first_iteration = False  # continuation, not a fresh dialogue
                 last_response = self.prior_history.get("done_message") or "Resuming previous session."
+                # The chat's ORIGINAL objective (frozen to run 1 by _build_history);
+                # <User_Task> must carry this, not the newest request.
+                original_task = self.prior_history.get("task") or task
+                # Label this run boundary: fill the terminal bridge's empty tool
+                # slot with a numbered request marker so this run's task is durably
+                # attributed to the steps that follow it (the filled slot is part
+                # of the persisted lists, so it survives every save/seed cycle).
+                if tool_responses[-1] is None and _BRIDGE_SIGNATURE in assistant_messages[-1]:
+                    n_bridges = sum(1 for m in assistant_messages if _BRIDGE_SIGNATURE in str(m))
+                    tool_responses[-1] = _request_marker(n_bridges + 1, task)
                 print(f"🧠 Resumed memory: {len(assistant_messages)} prior step(s) loaded")
         # ----------------------------------------------------------------------
 
@@ -757,17 +778,24 @@ No image and element tree provided. Focus on digesting the web response below.
             for i, step_msg in enumerate(assistant_messages):
                 is_recent = (i == n_hist - 1)
                 content = step_msg if is_recent else self._trim_history_entry(step_msg)
-                # Reinforce the objective by prepending the task to step 1.
+                # Reinforce the objective by prepending the ORIGINAL task to step 1
+                # (on a resumed chat, `task` is the newest request — that one rides
+                # in the live user message; run 1's objective belongs here).
                 if i == 0 and not is_first_iteration:
-                    content = f"<User_Task>\n{task}\n</User_Task>\n\n{content}"
+                    content = f'<User_Task no="1">\n{original_task}\n</User_Task no="1">\n\n{content}'
                 messages.append({"role": "assistant", "content": content})
 
                 # Interleave this step's tool result as its own user turn — except the
                 # most recent, whose result is carried by the current user message below.
+                # Run-boundary request markers are user turns in their own right, not
+                # tool output — emit them raw, without the <tool_response> wrapper.
                 if not is_recent:
                     tr = tool_responses[i] if i < len(tool_responses) else None
                     if tr:
-                        messages.append({"role": "user", "content": f"<tool_response>\n{tr}\n</tool_response>"})
+                        if isinstance(tr, str) and tr.lstrip().startswith(_REQUEST_MARKER_PREFIX):
+                            messages.append({"role": "user", "content": tr})
+                        else:
+                            messages.append({"role": "user", "content": f"<tool_response>\n{tr}\n</tool_response>"})
 
             # Current user message (live screen + most recent <last_response>).
             # The system prompt is added exactly once (above) — the resumable seed

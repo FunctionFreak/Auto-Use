@@ -104,10 +104,12 @@
         fetch('/api/chats/' + encodeURIComponent(id), { method: 'DELETE' })
             .then(function (r) { return r.json(); })
             .then(function () {
-                // If we deleted the open chat, fall back to a fresh-start state.
+                // If we deleted the open chat, fall back to the SAME fresh-start
+                // state as the New-chat button — resetChatUi alone left the memory
+                // bar filled, the hero hidden, and the mode picker locked to a
+                // chat that no longer exists.
                 if (window.currentSessionId === id) {
-                    window.currentSessionId = null;
-                    if (window.resetChatUi) window.resetChatUi();
+                    startNewChat();
                 }
                 loadChats(list);
             })

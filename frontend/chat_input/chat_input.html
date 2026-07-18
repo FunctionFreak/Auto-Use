@@ -37,6 +37,27 @@
         <textarea class="chat-input" placeholder="Select a model in Settings to start..." rows="1" disabled></textarea>
 
         <div class="input-toolbar">
+            <!-- Fast / Quality flip — UI-ONLY toggle (future feature slot, nothing
+                 wired behind it yet). Amber bolt = Fast, purple sparkles = Quality;
+                 the white thumb spring-bounces across and a small label floats up
+                 above the pill on flip/hover. Sits just left of the model picker. -->
+            <!-- Defaults to Quality (class="quality" + aria-checked below). -->
+            <button class="fast-quality-toggle quality" id="fastQualityToggle" type="button" role="switch" aria-checked="true" aria-label="Fast / Quality mode">
+                <span class="fq-label fq-label-fast" aria-hidden="true">Fast</span>
+                <span class="fq-label fq-label-quality" aria-hidden="true">Quality</span>
+                <span class="fq-thumb"></span>
+                <span class="fq-icon fq-zap">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                </span>
+                <span class="fq-icon fq-sparkles">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path class="fq-spark-main" d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>
+                        <path d="M20 3v4"/><path d="M22 5h-4"/>
+                        <path d="M4 17v2"/><path d="M5 18H3"/>
+                    </svg>
+                </span>
+            </button>
+
             <!-- Model picker (drop-up) — sits at the right, just left of the send orb.
                  Label shows the active provider until a model is picked, then the model
                  name. Wired by script.js (wireChatDropdown) which reuses makeDropdown.
