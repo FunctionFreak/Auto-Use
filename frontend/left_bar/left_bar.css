@@ -98,3 +98,36 @@
     justify-content: flex-start;
     padding-top: clamp(8px, 1vw, 12px);
 }
+
+/* GitHub star pill — header's right edge, beside the logo. Same visual
+   recipe as the New-chat button (border/background/radius/font), and the
+   same hover plus a slight grow. Live count wired by left_bar.js; click
+   opens the repo in the system browser. */
+.gh-star-pill {
+    margin-left: auto;                 /* park at the header's right edge */
+    flex-shrink: 0;                    /* never squeeze — it clips the GitHub mark */
+    display: flex;
+    align-items: center;
+    gap: clamp(5px, 0.7vw, 7px);
+    box-sizing: border-box;
+    padding: clamp(5px, 0.7vw, 7px) clamp(8px, 1vw, 10px);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: clamp(8px, 1vw, 10px);
+    background: rgba(255, 255, 255, 0.28);
+    color: rgba(80, 80, 80, 0.9);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: clamp(11px, 1.1vw, 13px);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+    -webkit-user-select: none;
+    user-select: none;
+}
+.gh-star-pill:hover {
+    background: rgba(255, 255, 255, 0.45);
+    border-color: rgba(0, 0, 0, 0.12);
+    transform: scale(1.05);
+}
+.gh-mark { width: clamp(13px, 1.4vw, 15px); height: clamp(13px, 1.4vw, 15px); flex-shrink: 0; }
+.gh-star { width: clamp(11px, 1.2vw, 13px); height: clamp(11px, 1.2vw, 13px); flex-shrink: 0; color: #e3a008; }
+.gh-star-count { line-height: 1; }

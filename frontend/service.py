@@ -1814,6 +1814,19 @@ def stop_agent():
     return jsonify({'status': 'no_agent_running'})
 
 
+@app.route('/api/open-github', methods=['POST'])
+def open_github():
+    """Open the project's GitHub repo in the SYSTEM browser (a plain link would
+    navigate the pywebview window itself). Fixed URL — no arbitrary-URL opener."""
+    try:
+        import webbrowser
+        webbrowser.open("https://github.com/FunctionFreak/Auto-Use")
+        return jsonify({'status': 'ok'})
+    except Exception:
+        debug_exception("open_github")
+        return jsonify({'error': 'failed'}), 500
+
+
 # =============================================================================
 # Flask routes — chat history
 # =============================================================================
