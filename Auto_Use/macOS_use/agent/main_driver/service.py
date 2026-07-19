@@ -23,11 +23,11 @@ import re
 import base64
 import time
 import shutil
-import threading
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
 from ...llm_provider.llm_manager import LLMManager
+from ....memory_compression.controller import CompressionController
 from .view import AgentResponseFormatter
 from ...tree.element import UIElementScanner, ELEMENT_CONFIG
 from ...controller import ControllerView
@@ -191,14 +191,14 @@ class AgentService:
         self.last_messages = None
 
         # ── Runtime memory compression (rolling handoff at 110k tokens) ──────
-        # A background thread compresses steps [0..K] into one handoff document;
-        # the MAIN LOOP applies the splice — the worker only deposits a result.
-        self._compress_threshold = 110_000
-        self._compress_inflight = False   # one compression in flight, ever
-        self._compress_result = None      # {"gen","k","text"} deposited by the worker
-        self._compress_gen = 0            # generation guard: stale results never apply
-        self._compress_rearm_len = 0      # no re-trigger until this many entries exist
-        self._compressor = None           # lazy MemoryCompressionAgent (own 2nd LLMManager)
+        # The compression agent is a SEPARATE agent: ALL orchestration (trigger,
+        # worker thread, indicator, splice policy) lives in its controller,
+        # shared by every platform. This loop only calls the four hooks:
+        # reset / maybe_trigger / apply_pending / finish_run. LLMManager is
+        # passed as a class — the controller lazily builds its own 2nd
+        # text-mode manager from it.
+        self._compression = CompressionController(
+            self.llm_manager, LLMManager, self.token_callback, self.stop_event)
 
     def _load_system_prompt(self) -> str:
         """Load the system prompt from system_prompt.md file"""
@@ -426,71 +426,6 @@ class AgentService:
         except Exception:
             return entry
 
-    def _maybe_start_compression(self, assistant_messages, tool_responses, original_task):
-        """Fire-and-forget: spawn ONE background handoff compression when the
-        context crosses the threshold. The dump is snapshotted HERE on the main
-        thread; the worker never reads the live lists."""
-        try:
-            ctx = int((self.llm_manager.last_usage or {}).get("context_tokens", 0) or 0)
-        except Exception:
-            return
-        if ctx < self._compress_threshold:
-            return
-        if self._compress_inflight or self._compress_result is not None:
-            return
-        if len(assistant_messages) < 2:                        # nothing worth compressing
-            return
-        if len(assistant_messages) < self._compress_rearm_len:  # anti-thrash guard
-            return
-        if self._compressor is None:
-            try:
-                from ....memory_compression.agent.service import MemoryCompressionAgent
-                main = self.llm_manager
-                # A SECOND manager — same provider/model/key, plain-text mode.
-                # Never reuse the main one: its last_usage would race the loop.
-                second = LLMManager(main.provider, main.model_short_name,
-                                    main.thinking, main.runtime_api_key, mode="text")
-                self._compressor = MemoryCompressionAgent(second)
-            except Exception as e:
-                print(f"🧠 [memory] Compression unavailable: {e}")
-                self._compress_rearm_len = len(assistant_messages) + 5
-                return
-        k = len(assistant_messages) - 1                        # last completed step
-        dump = self._compressor.build_dump(assistant_messages, tool_responses, k, original_task)
-        self._compress_inflight = True
-        self._notify_compression("start")                      # Memory logo blinks red
-        print(f"🧠 [memory] Context at {ctx:,} tokens — compressing steps 1..{k + 1} in background")
-        threading.Thread(target=self._run_compression,
-                         args=(dump, k, self._compress_gen), daemon=True).start()
-
-    def _run_compression(self, dump, k, gen):
-        """Worker thread: one plain-text LLM call, deposit only. NEVER touches
-        the conversation lists — the main loop applies the splice."""
-        try:
-            if self.stop_event and self.stop_event.is_set():
-                return                                          # run ending — skip the call
-            text = self._compressor.compress(dump)
-            if (text and text.strip()
-                    and gen == self._compress_gen
-                    and not (self.stop_event and self.stop_event.is_set())):
-                self._compress_result = {"gen": gen, "k": k, "text": text.strip()}
-        except Exception as e:
-            print(f"🧠 [memory] Compression failed, dropping (will re-trigger): {e}")
-            self._compress_rearm_len = k + 4                    # back off ~3 steps
-            self._notify_compression("end")                     # stop the blink
-        finally:
-            self._compress_inflight = False
-
-    def _notify_compression(self, state):
-        """Frontend indicator: the memory bar lights up while a background
-        compression runs. Rides the existing token pipe as a marker payload
-        ({"memory_compression": "start"|"end"}) — no new callback wiring."""
-        if self.token_callback:
-            try:
-                self.token_callback({"memory_compression": state})
-            except Exception:
-                pass
-
     def _emit_flow(self, event, payload=None):
         """Push a tool-flow event to the frontend bottom chain (best-effort)."""
         if not self.tool_callback:
@@ -529,10 +464,7 @@ class AgentService:
 
         # Runtime compression: new call invalidates any stale worker from a
         # prior process_request on this instance.
-        self._compress_gen += 1
-        self._compress_inflight = False
-        self._compress_result = None
-        self._compress_rearm_len = 0
+        self._compression.reset()
 
         # ---- Resumable memory seed (UI continuation) -------------------------
         # If a prior optimized snapshot was supplied (continuing a saved chat),
@@ -584,30 +516,11 @@ class AgentService:
                 # Don't send callback to frontend to avoid re-opening the strip
                 break
 
-            # ── Apply a finished background compression (main loop owns ALL
-            # mutation of the memory lists — the worker only deposits). ──────
-            res = self._compress_result
-            if res is not None:
-                self._compress_result = None
-                if res.get("gen") == self._compress_gen and res.get("text"):
-                    k = res["k"]
-                    if 0 <= k < len(assistant_messages):
-                        from ....memory_compression.agent.service import make_synthetic_entry
-                        assistant_messages[:k + 1] = [
-                            make_synthetic_entry(assistant_messages[k], res["text"])
-                        ]
-                        tool_responses[:k + 1] = [
-                            tool_responses[k] if k < len(tool_responses) else None
-                        ]
-                        # Index-based locals shift by k; a web slot inside the
-                        # compressed span is gone.
-                        if web_memory_index is not None:
-                            web_memory_index = None if web_memory_index <= k else web_memory_index - k
-                        # Anti-thrash: no re-trigger until 3 fresh steps exist.
-                        self._compress_rearm_len = len(assistant_messages) + 3
-                        self._notify_compression("end")   # stop the logo blink
-                        print(f"🧠 [memory] Compressed steps 1..{k + 1} into a handoff "
-                              f"({len(assistant_messages)} entries remain)")
+            # ── Apply a finished background compression: the controller splices
+            # the lists IN PLACE here on the main thread (its worker only
+            # deposits) and returns the shifted web_memory_index. ────────────
+            web_memory_index = self._compression.apply_pending(
+                assistant_messages, tool_responses, web_memory_index)
 
             step_number += 1
             is_web_digest = False  # set True below only when this iteration digests a web result
@@ -966,7 +879,7 @@ No image and element tree provided. Focus on digesting the web response below.
                     break
 
                 # Runtime compression trigger: context size is fresh in last_usage.
-                self._maybe_start_compression(assistant_messages, tool_responses, original_task)
+                self._compression.maybe_trigger(assistant_messages, tool_responses, original_task)
 
                 print("✓ LLM response received")
 
@@ -1180,9 +1093,8 @@ No image and element tree provided. Focus on digesting the web response below.
         # agent) can optimize + persist them after the run. Memory management is
         # kept entirely out of the agent. Return shape is unchanged.
         # Compression still pending at run end (in flight or deposited but never
-        # applied) — the result is discarded; make sure the logo stops blinking.
-        if self._compress_inflight or self._compress_result is not None:
-            self._notify_compression("end")
+        # applied) — the result is discarded; make sure the indicator stops.
+        self._compression.finish_run()
 
         self.assistant_messages = assistant_messages
         self.tool_responses = tool_responses
