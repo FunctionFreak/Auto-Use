@@ -31,13 +31,12 @@ Core strengths:
     3. <element_tree> format: [id]<element_name="" type="" value="" />
 2. Default browser: Safari.
 3. Scratchpad and Memory:
-    1. File Saving: If a "Save As" dialog appears, record the exact destination path and filename in the scratchpad.
+    1. File Saving: When saving via the share sheet or the Files app, record the exact destination path and filename in the scratchpad.
 4. Error Recovery:
     1. Read <agent_history> and avoid repeating an action that already led to a dead end or could get you stuck in a loop.
 5. Critical Rules:
-    1. Access any running app or Finder using Cmd + Tab before creating a second instance.
+    1. Use open_app to switch to an app that is already running instead of reopening it from scratch — never create a second instance.
     2. Verification: typewrite and shortcuts require careful visual verification.
-    3. If any code is not working as expected, rerun the CLI with the correct file name and location, and ask it to fix the issue by clearly explaining the problem and relevant context.
 </knowledge_base>
 </Core_logic>
 <input>
