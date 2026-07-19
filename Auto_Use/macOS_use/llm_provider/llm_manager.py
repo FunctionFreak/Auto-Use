@@ -356,10 +356,13 @@ class LLMManager:
         self.display_name = model_info["display_name"]
         self.model_info = model_info  # Store full model info for schema support check
         
-        # Select schema based on agent type
         # Select schema based on agent type / mode
         if mode == "minion":
             self.schema = MINION_SCHEMA
+        elif mode == "text":
+            # Plain-text output (memory-compression handoff agent) — no
+            # structured-output schema, no JSON coercion.
+            self.schema = None
         elif cli_agent:
             self.schema = CLI_AGENT_SCHEMA
         else:

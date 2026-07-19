@@ -6,24 +6,17 @@
     <title>Mode Toggle</title>
     <style>
         :root {
-            /* Layout box. No pill outline any more - this is just geometry. */
-            --orb-w: 140px;
-            --orb-h: 32px;
-            --core-w: 130px;
-            --core-h: 22px;
+            /* Layout box. Vertical now. */
+            --orb-w: 32px;
+            --orb-h: 140px;
+            --core-w: 22px;
+            --core-h: 130px;
 
-            /* Indicator bar (the lit one slides between the two halves) */
-            --bar-w: 46px;
-            --bar-h: 3px;
-            --bar-gap: 1px;   /* bar -> label */
-            /* Rotating color disc inside the bar. Must be >= the bar's diagonal
-               (sqrt(46^2+3^2) = 47) or the bar ends flash white as it spins. */
-            --bg-size: 48px;
-
-            /* Text */
-            --label-size: 8px;
-            --label-idle: #a3a7b3;
-            --label-active: #9292d8;   /* base of the color cycle */
+            /* Indicator bar (vertical) */
+            --bar-w: 16px;
+            --bar-h: 46px;
+            /* Rotating color disc inside the bar. Must be >= the bar's diagonal */
+            --bg-size: 52px;
 
             --slide: 0.45s cubic-bezier(0.22, 1, 0.36, 1);
         }
@@ -116,92 +109,36 @@
             background: transparent;
         }
 
-        /* Two halves. Each: a rail slot with its word under it. */
+        /* Two halves. Each: a click target area. */
         .segments {
             position: absolute;
             inset: 0;
             display: flex;
+            flex-direction: column;
             z-index: 4;
         }
         .seg {
             flex: 1;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            gap: var(--bar-gap);
             pointer-events: auto;
             cursor: pointer;
         }
-        .seg-rail {
-            /* Spacer only. The unselected side shows no bar - the lit one is the
-               only bar, and it slides. Keeps the label's vertical position fixed. */
-            width: var(--bar-w);
-            height: var(--bar-h);
-            background: transparent;
-        }
-        .seg-label {
-            position: relative;
-            font-family: -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
-            font-size: var(--label-size);
-            font-weight: 600;
-            letter-spacing: 0.02em;
-            line-height: 1;
-            color: var(--label-idle);
-            white-space: nowrap;
-            user-select: none;
-            transition: color 0.35s ease;
-        }
-        .stop-agent-button.mode-computer .seg[data-mode="computer"] .seg-label,
-        .stop-agent-button.mode-mobile   .seg[data-mode="mobile"]   .seg-label {
-            color: var(--label-active);
-            /* labelColor: same 4s timeline as stop-bgColor, so the word drifts
-               through the same hues the bar does. label-pop: one spring on select. */
-            animation:
-                stop-labelColor 4s linear infinite,
-                label-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
-        }
 
-        /* Same glint crossing the word. Shares barShine, so word and bar flash together. */
-        .stop-agent-button.mode-computer .seg[data-mode="computer"] .seg-label::after,
-        .stop-agent-button.mode-mobile   .seg[data-mode="mobile"]   .seg-label::after {
-            content: "";
-            position: absolute;
-            top: -1px;
-            bottom: -1px;
-            left: 0;
-            width: 40%;
-            pointer-events: none;
-            background: linear-gradient(90deg,
-                rgba(255,255,255,0) 0%,
-                rgba(255,255,255,0.85) 50%,
-                rgba(255,255,255,0) 100%);
-            transform: translateX(-140%);
-            animation: barShine 4s ease-in-out infinite;
-        }
-
-        /* The lit bar. Mirrors a segment's column (bar + a ghost the height of the
-           label) so it lands dead on the rail, and slides one half-width to switch. */
+        /* The lit bar. Slides to upper or lower half. */
         .glow-cell {
             position: absolute;
             top: 0;
             left: 0;
-            width: 50%;
-            height: 100%;
+            width: 100%;
+            height: 50%;
             display: flex;
-            flex-direction: column;
             align-items: center;
             justify-content: center;
-            gap: var(--bar-gap);
             z-index: 5;
             pointer-events: none;
             transition: transform var(--slide);
         }
         .stop-agent-button.mode-mobile .glow-cell {
-            transform: translateX(100%);
-        }
-        .glow-ghost {
-            height: var(--label-size);   /* label is line-height:1, so this matches */
+            transform: translateY(100%);
         }
 
         /* ---- the original orb effect, living in the bar ---- */
@@ -224,16 +161,43 @@
             overflow: hidden;
             box-shadow: 0 0 2px 2px rgba(255,255,255,0.9);
         }
-        .bar-core::before,
-        .bar-core::after {
-            content: "";
+        .blur-ball {
             position: absolute;
             border-radius: 50%;
             filter: blur(6px);
             z-index: 2;
         }
-        .bar-core::before { background: #ff0073; width: 8px; height: 8px; top: -3px; right: 20%; }
-        .bar-core::after  { background: #00bbff; width: 6px; height: 6px; bottom: -2px; left: 34%; }
+        .ball-1 {
+            background: #ff0073; width: 8px; height: 8px; top: 10%; left: 10%;
+            animation: floatBall1 4s ease-in-out infinite alternate;
+        }
+        .ball-2 {
+            background: #00bbff; width: 6px; height: 6px; top: 70%; left: 40%;
+            animation: floatBall2 5s ease-in-out infinite alternate;
+        }
+        .ball-3 {
+            background: #ffdd00; width: 7px; height: 7px; top: 40%; left: 20%;
+            animation: floatBall3 4.5s ease-in-out infinite alternate;
+        }
+
+        @keyframes floatBall1 {
+            0% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(6px, 15px) scale(1.2); }
+            66% { transform: translate(-2px, 25px) scale(0.8); }
+            100% { transform: translate(4px, 35px) scale(1.1); }
+        }
+        @keyframes floatBall2 {
+            0% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(-5px, -15px) scale(1.3); }
+            66% { transform: translate(4px, -25px) scale(0.9); }
+            100% { transform: translate(-2px, -35px) scale(1); }
+        }
+        @keyframes floatBall3 {
+            0% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(4px, 12px) scale(0.8); }
+            66% { transform: translate(-3px, -12px) scale(1.3); }
+            100% { transform: translate(5px, 15px) scale(1.1); }
+        }
 
         .stop-bg {
             position: absolute;
@@ -268,47 +232,16 @@
             pointer-events: none;
         }
 
-        /* very light shimmer sweeping the lit bar, clipped by .bar-core */
-        .bar-shine {
-            position: absolute;
-            top: 0;
-            bottom: 0;
-            left: 0;
-            width: 35%;
-            z-index: 4;
-            pointer-events: none;
-            background: linear-gradient(90deg,
-                rgba(255,255,255,0) 0%,
-                rgba(255,255,255,0.75) 50%,
-                rgba(255,255,255,0) 100%);
-            transform: translateX(-140%);
-            animation: barShine 4s ease-in-out infinite;
-        }
-
-        @keyframes barShine {
-            0%, 55%  { transform: translateX(-140%); opacity: 0; }
-            65%      { opacity: 0.45; }
-            100%     { transform: translateX(320%); opacity: 0; }
-        }
-
         /* While sliding, the bar stretches like it's accelerating, then squashes
            and settles on landing. Driven by the .moving class from setMode. */
         .stop-agent-button.moving .glow-bar {
             animation: bar-travel 0.45s cubic-bezier(0.22, 1, 0.36, 1);
         }
         @keyframes bar-travel {
-            0%   { transform: scaleX(1); }
-            35%  { transform: scaleX(1.5); }
-            70%  { transform: scaleX(0.85); }
-            100% { transform: scaleX(1); }
-        }
-
-        /* Newly selected word springs in. Plays once each time the selector newly
-           matches, because the animation list changes with the mode class. */
-        @keyframes label-pop {
-            0%   { transform: scale(0.92); }
-            60%  { transform: scale(1.14); }
-            100% { transform: scale(1); }
+            0%   { transform: scaleY(1); }
+            35%  { transform: scaleY(1.5); }
+            70%  { transform: scaleY(0.85); }
+            100% { transform: scaleY(1); }
         }
 
         @keyframes stop-bgRotate {
@@ -323,14 +256,6 @@
             60% { background-color: #2cb5ff; }
             80% { background-color: #fc63ff; }
         }
-        /* #9292d8 base with the same overlay colors blended in at the same 20% */
-        @keyframes stop-labelColor {
-            0%, 100% { color: #9292d8; }
-            20% { color: #a875ad; }   /* red   */
-            40% { color: #88a8c6; }   /* green */
-            60% { color: #7e99e0; }   /* blue  */
-            80% { color: #a789e0; }   /* pink  */
-        }
     </style>
 </head>
 <body>
@@ -339,25 +264,20 @@
             <div class="stop-orb">
                 <div class="pill">
                     <div class="segments">
-                        <div class="seg" data-mode="computer">
-                            <div class="seg-rail"></div>
-                            <div class="seg-label">Computer</div>
-                        </div>
-                        <div class="seg" data-mode="mobile">
-                            <div class="seg-rail"></div>
-                            <div class="seg-label">Mobile</div>
-                        </div>
+                        <div class="seg" data-mode="computer"></div>
+                        <div class="seg" data-mode="mobile"></div>
                     </div>
 
                     <div class="glow-cell">
                         <div class="glow-bar">
                             <div class="bar-core">
                                 <div class="stop-bg"></div>
+                                <div class="blur-ball ball-1"></div>
+                                <div class="blur-ball ball-2"></div>
+                                <div class="blur-ball ball-3"></div>
                                 <div class="stop-rim"></div>
-                                <div class="bar-shine"></div>
                             </div>
                         </div>
-                        <div class="glow-ghost"></div>
                     </div>
                 </div>
             </div>

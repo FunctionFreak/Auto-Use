@@ -80,8 +80,6 @@ class GroqProvider:
                 "type": "json_schema",
                 "json_schema": groq_schema
             }
-        else:
-            data["response_format"] = {"type": "json_object"}
         
         try:
             response = requests.post(self.api_url, json=data, headers=headers)

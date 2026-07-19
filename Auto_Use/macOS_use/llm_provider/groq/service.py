@@ -71,7 +71,8 @@ class GroqProvider:
         if model_info.get("reasoning_support", False):
             data["reasoning_effort"] = self.model_info.get("reasoning_effort", "medium")
         
-        # Use json_schema with strict: false (Groq supports schema for all models in best-effort mode)
+        # Use json_schema with strict: false (Groq supports schema for all models in best-effort mode).
+        # No schema (mode="text") -> plain text: omit response_format entirely.
         if self.schema:
             # Create a copy with strict: false for Groq
             groq_schema = copy.deepcopy(self.schema)
@@ -80,8 +81,6 @@ class GroqProvider:
                 "type": "json_schema",
                 "json_schema": groq_schema
             }
-        else:
-            data["response_format"] = {"type": "json_object"}
         
         try:
             response = requests.post(self.api_url, json=data, headers=headers)

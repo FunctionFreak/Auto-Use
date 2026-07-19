@@ -71,13 +71,12 @@ class OpenAIProvider:
         }
         
         # Use json_schema with strict: true (all OpenAI models support it)
+        # No schema (mode="text") -> plain text: omit response_format entirely.
         if self.schema:
             params["response_format"] = {
                 "type": "json_schema",
                 "json_schema": self.schema
             }
-        else:
-            params["response_format"] = {"type": "json_object"}
         
         # Configure reasoning effort based on thinking setting
         # Get model info to check if it supports reasoning

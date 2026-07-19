@@ -53,14 +53,6 @@ class OpenRouterProvider:
             ]
         
 
-        if self.schema:
-            response_format = {
-                "type": "json_schema",
-                "json_schema": self.schema
-            }
-        else:
-            response_format = {"type": "json_object"}
-        
         data = {
             "model": model,
             "messages": messages,
@@ -68,8 +60,13 @@ class OpenRouterProvider:
             "max_tokens": 10000,
             "route": "fallback",
             "seed": 42,
-            "response_format": response_format
         }
+        # No schema (mode="text") -> plain text: omit response_format entirely.
+        if self.schema:
+            data["response_format"] = {
+                "type": "json_schema",
+                "json_schema": self.schema
+            }
 
         # Add reasoning if thinking is enabled and model supports it
         if self.thinking:

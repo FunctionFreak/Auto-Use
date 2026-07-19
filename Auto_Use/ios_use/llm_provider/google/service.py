@@ -114,8 +114,9 @@ class GoogleProvider:
             config_params["thinking_config"] = types.ThinkingConfig(thinking_level="MEDIUM")
         
         # Structured output (response_mime_type + response_schema)
-        config_params["response_mime_type"] = "application/json"
+        # No schema (mode="text") -> plain text: no JSON mime coercion.
         if self.schema:
+            config_params["response_mime_type"] = "application/json"
             config_params["response_schema"] = _clean_schema_for_google(self.schema.get("schema", {}))
         
         config = types.GenerateContentConfig(**config_params)

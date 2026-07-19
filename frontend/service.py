@@ -1616,6 +1616,14 @@ def start_agent():
             if not webview_window:
                 return
             try:
+                # Memory-compression indicator events ride the same pipe as the
+                # token usage: {"memory_compression": "start"|"end"} blinks the
+                # Memory logo red while the background handoff compression runs.
+                mc = (usage or {}).get("memory_compression")
+                if mc:
+                    fn = "memoryCompressionStart" if mc == "start" else "memoryCompressionEnd"
+                    webview_window.evaluate_js(f"window.{fn} && window.{fn}()")
+                    return
                 p = token_tracker.record(usage)
                 webview_window.evaluate_js(
                     f"window.updateMemoryBar && window.updateMemoryBar({p['used']}, {p['cap']})"

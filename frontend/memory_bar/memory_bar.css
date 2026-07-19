@@ -40,11 +40,6 @@
     transition: color 0.3s ease;
 }
 
-/* The "Memory" word reads darker than the (light) chip outline/legs. */
-.memory-bar-logo text {
-    fill: rgba(70, 74, 82, 0.92);
-}
-
 /* The slim vertical track: transparent, rounded ends, clips the fill. */
 .memory-bar-track {
     position: relative;
@@ -82,8 +77,40 @@
 /* Full (>= cap): fill + logo turn soft red. */
 .memory-bar.full .memory-bar-fill { background: var(--mem-red); }
 .memory-bar.full .memory-bar-logo { color: var(--mem-red); }
-.memory-bar.full .memory-bar-logo text { fill: var(--mem-red); }
 
 @media (prefers-reduced-motion: reduce) {
     .memory-bar-fill { transition: none; }
+}
+
+/* Memory compression in progress — the logo chip blinks red until the
+   background handoff compression finishes (window.memoryCompressionStart/End). */
+.memory-bar.compressing .memory-bar-logo {
+    animation: memCompressBlink 0.9s ease-in-out infinite;
+}
+@keyframes memCompressBlink {
+    50% { color: var(--mem-red); opacity: 0.65; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .memory-bar.compressing .memory-bar-logo { animation: none; color: var(--mem-red); }
+}
+
+/* While compressing, the grey FILL becomes the color_test.html lit-bar
+   colour: #9292d8 base cycling through the same blended hues (color_test's
+   own pre-blended values: base + overlay colours at 20%), with the bar's
+   white rim + outer glow. Nothing else — the colour, exactly. */
+.memory-bar.compressing .memory-bar-fill {
+    background: #9292d8;
+    animation: memFillColor 4s linear infinite;
+    box-shadow:
+        0 0 2px 2px rgba(255, 255, 255, 0.9),          /* bar-core outer glow */
+        inset 0 0 2px 1px rgba(255, 255, 255, 0.6);    /* stop-rim inner white */
+}
+/* color_test stop-labelColor: "#9292d8 base with the same overlay colors
+   blended in at the same 20%" — copied verbatim. */
+@keyframes memFillColor {
+    0%, 100% { background-color: #9292d8; }
+    20% { background-color: #a875ad; }   /* red   */
+    40% { background-color: #88a8c6; }   /* green */
+    60% { background-color: #7e99e0; }   /* blue  */
+    80% { background-color: #a789e0; }   /* pink  */
 }

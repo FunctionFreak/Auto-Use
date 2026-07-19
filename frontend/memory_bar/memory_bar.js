@@ -42,6 +42,17 @@
     // Brand-new chat: empty the bar.
     window.resetMemoryBar = function () { window.updateMemoryBar(0, CAP); };
 
+    // Memory compression indicator — the Memory logo blinks red while the
+    // background handoff compression runs (backend signals start/end).
+    window.memoryCompressionStart = function () {
+        var bar = document.getElementById('memoryBar');
+        if (bar) bar.classList.add('compressing');
+    };
+    window.memoryCompressionEnd = function () {
+        var bar = document.getElementById('memoryBar');
+        if (bar) bar.classList.remove('compressing');
+    };
+
     // Visibility — the bar is hidden by default and only shown while the agent
     // is running (shown on send, hidden when the run ends).
     window.showMemoryBar = function () {
