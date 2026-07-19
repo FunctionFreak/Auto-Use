@@ -465,7 +465,7 @@ class AgentService:
                 is_first_iteration = False  # continuation, not a fresh dialogue
                 last_response = self.prior_history.get("done_message") or "Resuming previous session."
                 # The chat's ORIGINAL objective (frozen to run 1 by _build_history);
-                # <User_Task> must carry this, not the newest request.
+                # the no="1" request prepend must carry this, not the newest request.
                 original_task = self.prior_history.get("task") or task
                 # Label this run boundary: fill the terminal bridge's empty tool
                 # slot with a numbered request marker so this run's task is durably
@@ -775,9 +775,11 @@ No image and element tree provided. Focus on digesting the web response below.
                 content = step_msg if is_recent else self._trim_history_entry(step_msg)
                 # Reinforce the objective by prepending the ORIGINAL task to step 1
                 # (on a resumed chat, `task` is the newest request — that one rides
-                # in the live user message; run 1's objective belongs here).
+                # in the live user message; run 1's objective belongs here). Same
+                # numbered tag as the run-boundary markers (no="1") so the memory
+                # reads uniformly for the compression system.
                 if i == 0 and not is_first_iteration:
-                    content = f'<User_Task no="1">\n{original_task}\n</User_Task no="1">\n\n{content}'
+                    content = f"{_request_marker(1, original_task)}\n\n{content}"
                 messages.append({"role": "assistant", "content": content})
 
                 # Interleave this step's tool result as its own user turn — except the
