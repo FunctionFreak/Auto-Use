@@ -281,16 +281,37 @@ AGENT_OUTPUT_SCHEMA = {
     }
 }
 
+# Fast-mode Main Agent Output Schema (speed="fast") — same tools, no reasoning blocks.
+# Only memory/next_goal/action so the model spends output tokens on the action, not
+# thinking/eval/decision (pairs with fast_system_prompt.md). The action block is
+# deep-copied from AGENT_OUTPUT_SCHEMA so the tool set can never drift between modes.
+# properties and required MUST mirror each other — OpenAI strict mode rejects otherwise.
+FAST_AGENT_SCHEMA = {
+    "name": "agent_response_fast",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "next_goal": {"type": "string"},
+            "memory": {"type": "string"},
+            "action": copy.deepcopy(AGENT_OUTPUT_SCHEMA["schema"]["properties"]["action"]),
+        },
+        "required": ["next_goal", "memory", "action"],
+        "additionalProperties": False
+    }
+}
+
 class LLMManager:
     """Manager to route requests to the correct LLM provider"""
-    
-    def __init__(self, provider: str, model: str, thinking: bool = True, api_key: str = None, cli_agent: bool = False, mode: str = "main"):
+
+    def __init__(self, provider: str, model: str, thinking: bool = True, api_key: str = None, cli_agent: bool = False, mode: str = "main", speed: str = "quality"):
         self.provider = provider.lower()
         self.model_short_name = model
         self.thinking = thinking
         self.runtime_api_key = api_key  # Runtime key from frontend (priority)
         self.cli_agent = cli_agent  # Flag for CLI agent (text-only, different schema)
         self.mode = mode  # "main" | "cli" | "minion" — picks output schema
+        self.speed = speed  # "quality" | "fast" — fast trims the main-agent output blocks
         
         # CLI agent gets its own hardcoded model per provider (independent from main agent)
         if cli_agent:
@@ -345,6 +366,8 @@ class LLMManager:
             self.schema = None
         elif cli_agent:
             self.schema = CLI_AGENT_SCHEMA
+        elif speed == "fast":
+            self.schema = FAST_AGENT_SCHEMA
         else:
             self.schema = AGENT_OUTPUT_SCHEMA
         

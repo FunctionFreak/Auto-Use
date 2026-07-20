@@ -1576,6 +1576,7 @@ def start_agent():
         # ── Agent mode: mobile+ios runs the iOS agent; anything else = host desktop ──
         agent_mode = (data.get('mode') or 'computer').strip().lower()
         device_os = (data.get('os') or '').strip().lower()
+        speed = (data.get('speed') or 'quality').strip().lower()   # ⚡/✨ toggle
         run_pkg = 'ios_use' if (agent_mode == 'mobile' and device_os == 'ios') else PLATFORM_PKG
         # The run's package folder — the todo/milestone watchers and resets below
         # must follow the agent that actually runs, not the host desktop package.
@@ -1727,6 +1728,7 @@ def start_agent():
                     api_key=api_key,
                     stop_event=stop_event,
                     prior_history=prior_history,   # None for a fresh chat
+                    speed=speed,                   # ⚡ fast / ✨ quality (all platforms)
                 )
 
                 monitor_thread = threading.Thread(target=monitor_milestones)

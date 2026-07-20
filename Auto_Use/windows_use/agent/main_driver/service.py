@@ -87,13 +87,19 @@ def _cleanup_scratchpad():
 class AgentService:
     """Service for Windows automation agent"""
     
-    def __init__(self, provider: str, model: str, save_conversation: bool = False, thinking: bool = True, frontend_callback=None, text_callback=None, web_callback=None, shell_callback=None, cli_callback=None, tool_callback=None, token_callback=None, api_key: str = None, stop_event=None, external_terminal: bool = False, prior_history: Optional[dict] = None):
+    def __init__(self, provider: str, model: str, save_conversation: bool = False, thinking: bool = True, frontend_callback=None, text_callback=None, web_callback=None, shell_callback=None, cli_callback=None, tool_callback=None, token_callback=None, api_key: str = None, stop_event=None, external_terminal: bool = False, prior_history: Optional[dict] = None, speed: str = "quality"):
         """Initialize the Agent Service"""
         # Clean up scratchpad for a fresh start
         _cleanup_scratchpad()
-        
+
+        # Speed mode: "fast" swaps in fast_system_prompt.md, trims the output schema
+        # to memory/next_goal/action, and forces provider reasoning off.
+        self.speed = "fast" if str(speed).lower() == "fast" else "quality"
+
         # Initialize LLM Manager with optional runtime API key
-        self.llm_manager = LLMManager(provider, model, thinking, api_key)
+        self.llm_manager = LLMManager(provider, model,
+                                      False if self.speed == "fast" else thinking,
+                                      api_key, speed=self.speed)
         
         # Store stop event
         self.stop_event = stop_event
@@ -196,15 +202,16 @@ class AgentService:
             self.llm_manager, LLMManager, self.token_callback, self.stop_event)
 
     def _load_system_prompt(self) -> str:
-        """Load the system prompt from system_prompt.md file"""
+        """Load the system prompt matching the speed mode (quality/fast)"""
+        prompt_name = "fast_system_prompt.md" if self.speed == "fast" else "system_prompt.md"
         try:
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            prompt_path = os.path.join(current_dir, "system_prompt.md")
-            
+            prompt_path = os.path.join(current_dir, prompt_name)
+
             with open(prompt_path, 'r', encoding='utf-8') as file:
                 return file.read()
         except FileNotFoundError:
-            raise FileNotFoundError("system_prompt.md file not found in the agent directory")
+            raise FileNotFoundError(f"{prompt_name} file not found in the agent directory")
         except Exception as e:
             raise Exception(f"Error loading system prompt: {str(e)}")
     
@@ -882,7 +889,7 @@ No image and element tree provided. Focus on digesting the web response below.
                 self._save_raw_response(raw_response, step_number)
                 
                 # Normalize the response to ensure consistent JSON format
-                success, normalized_json, failed_raw = AgentResponseFormatter.normalize_response(raw_response)
+                success, normalized_json, failed_raw = AgentResponseFormatter.normalize_response(raw_response, speed=self.speed)
                 
                 # If JSON parse failed, discard response and retry with fresh scan
                 if not success:

@@ -21,19 +21,23 @@
 from Auto_Use.agent_launcher import run_agent
 
 # Configuration
-MODE = "mobile use, ios"  # "computer use" (this PC) or "mobile use, ios" / "mobile use, android"
+MODE = "computer use"  # "computer use" (this PC) or "mobile use, ios" / "mobile use, android"
 PROVIDER = "openrouter"
 MODEL = "gemini-3.5-flash" #refer to the model name correctly from model_list.txt.
 # Your task here
 task = """
 
-open youtube
+can you open netflix and play conjuring movie  on chrome
+
+
 """
 
 # Control conversation saving
 conversation = True  # Set to False to disable conversation.txt
 # Control thinking/reasoning
 thinking = True  # Set to True to enable reasoning for supported models
+# Control speed mode (all platforms)
+speed = "fast"  # "quality" or "fast" — fast = lean output + fast prompt + reasoning off
 # Control automation engineer
 automation_engineer = True  # Set to True to enable automation engineer mode by default it is False
 # Run the agent
@@ -44,6 +48,7 @@ run_agent(
     task=task,
     save_conversation=conversation,
     external_terminal=True,
+    speed=speed,
 )
 
 # Response is displayed inside process_request

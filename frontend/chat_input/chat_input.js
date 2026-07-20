@@ -111,7 +111,9 @@
                     task: message,
                     session_id: window.currentSessionId || null,
                     mode: agentMode,
-                    os: agentMode === 'mobile' ? agentSub : null
+                    os: agentMode === 'mobile' ? agentSub : null,
+                    // ⚡/✨ toggle state lives only in the .quality class (read live at send)
+                    speed: (flipToggle && !flipToggle.classList.contains('quality')) ? 'fast' : 'quality'
                 })
             })
             .then(response => response.json())
@@ -184,7 +186,7 @@
         }
         window.resetChatUi = resetChatUi;
 
-        // Fast / Quality flip toggle — UI ONLY for now (nothing wired behind it).
+        // Fast / Quality flip toggle — read by startAgent() as the run's speed mode.
         // Click spring-slides the thumb; state lives in the .quality class. The
         // floating label shows briefly after each flip (and on hover via CSS).
         const flipToggle = (root || document).querySelector('#fastQualityToggle');

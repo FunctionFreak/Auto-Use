@@ -84,7 +84,7 @@ class AgentResponseFormatter:
         return None
     
     @staticmethod
-    def normalize_response(raw_response: str) -> tuple:
+    def normalize_response(raw_response: str, speed: str = "quality") -> tuple:
         """
         Normalize LLM response to ensure consistent format.
         Returns tuple: (success: bool, normalized_json: str, raw_response: str)
@@ -190,8 +190,16 @@ class AgentResponseFormatter:
                 return (False, None, raw_response)
             
             # Ensure all required fields are present (NEW FORMAT)
-            required_fields = ["thinking", "eval", "decision",
-                             "next_goal", "memory", "action"]
+            if speed == "fast":
+                # Fast mode: reasoning fields must be GENUINELY absent from agent
+                # memory — strip any the model emitted anyway (groq runs the schema
+                # with strict:False; the XML fallback extracts whatever tags exist).
+                for f in ("thinking", "eval", "decision"):
+                    json_data.pop(f, None)
+                required_fields = ["next_goal", "memory", "action"]
+            else:
+                required_fields = ["thinking", "eval", "decision",
+                                 "next_goal", "memory", "action"]
             
             for field in required_fields:
                 if field not in json_data:
