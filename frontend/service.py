@@ -1645,6 +1645,12 @@ def start_agent():
             _reset_scratchpad_file(run_pkg)
             send_todo_to_frontend({"objective": "", "tasks": []})
 
+            def run_is_current():
+                # False once a newer run started OR the user clicked New chat
+                # (/api/new-chat nulls active_agent_session_id) — a stale run's
+                # watcher/final pushes must not repaint the freshly reset UI.
+                return current_session_id == active_agent_session_id
+
             def monitor_milestones():
                 milestone_path = run_use_path / "scratchpad" / "milestone" / "milestone.md"
                 last_pos = 0
@@ -1652,7 +1658,7 @@ def start_agent():
                 while not milestone_path.exists() and not stop_event.is_set():
                     time.sleep(0.5)
 
-                while not stop_event.is_set():
+                while not stop_event.is_set() and run_is_current():
                     if milestone_path.exists():
                         try:
                             with open(milestone_path, 'r', encoding='utf-8') as f:
@@ -1669,7 +1675,7 @@ def start_agent():
                     time.sleep(1)
 
                 # Final read to stream any remaining milestones after agent stopped
-                if milestone_path.exists():
+                if milestone_path.exists() and run_is_current():
                     try:
                         with open(milestone_path, 'r', encoding='utf-8') as f:
                             f.seek(last_pos)
@@ -1687,7 +1693,7 @@ def start_agent():
                 # the whole file and push it whenever the content changes.
                 todo_path = run_use_path / "scratchpad" / "todo" / "todo.md"
                 last_content = None
-                while not stop_event.is_set():
+                while not stop_event.is_set() and run_is_current():
                     try:
                         if todo_path.exists():
                             content = todo_path.read_text(encoding='utf-8')
@@ -1699,7 +1705,7 @@ def start_agent():
                     time.sleep(0.3)
                 # Final read so the terminal state (e.g. all tasks complete) shows.
                 try:
-                    if todo_path.exists():
+                    if todo_path.exists() and run_is_current():
                         content = todo_path.read_text(encoding='utf-8')
                         if content != last_content:
                             send_todo_to_frontend(_parse_todo_md(content))
@@ -1814,6 +1820,20 @@ def stop_agent():
         active_agent_stop_event.set()
         return jsonify({'status': 'stopped'})
     return jsonify({'status': 'no_agent_running'})
+
+
+@app.route('/api/new-chat', methods=['POST'])
+def new_chat():
+    """The user abandoned the live view (New chat). Stop any running agent and
+    invalidate its run id so late pushes — the todo/milestone watchers' final
+    reads and the run-end agentComplete/Agent-Notes — can't repaint the freshly
+    reset UI. The run's memory is still persisted: save_run executes before the
+    session-id push guard in run_agent's finally."""
+    global active_agent_stop_event, active_agent_session_id
+    active_agent_session_id = None
+    if active_agent_stop_event:
+        active_agent_stop_event.set()
+    return jsonify({'status': 'ok'})
 
 
 @app.route('/api/open-github', methods=['POST'])

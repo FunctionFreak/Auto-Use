@@ -487,6 +487,14 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
+    /* Center the orb + message over the SAME box as the "Made to do" hero
+       (.welcome-hero: content area right of the left bar, above the chat
+       input) so they land exactly where the hero title sits — the overlay
+       itself still spans the full window to block interaction. */
+    padding-left: calc(var(--left-bar-w) + clamp(10px, 2vw, 30px));
+    padding-right: clamp(10px, 2vw, 30px);
+    padding-top: clamp(30px, 4vw, 60px);
+    padding-bottom: clamp(160px, 15vw, 196px);
 
     opacity: 0;
     visibility: hidden;
@@ -508,6 +516,7 @@ body {
 body.tg-occupied #chatWrapper,
 body.tg-occupied #llmWrapper,
 body.tg-occupied #settingsBtn,
+body.tg-occupied #welcomeHero,
 body.tg-occupied #zoneTopLeft,
 body.tg-occupied #zoneTopRight,
 body.tg-occupied #zoneBottomLeft,

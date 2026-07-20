@@ -67,6 +67,9 @@
         fetch('/api/chats/' + encodeURIComponent(id))
             .then(function (r) { return r.json(); })
             .then(function (data) {
+                // Stale response: the user moved on (New chat or another row)
+                // while this fetch was in flight — don't repaint their new view.
+                if (window.currentSessionId !== id) return;
                 if (!data || data.error) return;
                 // Full life of the chat: numbered request/outcome pairs
                 // (exchanges.json). Legacy sessions saved before exchanges
@@ -182,9 +185,19 @@
     }
 
     function startNewChat() {
+        // Tell the backend the live view is abandoned: stops any running agent
+        // and invalidates its run id so late pushes (todo/milestone watchers,
+        // run-end Agent Notes) can't repaint the freshly reset UI below.
+        fetch('/api/new-chat', { method: 'POST' }).catch(function () { /* non-fatal */ });
         window.currentSessionId = null;          // fresh start: no memory loaded
         // A fresh chat has no mode history — unlock the mode picker.
         document.dispatchEvent(new CustomEvent('agentmode:lock', { detail: { mode: null } }));
+        // Roll a run-active composer back to idle (orbs/strip/box) — idempotent,
+        // and agentComplete won't do it for us now that its push is invalidated.
+        if (window.chatInputRestoreIdle) window.chatInputRestoreIdle();
+        // Same reason for the top-right stream: its fade normally comes from
+        // agentComplete; clear it here so a mid-run New chat can't leave old text.
+        if (window.trackingProgress) window.trackingProgress.start();
         if (window.resetChatUi) window.resetChatUi();
         if (window.resetMemoryBar) window.resetMemoryBar();     // empty the memory bar
         if (window.hideMemoryBar) window.hideMemoryBar();       // hide it (only new chat hides)
