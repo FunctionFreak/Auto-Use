@@ -41,6 +41,7 @@ Setup:
 import asyncio
 import datetime
 import importlib
+import json
 import logging
 import sys
 import threading
@@ -213,7 +214,10 @@ def _get_models_for_provider(provider_id: str) -> list:
 #   "model_display":    str | None,
 #   "queue":            list[str],  # tasks waiting to run, FIFO
 #   "pending":          dict[str, str],  # pending_id → task awaiting Yes/No
-#   "pending_counter":  int,         # monotonic id source for pending
+#   "pending_counter":  int,         # monotonic id source for pending + pending_continue
+#   "history":          dict | None,  # prior-run agent memory, RAM only (the
+#                                     # AgentService prior_history contract shape)
+#   "pending_continue": dict[str, str],  # pending_id → task awaiting Continue/Fresh
 # }
 _chat_state: dict = {}
 
@@ -245,6 +249,9 @@ def _maybe_run_next_queued(chat_id: int, bot, loop) -> None:
             return
         next_task = queue.pop(0)
         display = state.get("model_display") or model
+        # Tasks queued mid-run are follow-ups: auto-continue the session that
+        # just finished (its memory was captured before this drain ran).
+        history = state.get("history")
         state["phase"] = "running"
 
     _send_chat(
@@ -255,10 +262,52 @@ def _maybe_run_next_queued(chat_id: int, bot, loop) -> None:
     )
     threading.Thread(
         target=_run_agent,
-        args=(next_task, provider, model, chat_id, bot, loop),
+        args=(next_task, provider, model, chat_id, bot, loop, history, state),
         daemon=True,
         name=f"telegram-agent-{chat_id}-queued",
     ).start()
+
+
+def _build_prior_history(task, assistant_messages, tool_responses,
+                         status, message, prior_task=None):
+    """In-RAM twin of agent_conversation's _build_history — that one persists
+    to disk and surfaces in the desktop chat sidebar, which the Telegram
+    surface deliberately avoids. Packages a finished run's memory lists into
+    the prior_history dict AgentService expects, capped with the synthetic
+    terminal bridge step + None tool slot. The bridge JSON must contain
+    _BRIDGE_SIGNATURE ('"decision": "Previous run concluded."', main_driver
+    service.py:42) verbatim, or the <updated_user_request> run-marker logic
+    silently stops firing on resume. Returns None when the run produced no
+    steps — the caller keeps the previous memory then. prior_task freezes the
+    ORIGINAL run-1 objective across continuations."""
+    full_assistant = list(assistant_messages or [])
+    if not full_assistant:
+        return None
+    tools = list(tool_responses or [])
+    if len(tools) < len(full_assistant):
+        tools += [None] * (len(full_assistant) - len(tools))
+    else:
+        tools = tools[:len(full_assistant)]
+    message = message or ""
+    if status == "success":
+        done_message = f"Task completed: {message}".strip().rstrip(":")
+    elif status == "error":
+        done_message = f"Agent terminated (error / provider): {message}".strip().rstrip(":")
+    else:
+        done_message = f"Agent stopped before completing: {message}".strip().rstrip(":")
+    full_assistant.append(json.dumps({
+        "decision": "Previous run concluded.",
+        "memory": done_message,
+        "next_goal": "Awaiting the user's next request; resume from this point.",
+    }, ensure_ascii=False, indent=2))
+    tools.append(None)
+    return {
+        "version": 1,
+        "task": prior_task or task,
+        "assistant_messages": full_assistant,
+        "tool_responses": tools,
+        "done_message": done_message,
+    }
 
 
 # ── Telegram handlers ────────────────────────────────────────────────────────
@@ -386,12 +435,14 @@ async def start_cmd(update, ctx):
 
 
 async def reset_cmd(update, ctx):
-    # Wipe state for this chat — including any queued tasks and pending
-    # awaiting Yes/No prompts. We do NOT clear the persisted owner chat_id;
-    # /reset is "start over the conversation", not "forget I exist".
+    # Wipe state for this chat — including any queued tasks, pending prompts,
+    # and the retained agent memory ("history"). We do NOT clear the persisted
+    # owner chat_id; /reset is "start over the conversation", not "forget I
+    # exist". (/start replaces the dict the same way, so it wipes memory too.)
     _chat_state[update.effective_chat.id] = {"phase": "idle"}
     await update.message.reply_text(
-        "🔄 Reset. Send any message to pick a provider again."
+        "🔄 Reset. Previous session memory cleared. "
+        "Send any message to pick a provider again."
     )
 
 
@@ -444,6 +495,26 @@ async def text_handler(update, ctx):
     task = (update.message.text or "").strip()
     if not task:
         return
+    if state.get("history"):
+        # Memory from a previous session exists — ask before running. Phase
+        # stays "ready"; the task is parked until the user answers. Multiple
+        # unanswered prompts can coexist (same pattern as "pending"); the
+        # loser of an answer race gets queued by the c+/c- handler.
+        state.setdefault("pending_continue", {})
+        state["pending_counter"] = state.get("pending_counter", 0) + 1
+        pending_id = str(state["pending_counter"])
+        state["pending_continue"][pending_id] = task
+        done_hint = (state["history"].get("done_message") or "")[:120]
+        buttons = [
+            [InlineKeyboardButton("🧠 Continue previous session", callback_data=f"c+:{pending_id}")],
+            [InlineKeyboardButton("🆕 Start fresh",               callback_data=f"c-:{pending_id}")],
+        ]
+        await update.message.reply_text(
+            f"I still remember the previous session ({done_hint}).\n"
+            f"Run \"{task[:200]}\" as a continuation, or start fresh?",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+        return
     state["phase"] = "running"
     provider = state["provider"]
     model = state["model"]
@@ -455,7 +526,7 @@ async def text_handler(update, ctx):
     loop = asyncio.get_running_loop()
     threading.Thread(
         target=_run_agent,
-        args=(task, provider, model, chat_id, bot, loop),
+        args=(task, provider, model, chat_id, bot, loop, None, state),
         daemon=True,
     ).start()
 
@@ -538,6 +609,71 @@ async def callback_handler(update, ctx):
         await query.edit_message_text(
             "👍 OK, won't queue it. I'll let you know once the current task is done."
         )
+        return
+
+    if data.startswith("c+:") or data.startswith("c-:"):
+        # Continue-vs-fresh decision for a task sent while idle with memory.
+        # After /reset the fresh state dict has no pending_continue, so the
+        # pop returns None and the stale tap self-heals like q+.
+        pending_id = data.split(":", 1)[1]
+        task = (state.get("pending_continue") or {}).pop(pending_id, None)
+        if not task:
+            await query.edit_message_text("(That prompt has already been handled.)")
+            return
+        continue_prev = data.startswith("c+:")
+        # Unlike q+, check-and-transition goes under the lock: the prompt→tap
+        # window is seconds long, so a concurrently finishing agent's finally
+        # can drain a queued task in between — check-then-set without the
+        # lock could double-run two agents.
+        with _state_lock:
+            if not continue_prev:
+                state["history"] = None  # Start fresh → destroy old context
+            provider = state.get("provider")
+            model = state.get("model")
+            history = state.get("history")  # None on fresh
+            expired = not provider or not model
+            queued = False
+            if not expired:
+                if state.get("phase") == "ready":
+                    state["phase"] = "running"
+                else:
+                    # Race: something started running between the prompt and
+                    # this tap (second prompt answered first, or a queued task
+                    # drained). Fall back to queueing — same recovery as q+.
+                    state.setdefault("queue", []).append(task)
+                    queued = True
+        if expired:
+            state["phase"] = "idle"
+            await query.edit_message_text("Session expired. Send any message to start over.")
+            return
+        if queued:
+            try:
+                await query.edit_message_text(
+                    f"⏳ Another task started in the meantime — queued: \"{task[:200]}\""
+                )
+            except Exception:
+                logger.warning("could not edit continue/fresh prompt", exc_info=True)
+            # Cover the agent-finished-in-the-milliseconds gap, like q+.
+            _maybe_run_next_queued(chat_id, ctx.bot, asyncio.get_running_loop())
+            return
+        display = state.get("model_display") or model
+        label = "continuing previous session" if continue_prev else "fresh session"
+        # The phase is already flipped to "running", so a failed edit must NOT
+        # abort the handler — the thread below is the only thing that will
+        # ever flip it back. A Telegram hiccup (timeout, flood control) here
+        # would otherwise brick the chat in a permanent "busy" state.
+        try:
+            await query.edit_message_text(
+                f"📝 Running ({label}): {task[:200]}  ({provider} · {display})"
+            )
+        except Exception:
+            logger.warning("could not edit continue/fresh prompt", exc_info=True)
+        threading.Thread(
+            target=_run_agent,
+            args=(task, provider, model, chat_id, ctx.bot,
+                  asyncio.get_running_loop(), history, state),
+            daemon=True,
+        ).start()
         return
 
 
@@ -626,12 +762,18 @@ def _monitor_scratchpad(chat_id, bot, loop, stop_event, start_pos):
 
 # ── agent runner (worker thread) ─────────────────────────────────────────────
 
-def _run_agent(task, provider, model, chat_id, bot, loop):
+def _run_agent(task, provider, model, chat_id, bot, loop, prior_history=None,
+               run_state=None):
     """Run the agent and ping the chat when done. Streams scratchpad milestones
     back to the chat live while the agent works. Pops a compact pill so the
     Windows user can see a Telegram task is running, and overlays the main app
     window with a "Currently occupied by Telegram" state. Restores phase to
-    'ready'."""
+    'ready'. prior_history seeds the agent with the previous run's memory
+    (continue-session flow); the finished run's memory is captured back into
+    _chat_state["history"] for the next task. run_state is the chat's state
+    dict at spawn time — the finally block only writes back if it is still
+    the live dict (identity check), so a /reset mid-run can't be undone by
+    this run finishing later."""
     # Compact "Telegram task in progress" indicator + "occupied" overlay on
     # the main window. Both are best-effort — never let UI fluff block the
     # actual task.
@@ -675,6 +817,9 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
     except Exception:
         logger.warning("could not reset milestone scratchpad", exc_info=True)
     start_pos = 0
+    agent = None
+    run_status = "error"
+    run_message = ""
     stop_event = threading.Event()
     monitor = threading.Thread(
         target=_monitor_scratchpad,
@@ -725,6 +870,7 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
             api_key=provider_api_key,
             text_callback=_banner_update,
             cli_callback=coder_mgr.handle_event,
+            prior_history=prior_history,
         )
         # process_request returns {"status", "message"}: "success" only when a
         # `done` action ran, "error" on a critical failure (e.g. the API key is
@@ -736,8 +882,10 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
         stop_event.set()
         monitor.join(timeout=SCRATCHPAD_POLL_SEC + 2)
 
-        status = result.get("status") if isinstance(result, dict) else "success"
-        message = (result.get("message") if isinstance(result, dict) else "") or ""
+        run_status = result.get("status") if isinstance(result, dict) else "success"
+        run_message = (result.get("message") if isinstance(result, dict) else "") or ""
+        status = run_status
+        message = run_message
         if len(message) > 400:  # keep the phone message readable
             message = message[:400] + "…"
 
@@ -753,6 +901,7 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
             _send_chat(bot, chat_id, f"⚠️ Stopped without completing: {message}", loop, wait=True)
     except Exception as e:
         logger.exception("agent error")
+        run_message = str(e)
         stop_event.set()
         monitor.join(timeout=SCRATCHPAD_POLL_SEC + 2)
         _send_chat(bot, chat_id, f"❌ Error: {e}", loop, wait=True)
@@ -777,9 +926,32 @@ def _run_agent(task, provider, model, chat_id, bot, loop):
                     "window.telegramOccupiedHide && window.telegramOccupiedHide()")
         except Exception:
             pass
+        # Capture this run's memory for the next task — on EVERY ending
+        # (success / error / incomplete / exception), matching the desktop
+        # save_run semantics. Built outside the lock (pure function).
+        new_history = None
+        try:
+            if agent is not None:
+                new_history = _build_prior_history(
+                    task, agent.assistant_messages, agent.tool_responses,
+                    run_status, run_message,
+                    prior_task=(prior_history or {}).get("task"),
+                )
+        except Exception:
+            logger.warning("could not capture agent memory", exc_info=True)
         with _state_lock:
             state = _chat_state.get(chat_id)
-            if state is not None and state.get("phase") == "running":
+            # "state is run_state" gates on THIS run still owning the chat:
+            # /reset and /start replace the whole dict, and the user may have
+            # already started a NEW run on the fresh dict while this zombie
+            # was finishing — its phase=="running" belongs to that run, so
+            # writing here would resurrect wiped memory into the new session
+            # and prematurely flip the new run's phase. new_history is None
+            # when the run produced no steps (ctor failure, crash before
+            # step 1) — keep the previous memory instead of wiping it.
+            if state is not None and state is run_state and state.get("phase") == "running":
+                if new_history is not None:
+                    state["history"] = new_history
                 state["phase"] = "ready"
         # Drain one queued task if any — keeps phase='running' if it spawns.
         _maybe_run_next_queued(chat_id, bot, loop)
