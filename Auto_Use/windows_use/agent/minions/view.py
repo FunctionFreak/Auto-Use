@@ -24,12 +24,12 @@ import re
 class MinionResponseFormatter:
     """Validates and normalizes minion JSON responses before they enter agent memory.
 
-    Mirror of CLIAgentResponseFormatter but for the minion's output schema:
-    the minion uses `next_goal` instead of `current_goal` (per its system prompt
-    and the MINION_SCHEMA in llm_provider/llm_manager.py).
+    Mirror of CLIAgentResponseFormatter for the minion's output schema
+    (MINION_SCHEMA in llm_provider/llm_manager.py) — same block set as the
+    CLI agent (thinking, memory, next_goal, action), smaller action union.
     """
 
-    # Required fields for minion schema (differs from CLI agent: next_goal vs current_goal)
+    # Required fields for minion schema
     REQUIRED_FIELDS = ["thinking", "memory", "next_goal", "action"]
 
     @staticmethod

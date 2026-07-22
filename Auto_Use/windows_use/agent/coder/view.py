@@ -27,7 +27,7 @@ class CLIAgentResponseFormatter:
     """Validates and normalizes CLI agent JSON responses before they enter agent memory"""
     
     # Required fields for CLI agent schema
-    REQUIRED_FIELDS = ["thinking", "current_goal", "memory", "action"]
+    REQUIRED_FIELDS = ["thinking", "memory", "next_goal", "action"]
     
     @staticmethod
     def _extract_json(raw_response: str) -> dict | None:
@@ -144,11 +144,35 @@ class CLIAgentResponseFormatter:
         return []
 
     @staticmethod
+    def format_terminal(normalized_response: str) -> str:
+        """Human-readable rendering of a full step for a real terminal (cli.py / main.py) —
+        thinking (hidden on skip steps where it's "null"), memory, next_goal, then the action
+        block. Only used when stdout is a TTY; the app/frontend path uses format_stream_json.
+        On parse error, fall back to the input unchanged.
+        """
+        try:
+            data = json.loads(normalized_response)
+        except Exception:
+            return normalized_response
+
+        parts = []
+        thinking = data.get("thinking")
+        if thinking and str(thinking).strip().lower() != "null":
+            parts.append(f"🧠 thinking:\n{thinking}")
+        if data.get("memory"):
+            parts.append(f"📝 memory: {data.get('memory')}")
+        if data.get("next_goal"):
+            parts.append(f"🎯 next_goal: {data.get('next_goal')}")
+        action = data.get("action", [])
+        parts.append("⚙️  action:\n" + json.dumps(action, indent=2, ensure_ascii=False))
+        return "\n".join(parts)
+
+    @staticmethod
     def format_stream_json(normalized_response: str) -> str:
-        """Per-step payload for the streaming UI terminal — ONLY the action block (a real
-        terminal shows what's being executed, not thinking/goal/memory). The frontend reads
-        `action` from this for both the `>` stream and the tool-icon chain. On parse error,
-        fall back to the input unchanged.
+        """Per-step payload for the streaming UI (app.py, piped subprocess) — ONLY the
+        action block. The frontend reads `action` from this for both the `>` stream and the
+        tool-icon chain. On parse error, fall back to the input unchanged.
+        For a real terminal (cli.py / main.py) use format_terminal instead.
         """
         try:
             json_data = json.loads(normalized_response)

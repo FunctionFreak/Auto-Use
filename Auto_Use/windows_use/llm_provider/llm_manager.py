@@ -50,8 +50,8 @@ CLI_AGENT_SCHEMA = {
         "type": "object",
         "properties": {
             "thinking": {"type": "string"},
-            "current_goal": {"type": "string"},
             "memory": {"type": "string"},
+            "next_goal": {"type": "string"},
             "action": {
                 "type": "array",
                 "items": {
@@ -129,6 +129,18 @@ CLI_AGENT_SCHEMA = {
                         {
                             "type": "object",
                             "properties": {
+                                "type": {"type": "string", "const": "plan"},
+                                "op": {"type": "string", "enum": ["set", "add", "edit"]},
+                                "from": {"type": "integer"},
+                                "to": {"type": "integer"},
+                                "value": {"type": "string"}
+                            },
+                            "required": ["type", "op", "from", "to", "value"],
+                            "additionalProperties": False
+                        },
+                        {
+                            "type": "object",
+                            "properties": {
                                 "type": {"type": "string", "enum": ["web", "todo_list", "update_todo", "wait", "scratchpad", "minion", "exit"]},
                                 "value": {"type": "string"}
                             },
@@ -139,7 +151,7 @@ CLI_AGENT_SCHEMA = {
                 }
             }
         },
-        "required": ["thinking", "current_goal", "memory", "action"],
+        "required": ["thinking", "memory", "next_goal", "action"],
         "additionalProperties": False
     }
 }

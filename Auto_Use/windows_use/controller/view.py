@@ -34,6 +34,7 @@ from .tool import open_on_windows, ShellService
 from .hotkey.service import HotkeyService
 from .tool.web.service import WebService
 from .tool.screenshot import ScreenshotService
+from .tool.plan import PlanService
 from .cli.service import CLIService
 try:
     from app import debug_log, IS_COMPILED, app_data_dir
@@ -75,6 +76,7 @@ class ControllerView:
         self.minion_mode = minion_mode
         self.controller_service = ControllerService(stop_event=stop_event)
         self.task_tracker = TaskTrackerService(cli_mode=cli_mode, session_id=session_id)
+        self.plan_service = PlanService(cli_mode=cli_mode, session_id=session_id)
         self.scratchpad_service = ScratchpadService(cli_mode=cli_mode, session_id=session_id, minion_mode=minion_mode)
         self.hotkey_service = HotkeyService(stop_event=stop_event)
         self.cli_service = CLIService(session_id=session_id) if cli_mode else None
@@ -830,6 +832,25 @@ class ControllerView:
                         "query": minion_query,
                         "session_id": minion_session_id,
                     })
+
+                elif action_type == "plan":
+                    plan_op = action_item.get("op", "set")
+                    success, detail = self.plan_service.apply_op(
+                        plan_op,
+                        action_item.get("value", ""),
+                        action_item.get("from", 0),
+                        action_item.get("to", 0),
+                    )
+                    if success:
+                        result = {"status": "success", "action": "plan_updated", "op": plan_op}
+                        results.append(result)
+                    else:
+                        return {
+                            "status": "error",
+                            "action": "plan_failed",
+                            "op": plan_op,
+                            "message": detail
+                        }
 
                 elif action_type == "todo_list":
                     todo_value = action_item.get("value")
