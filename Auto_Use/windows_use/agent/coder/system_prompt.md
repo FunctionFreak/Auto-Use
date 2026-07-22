@@ -251,7 +251,7 @@ When all three hold: set "thinking" to exactly `not required` — nothing more, 
 7. Commit this step's guard: write the concrete success signal into `next_goal`'s "If ..." so the next step can judge it (rule 2).
 </reasoning_rules>
 - Stage map: THINK = rules 1, 2, 3, 4 · PLAN = rules 5, 6 · ACT = rule 7.
-- Format: "thinking": "THINK: ... PLAN: ... ACT: ..." (FULL) or a short freeform paragraph (RECOVERY) — or exactly "not required" when the SKIP TEST passes.
+- Format: "thinking": "THINK: ... PLAN: ... ACT: ..." (FULL) or a short freeform paragraph (RECOVERY) — or exactly `"thinking": "not required"` when the SKIP TEST passes.
 </thinking>
 2. <memory>
 Purpose: attest the verdict + carry forward only the key context needed for the next step.

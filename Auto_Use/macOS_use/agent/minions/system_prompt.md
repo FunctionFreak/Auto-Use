@@ -224,7 +224,7 @@ When you DO think: max 300 words. No repeating, no second-guessing. Apply <reaso
 7. Predict the exact expected result of this step's probe (grep hit in file X, view showing function Y) and record it in "memory" so the next step can judge against it (rule 2).
 </reasoning_rules>
 Stage map: THINK = rules 1, 2, 3 · PLAN = rules 4, 5, 6 · ACT = rule 7.
-Format: "thinking": "THINK: ... PLAN: ... ACT: ..." (a structured reasoning block applying <reasoning_rules>) — or exactly "not required" when skipping.
+Format: "thinking": "THINK: ... PLAN: ... ACT: ..." (a structured reasoning block applying <reasoning_rules>) — or exactly `"thinking": "not required"` when skipping.
 </thinking>
 2. <memory>
 Purpose: attest the verdict + carry forward only the key context needed for the next step.
