@@ -237,14 +237,15 @@ class AgentService:
             return ""
     
     def _read_plan_from_file(self) -> str:
-        """Read the current plan rendered with [N] line numbers plus its
-        <plan_no=N> revision marker (for <plan> injection)"""
+        """Render the current plan as a complete <plan no="N"> block for injection:
+        the revision number rides on the tag (increments on every plan change) and
+        each line is [N]-numbered like `view`. Returns "" when no plan exists yet."""
         try:
             rendered = self.controller.plan_service.render_plan()
             if not rendered:
                 return ""
             plan_no = self.controller.plan_service.get_plan_no()
-            return f"<plan_no={plan_no}>\n{rendered}"
+            return f'<plan no="{plan_no}">\n{rendered}\n</plan>'
         except Exception:
             return ""
 
@@ -339,7 +340,10 @@ class AgentService:
             if is_first:
                 user_message = f"<user_request>\n{task}\n</user_request>\n\n<agent_sitting>\n{agent_sitting}\n</agent_sitting>"
             else:
-                user_message = f"<user_request>\n{task}\n</user_request>\n\n<todo_list>\n{todo_list}\n</todo_list>\n\n<agent_sitting>\n{agent_sitting}\n</agent_sitting>\n\n<plan>\n{plan_doc}\n</plan>"
+                user_message = f"<user_request>\n{task}\n</user_request>\n\n<todo_list>\n{todo_list}\n</todo_list>\n\n<agent_sitting>\n{agent_sitting}\n</agent_sitting>"
+                # Plan block (self-contained <plan no="N">...</plan>); only present once a plan exists
+                if plan_doc:
+                    user_message += f"\n\n{plan_doc}"
                 
                 # Inject web tool response if pending from previous iteration (Note is already embedded in each result)
                 if self._pending_web_response:

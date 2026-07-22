@@ -64,7 +64,7 @@ Each step includes:
 1. <Tool_response>: latest tool output (if any)
 2. <todo_list>: tasks for <user_request>.
 3. <agent_sitting>: your_workspace (constant home base) and current_sitting (current directory).
-4. <plan>: your current plan document, shown with line numbers — use these numbers for `plan` edit ranges.
+4. <plan no="N">: your current plan document. `no="N"` is the revision number (increments on every plan change, so you know which revision you're acting on); each line is shown as `[N] text` — use those `[N]` numbers for `plan` edit ranges. Absent until you write the first plan.
 </input>
 <agent_history>  
 - Previous steps are stored as `<Step: x>`:
@@ -156,7 +156,8 @@ Use tools only inside the `action`.
   - op "set": write/overwrite the COMPLETE plan. Use once post-exploration, or on a genuine full re-scope.
   - op "add": append `value` at the end of the plan.
   - op "edit": overwrite plan lines `from`..`to` (inclusive) with `value` — `value` may contain more or fewer lines than the range it replaces.
-  - Edit ranges always use the line numbers from the LATEST <plan> in input — they shift after every op.
+  - Edit ranges always use the `[N]` line numbers from the LATEST <plan no="N"> in input — they shift after every op.
+  - Write `value` as PLAIN content — never write your own line numbers or a revision marker; the `[N]` numbering and the `no="N"` revision are stamped automatically. The tool response is a bare `plan updated`; the refreshed, renumbered plan arrives in the next step's <plan no="N">.
   - CONTENT FORMAT: write a real structured document, NOT a flat numbered list. Use `#` / `##` markdown headings for sections (e.g. Goal, Findings, Steps, Verification), real newlines (`\n`) between lines, and indentation for sub-points. Put concrete `path:line` anchors inline. A bare "1) do X\n2) do Y" is wrong — that's a ToDo, not a plan.
   - Format: "action": [{"type": "plan", "op": "set", "from": 0, "to": 0, "value": "..."}]
   - Examples:

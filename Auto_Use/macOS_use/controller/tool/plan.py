@@ -63,7 +63,8 @@ class PlanService:
 
         self.plan_file = os.path.join(self.plan_dir, "plan.md")
         # Revision counter — bumped on every successful op so the agent can
-        # see which plan revision it is acting on (<plan_no=N> in input).
+        # see which plan revision it is acting on (the no="N" attr on the
+        # <plan no="N"> block in its input).
         self.plan_no_file = os.path.join(self.plan_dir, "plan_no.txt")
 
         # Create plan directory if it doesn't exist
