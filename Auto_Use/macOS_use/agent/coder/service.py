@@ -236,12 +236,52 @@ class AgentService:
         except Exception as e:
             return ""
     
+    def _read_plan_from_file(self) -> str:
+        """Read the current plan rendered with [N] line numbers plus its
+        <plan_no=N> revision marker (for <plan> injection)"""
+        try:
+            rendered = self.controller.plan_service.render_plan()
+            if not rendered:
+                return ""
+            plan_no = self.controller.plan_service.get_plan_no()
+            return f"<plan_no={plan_no}>\n{rendered}"
+        except Exception:
+            return ""
+
     def _get_agent_sitting(self) -> str:
         """Get agent workspace and current directory info"""
         workspace = str(self.controller.cli_service.sandbox.sandbox_root)
         current = self.controller.cli_service.sandbox.get_cwd()
         return f"your_workspace: {workspace}\ncurrent_sitting: {current}"
     
+    def _print_start_banner(self):
+        """One-time 'agent started' banner with provider/model — TTY only (cli.py /
+        main.py). Skipped for the piped subprocess (app.py UI) so no protocol noise
+        reaches the frontend reader."""
+        if not sys.stdout.isatty():
+            return
+        bar = "─" * 44
+        safe_print(f"\n{bar}")
+        safe_print("🤖 Auto Use  ·  agent started")
+        safe_print(f"   provider : {self.provider}")
+        safe_print(f"   model    : {self.model}")
+        safe_print(f"{bar}\n")
+
+    def _working_spinner(self, stop_flag):
+        """Cycle a '⚡ Working...' indicator while the LLM call blocks, so the terminal
+        doesn't look frozen. TTY only — the `\\r` overwrite trick only works in a real
+        terminal; in a pipe the partial writes would flood the frontend reader."""
+        dots = ["", ".", "..", "..."]
+        idx = 0
+        while not stop_flag.is_set():
+            sys.stdout.write(f"\r⚡ Working{dots[idx % len(dots)]:<3}")
+            sys.stdout.flush()
+            idx += 1
+            stop_flag.wait(0.4)
+        # Clear the spinner line so the step prints cleanly
+        sys.stdout.write("\r" + " " * 24 + "\r")
+        sys.stdout.flush()
+
     def process_request(self, task: str) -> str:
         """Run the agent loop synchronously. Output streams to stdout for the
         parent main agent's pill UI."""
@@ -249,7 +289,9 @@ class AgentService:
      
     def _run_agent_loop(self, task: str) -> str:
         """Main agentic loop"""
-        
+
+        self._print_start_banner()
+
         step_number = 0
         last_response = None
         is_first = True
@@ -289,14 +331,15 @@ class AgentService:
             # Get agent sitting info
             agent_sitting = self._get_agent_sitting()
             
-            # Read fresh todo
+            # Read fresh todo + plan
             todo_list = self._read_todo_from_file()
-            
+            plan_doc = self._read_plan_from_file()
+
             # Build user message (tool_response now in history, not here)
             if is_first:
                 user_message = f"<user_request>\n{task}\n</user_request>\n\n<agent_sitting>\n{agent_sitting}\n</agent_sitting>"
             else:
-                user_message = f"<user_request>\n{task}\n</user_request>\n\n<todo_list>\n{todo_list}\n</todo_list>\n\n<agent_sitting>\n{agent_sitting}\n</agent_sitting>"
+                user_message = f"<user_request>\n{task}\n</user_request>\n\n<todo_list>\n{todo_list}\n</todo_list>\n\n<agent_sitting>\n{agent_sitting}\n</agent_sitting>\n\n<plan>\n{plan_doc}\n</plan>"
                 
                 # Inject web tool response if pending from previous iteration (Note is already embedded in each result)
                 if self._pending_web_response:
@@ -352,8 +395,19 @@ class AgentService:
                     ]
             
             try:
-                # Call LLM
-                raw_response = self.llm.send_request(messages)
+                # Call LLM — show a working spinner on a TTY so the terminal doesn't
+                # look frozen during the (multi-second) LLM wait.
+                if sys.stdout.isatty():
+                    spinner_stop = threading.Event()
+                    spinner = threading.Thread(target=self._working_spinner, args=(spinner_stop,), daemon=True)
+                    spinner.start()
+                    try:
+                        raw_response = self.llm.send_request(messages)
+                    finally:
+                        spinner_stop.set()
+                        spinner.join(timeout=1)
+                else:
+                    raw_response = self.llm.send_request(messages)
 
                 # Check stop after LLM
                 if self.stop_event and self.stop_event.is_set():
@@ -380,10 +434,14 @@ class AgentService:
                 # Reset consecutive JSON fail counter on success
                 json_fail_count = 0
 
-                # Stream the validated, complete response (action included) to the card's
-                # `>` line. The frontend parses the `action` array out of THIS JSON to drive
-                # the action-icon chain + scratchpad — no extra backend events needed.
-                safe_print(CLIAgentResponseFormatter.format_stream_json(normalized))
+                # Real terminal (cli.py / main.py): print the full step — thinking, memory,
+                # next_goal, action — so the user sees the whole response. Piped subprocess
+                # (app.py UI mode, stdout not a TTY): emit action-only JSON the frontend
+                # parses to drive the action-icon chain + scratchpad.
+                if sys.stdout.isatty():
+                    safe_print(CLIAgentResponseFormatter.format_terminal(normalized))
+                else:
+                    safe_print(CLIAgentResponseFormatter.format_stream_json(normalized))
 
                 # Save TRUE agent memory snapshot
                 self._save_conversation_snapshot(messages, normalized, step_number)
@@ -499,6 +557,15 @@ output: {action_result.get("output", "")}
 </replace>
 </Tool_response>"""
                 
+                elif action_result.get("action") == "plan_updated":
+                    # Bare confirmation only — the refreshed plan arrives in the
+                    # next step's <plan> block, so echoing it here would repeat it.
+                    last_response = """<Tool_response>
+<plan_updated>
+plan updated
+</plan_updated>
+</Tool_response>"""
+
                 elif action_result.get("action") == "multiple":
                     # Format multiple action results with proper newlines
                     formatted_results = []
@@ -550,6 +617,10 @@ command: {result.get("command", "")}
 status: {result.get("status", "")}
 output: {result.get("output", "")}
 </replace>""")
+                        elif result.get("action") == "plan_updated":
+                            formatted_results.append("""<plan_updated>
+plan updated
+</plan_updated>""")
                         elif result.get("action") == "todo_updated":
                             formatted_results.append(f"""<todo_updated>
 task: {result.get("task", "")}

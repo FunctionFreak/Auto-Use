@@ -30,12 +30,12 @@ else:
 
 # Configuration
 PROVIDER = "openrouter"
-MODEL = "gemini-3.1-pro"  # refer to the model name correctly from model_list.txt.
+MODEL = "gemini-3.5-flash"  # refer to the model name correctly from model_list.txt.
 
 # Your task here
 task = """
 
-in auotuse folder update the minimax latest model and kimi k2.7 code from open router in the openrouter mac os autouse
+what is there in github folder  on desktop mcp folder nicley can you please.
 
 """
 
