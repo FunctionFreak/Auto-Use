@@ -25,6 +25,7 @@
 # Keyboard/scroll still use pyautogui (works fine on macOS)
 
 import logging
+import subprocess
 import time
 import pyautogui
 from PIL import ImageGrab
@@ -432,6 +433,37 @@ class ControllerService:
             logger.error(f"Error clicking element {index}: {str(e)}")
             return {"status": "error", "action": "click", "index": index, "message": str(e)}
 
+    def _paste_text(self, text):
+        """Insert `text` verbatim at the focused caret via the clipboard (Cmd+V).
+
+        Used for multi-line content so code editors that auto-indent on Return
+        (CodeMirror/Colab, Monaco) don't compound the indentation already present
+        in `text`. Typing char-by-char would send each '\n' as a Return keypress,
+        the editor would auto-indent the new line, and the value's own leading
+        spaces would stack on top — producing a 4→8→12-space cascade. Pasting
+        inserts the exact characters with no auto-indent.
+
+        The user's previous clipboard text is saved and restored (best-effort).
+        """
+        prev = None
+        try:
+            prev = subprocess.run(["pbpaste"], capture_output=True, timeout=2).stdout
+        except Exception:
+            prev = None
+
+        subprocess.run(["pbcopy"], input=text.encode("utf-8"), timeout=5, check=True)
+        time.sleep(0.05)
+        pyautogui.hotkey('command', 'v')
+        time.sleep(max(0.3, len(text) * 0.005))
+
+        # Restore the prior clipboard, but only when it was non-empty text — so we
+        # don't clobber an image (or other non-text content) the user had copied.
+        if prev:
+            try:
+                subprocess.run(["pbcopy"], input=prev, timeout=5)
+            except Exception:
+                pass
+
     def input(self, index, value):
         """Input text into element by index"""
         try:
@@ -459,15 +491,24 @@ class ControllerService:
             pyautogui.press('backspace')
             time.sleep(0.05)
 
-            # Type the new value character by character
-            is_slow_app = any(app.lower() in self.application_name.lower()
-                             for app in SLOW_TYPING_APPS)
-            interval = 0.05 if is_slow_app else 0.04
-
-            for char in value:
+            # Multi-line values (e.g. code) are pasted verbatim via the clipboard
+            # so auto-indenting editors don't compound the indentation already in
+            # `value` (see _paste_text). Single-line values keep char-by-char
+            # typing, which preserves live autocomplete / search-suggestion
+            # behavior and terminal quirks.
+            if '\n' in value:
                 if self.stop_event and self.stop_event.is_set():
                     return {"status": "stopped", "action": "input", "message": "Stopped by user"}
-                pyautogui.write(char, interval=interval)
+                self._paste_text(value)
+            else:
+                is_slow_app = any(app.lower() in self.application_name.lower()
+                                 for app in SLOW_TYPING_APPS)
+                interval = 0.05 if is_slow_app else 0.04
+
+                for char in value:
+                    if self.stop_event and self.stop_event.is_set():
+                        return {"status": "stopped", "action": "input", "message": "Stopped by user"}
+                    pyautogui.write(char, interval=interval)
 
             logger.info(f"Input '{value}' into element {index}")
 
@@ -710,12 +751,22 @@ class ControllerService:
     def typewrite(self, text):
         """Type text directly into currently focused location (no element targeting)."""
         try:
-            for char in text:
+            # Multi-line: paste verbatim so auto-indenting editors don't compound
+            # the indentation (see _paste_text). Replaces any active selection,
+            # which is exactly what the line-edit workflow expects.
+            if '\n' in text:
                 if self.stop_event and self.stop_event.is_set():
                     logger.info("typewrite interrupted by stop_event")
                     return {"status": "stopped", "action": "typewrite",
                             "message": "Stopped by user"}
-                pyautogui.write(char, interval=0.04)
+                self._paste_text(text)
+            else:
+                for char in text:
+                    if self.stop_event and self.stop_event.is_set():
+                        logger.info("typewrite interrupted by stop_event")
+                        return {"status": "stopped", "action": "typewrite",
+                                "message": "Stopped by user"}
+                    pyautogui.write(char, interval=0.04)
             time.sleep(0.22)
 
             logger.info(f"Canvas input: typed '{text}' ({len(text)} chars)")

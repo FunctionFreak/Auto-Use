@@ -55,29 +55,48 @@ class DomainKnowledgeService:
         return any(keyword in app_lower for keyword in self.browser_keywords)
     
     def _extract_url(self, element_tree: str) -> str:
-        """Extract URL from browser address bar in element tree"""
+        """Extract the browser URL from the element tree (scheme-optional).
+
+        macOS browsers commonly display the address scheme-stripped
+        (e.g. ``github.com/...``), and address-bar field names vary per browser,
+        so we scan every ``valuePattern.value`` field: prefer one whose name looks
+        like an address/search/url/location bar, then fall back to any value that
+        looks like a URL or bare domain. A non-URL result is harmless — it only
+        loads a skill if it matches a known domain in skills.json.
+        """
         try:
-            # Pattern to find address bar element with URL
-            # Looking for: AriaRole="textbox" with name containing "Address" or "search bar"
-            # and extracting valuePattern.value
-            pattern = r'\[(\d+)\]<element name="([^"]*[Aa]ddress[^"]*|[^"]*search bar[^"]*)"[^>]*valuePattern\.value="([^"]*)"'
-            match = re.search(pattern, element_tree)
-            
-            if match:
-                url = match.group(3)
-                return url
-            
-            # Fallback: look for any textbox with http/https URL
-            fallback_pattern = r'valuePattern\.value="(https?://[^"]+)"'
-            fallback_match = re.search(fallback_pattern, element_tree)
-            
-            if fallback_match:
-                return fallback_match.group(1)
-            
+            row_pattern = r'<element name="([^"]*)"[^>]*valuePattern\.value="([^"]*)"'
+
+            candidate = ""
+            for m in re.finditer(row_pattern, element_tree):
+                name, value = m.group(1), m.group(2)
+                if re.search(r'address|search bar|\burl\b|location', name, re.IGNORECASE):
+                    if self._looks_like_url(value):
+                        return value
+                    candidate = candidate or value  # omnibox-named but odd value; hold
+
+            if candidate:
+                return candidate
+
+            # Fallback: any value that looks like a URL / bare domain.
+            for m in re.finditer(r'valuePattern\.value="([^"]*)"', element_tree):
+                if self._looks_like_url(m.group(1)):
+                    return m.group(1)
+
             return ""
         except Exception as e:
             logger.error(f"Error extracting URL: {str(e)}")
             return ""
+
+    def _looks_like_url(self, value: str) -> bool:
+        """Heuristic: does this field value look like a URL or bare domain?"""
+        v = value.strip()
+        if not v or " " in v:
+            return False
+        if v.startswith("http://") or v.startswith("https://"):
+            return True
+        # bare hostname with at least one dot, optional port/path/query/fragment
+        return bool(re.match(r'^[a-zA-Z0-9\-]+(\.[a-zA-Z0-9\-]+)+([/:?#].*)?$', v))
     
     def _normalize_url(self, url: str) -> str:
         """Strip protocol (https://, http://) from URL for comparison"""

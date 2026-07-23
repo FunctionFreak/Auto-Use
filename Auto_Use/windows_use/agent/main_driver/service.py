@@ -39,7 +39,11 @@ from io import BytesIO
 # run ("Previous run concluded.", saved by agent_conversation._build_history with
 # an empty tool slot) gets its slot filled with the NEW run's request, so the
 # persisted memory attributes every run's steps to the request that drove them.
-_BRIDGE_SIGNATURE = '"decision": "Previous run concluded."'
+# New bridges carry the sentence in next_goal (prefix match — the sentence
+# continues); sessions saved before the macOS 4-block redesign carried it in
+# the decision field — detection accepts both.
+_BRIDGE_SIGNATURE = '"next_goal": "Previous run concluded.'
+_BRIDGE_SIGNATURE_LEGACY = '"decision": "Previous run concluded."'
 _REQUEST_MARKER_PREFIX = "<updated_user_request"
 
 def _request_marker(n: int, task: str) -> str:
@@ -493,11 +497,13 @@ class AgentService:
                 # slot with a numbered request marker so this run's task is durably
                 # attributed to the steps that follow it (the filled slot is part
                 # of the persisted lists, so it survives every save/seed cycle).
-                if tool_responses[-1] is None and _BRIDGE_SIGNATURE in assistant_messages[-1]:
+                if tool_responses[-1] is None and (_BRIDGE_SIGNATURE in assistant_messages[-1]
+                                                   or _BRIDGE_SIGNATURE_LEGACY in assistant_messages[-1]):
                     # Next marker number: compression can swallow bridge entries,
                     # so count BOTH remaining bridges and existing marker numbers
                     # and continue past the highest.
-                    n_bridges = sum(1 for m in assistant_messages if _BRIDGE_SIGNATURE in str(m))
+                    n_bridges = sum(1 for m in assistant_messages
+                                    if _BRIDGE_SIGNATURE in str(m) or _BRIDGE_SIGNATURE_LEGACY in str(m))
                     marker_nos = [int(n) for tr in tool_responses if isinstance(tr, str)
                                   for n in re.findall(r'<updated_user_request no="(\d+)">', tr)]
                     tool_responses[-1] = _request_marker(max([n_bridges] + marker_nos) + 1, task)

@@ -79,7 +79,7 @@ def _trim_for_dump(entry: str) -> str:
 
 def make_synthetic_entry(step_k_entry: str, handoff_text: str) -> str:
     """Step K's original JSON with ONLY its 'memory' field replaced by the
-    wrapped handoff — decision/action/eval stay untouched. Unparseable step K
+    wrapped handoff — every other field stays untouched. Unparseable step K
     falls back to a fresh minimal entry (any <Step_no=K /> prefix preserved)."""
     prefix, json_part = _entry_parts(step_k_entry)
     wrapped = wrap_handoff(handoff_text)
@@ -89,9 +89,8 @@ def make_synthetic_entry(step_k_entry: str, handoff_text: str) -> str:
         return prefix + json.dumps(data, indent=2, ensure_ascii=False)
     except Exception:
         return prefix + json.dumps({
-            "decision": "Memory compressed to a handoff document.",
             "memory": wrapped,
-            "next_goal": "Continue the task using the handoff document above.",
+            "next_goal": "Memory compressed to a handoff document; continue the task using it.",
         }, indent=2, ensure_ascii=False)
 
 

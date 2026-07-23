@@ -28,8 +28,6 @@ class AgentResponseFormatter:
     
     FIELD_EMOJIS = {
         "thinking": "🧠 Thinking",
-        "eval": "📝 Eval", 
-        "decision": "👁️ Decision",
         "next_goal": "🎯 Next Goal",
         "memory": "💾 Memory",
         "action": "⚡ Action"
@@ -42,13 +40,13 @@ class AgentResponseFormatter:
         Returns dict if successful, None if not XML format.
         """
         # Check if response contains XML-style tags
-        if not re.search(r'<(thinking|eval|decision|next_goal|memory|action)>', raw_response):
+        if not re.search(r'<(thinking|next_goal|memory|action)>', raw_response):
             return None
-        
+
         json_data = {}
-        
+
         # Simple fields - extract content between tags
-        simple_fields = ["thinking", "eval", "decision", "next_goal", "memory"]
+        simple_fields = ["thinking", "next_goal", "memory"]
         for field in simple_fields:
             match = re.search(rf'<{field}>(.*?)</{field}>', raw_response, re.DOTALL)
             if match:
@@ -190,16 +188,17 @@ class AgentResponseFormatter:
                 return (False, None, raw_response)
             
             # Ensure all required fields are present (NEW FORMAT)
+            # eval/decision no longer exist in ANY mode — strip any a legacy-prompted
+            # model emits (groq runs the schema with strict:False) so they never
+            # re-enter history; never pad them back in.
+            for f in ("eval", "decision"):
+                json_data.pop(f, None)
             if speed == "fast":
-                # Fast mode: reasoning fields must be GENUINELY absent from agent
-                # memory — strip any the model emitted anyway (groq runs the schema
-                # with strict:False; the XML fallback extracts whatever tags exist).
-                for f in ("thinking", "eval", "decision"):
-                    json_data.pop(f, None)
+                # Fast mode: thinking must also be GENUINELY absent from agent memory.
+                json_data.pop("thinking", None)
                 required_fields = ["next_goal", "memory", "action"]
             else:
-                required_fields = ["thinking", "eval", "decision",
-                                 "next_goal", "memory", "action"]
+                required_fields = ["thinking", "memory", "next_goal", "action"]
             
             for field in required_fields:
                 if field not in json_data:

@@ -265,9 +265,8 @@ class ConversationService:
         # resume it becomes the most-recent step, so the agent's builder replays
         # every real step's tool result beneath it.
         full_assistant.append(json.dumps({
-            "decision": "Previous run concluded.",
             "memory": done_message,
-            "next_goal": "Awaiting the user's next request; resume from this point.",
+            "next_goal": "Previous run concluded. Awaiting the user's next request; resume from this point.",
         }, ensure_ascii=False, indent=2))
         tools.append(None)
         return {

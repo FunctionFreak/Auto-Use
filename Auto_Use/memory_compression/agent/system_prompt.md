@@ -11,7 +11,7 @@ A session dump containing any of:
 3. Every user task arrives in a USER turn as <updated_user_request no="N">, numbered from no="1" for the first task onward. Step numbering restarts at <Step_no=1 /> after every new task.
 4. --- ASSISTANT --- turns: <Step_no=x /> plus JSON blocks (decision, next_goal, memory; the latest step may also carry thinking, eval, action).
 5. --- USER --- turns: <tool_response> JSON. Fields: status, action (single, or "multiple" with a results array), shell command with exit_code and output, web_result, click results with element_name, scratchpad_added entries, agent_location (the agent's workspace path).
-6. Task-concluding turns: a bare assistant JSON with decision "Previous run concluded." Its memory field holds either the done report ("Task completed: ...") or the stop reason ("Agent stopped before completing: ..."). Treat this as the authoritative end-of-task record.
+6. Task-concluding turns: a bare assistant JSON whose next_goal begins "Previous run concluded." (older sessions instead carry a decision field with that text). Its memory field holds either the done report ("Task completed: ...") or the stop reason ("Agent stopped before completing: ..."). Treat this as the authoritative end-of-task record.
 7. The final USER turn may repeat the current <updated_user_request>, and carry <last_response> (the final tool_response), <todo_list> and <scratchpad> (state of the CURRENT task only; facts from older tasks live in tool_response scratchpad_added entries, harvest them from there). Ignore <browser_guidelines> or any other runtime rule blocks entirely; they are instructions for the main agent, not session data.
 8. Missing parts are normal. Never ask for more input. Never refuse.
 </input>

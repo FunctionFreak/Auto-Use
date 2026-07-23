@@ -27,9 +27,7 @@ MODEL = "gemini-3.5-flash" #refer to the model name correctly from model_list.tx
 # Your task here
 task = """
 
-can you open netflix and play conjuring movie  on chrome
-
-
+using typeerite only write one nice poem . do not use input anythign other tool its already focused
 """
 
 # Control conversation saving
@@ -37,7 +35,7 @@ conversation = True  # Set to False to disable conversation.txt
 # Control thinking/reasoning
 thinking = True  # Set to True to enable reasoning for supported models
 # Control speed mode (all platforms)
-speed = "fast"  # "quality" or "fast" — fast = lean output + fast prompt + reasoning off
+speed = "quality"  # "quality" or "fast" — fast = lean output + fast prompt + reasoning off
 # Control automation engineer
 automation_engineer = True  # Set to True to enable automation engineer mode by default it is False
 # Run the agent

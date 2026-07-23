@@ -24,6 +24,7 @@ warnings.filterwarnings("ignore", category=SyntaxWarning, module="pywinauto")
 import win32api
 import win32con
 import pyautogui
+import pyperclip
 from interception import Interception, MouseStroke
 from PIL import ImageGrab
 import numpy as np
@@ -507,10 +508,45 @@ class ControllerService:
                 "message": str(e)
             }
     
+    def _paste_text(self, text, element=None):
+        """Insert `text` verbatim via the clipboard (Ctrl+V).
+
+        Used for multi-line content so code editors that auto-indent on Enter
+        (CodeMirror/Colab, Monaco) don't compound the indentation already present
+        in `text`. Typing char-by-char sends each newline as an Enter keypress and
+        the editor stacks its own indentation on top of the value's leading
+        spaces — a 4→8→12-space cascade. Pasting inserts the exact characters
+        with no auto-indent.
+
+        `element` (a pywinauto wrapper) targets the paste at a specific control;
+        when None, Ctrl+V is sent to the focused location. The user's previous
+        clipboard text is saved and restored (best-effort).
+        """
+        try:
+            prev = pyperclip.paste()
+        except Exception:
+            prev = None
+
+        pyperclip.copy(text)
+        time.sleep(0.05)
+        if element is not None:
+            element.type_keys('^v', with_spaces=True)
+        else:
+            pyautogui.hotkey('ctrl', 'v')
+        time.sleep(max(0.3, len(text) * 0.005))
+
+        # Restore the prior clipboard, but only when it was non-empty text — so we
+        # don't clobber an image (e.g. a copied screenshot) the user had copied.
+        if prev:
+            try:
+                pyperclip.copy(prev)
+            except Exception:
+                pass
+
     def input(self, index, value):
         """
         Input text into element by index
-        
+
         Args:
             index (str): The element index to input into
             value (str): The text to input
@@ -553,21 +589,30 @@ class ControllerService:
             element.type_keys('{BACKSPACE}', with_spaces=True)  # Backspace to delete
             time.sleep(0.05)
             
-            # Check if current app needs slow typing
-            is_slow_app = any(app.lower() in self.application_name.lower() for app in SLOW_TYPING_APPS)
-            
-            # Escape special characters for pywinauto (parentheses, ^, +, %, ~, {, })
-            escaped_value = self._escape_for_type_keys(value)
-            
-            if is_slow_app:
-                # Slow typing for legacy apps - character by character
-                logger.info(f"Using slow typing mode for '{self.application_name}'")
-                for char in escaped_value:
-                    element.type_keys(char, with_spaces=True, with_newlines=True)
-                    time.sleep(0.05)  # 50ms delay between characters
+            # Multi-line values (e.g. code) are pasted verbatim via the clipboard
+            # so auto-indenting editors don't compound the indentation already in
+            # `value` (see _paste_text). Single-line values keep type_keys typing,
+            # which preserves live autocomplete / search-suggestion behavior.
+            if '\n' in value:
+                if self.stop_event and self.stop_event.is_set():
+                    return {"status": "stopped", "action": "input", "message": "Stopped by user"}
+                self._paste_text(value, element=element)
             else:
-                # Fast typing using UIA for modern apps
-                element.type_keys(escaped_value, with_spaces=True, with_newlines=True)
+                # Check if current app needs slow typing
+                is_slow_app = any(app.lower() in self.application_name.lower() for app in SLOW_TYPING_APPS)
+
+                # Escape special characters for pywinauto (parentheses, ^, +, %, ~, {, })
+                escaped_value = self._escape_for_type_keys(value)
+
+                if is_slow_app:
+                    # Slow typing for legacy apps - character by character
+                    logger.info(f"Using slow typing mode for '{self.application_name}'")
+                    for char in escaped_value:
+                        element.type_keys(char, with_spaces=True, with_newlines=True)
+                        time.sleep(0.05)  # 50ms delay between characters
+                else:
+                    # Fast typing using UIA for modern apps
+                    element.type_keys(escaped_value, with_spaces=True, with_newlines=True)
             
             logger.info(f"Input '{value}' into element {index}")
             
@@ -1081,12 +1126,21 @@ class ControllerService:
             return kernel_typewrite(text, stop_event=self.stop_event)
 
         try:
-            # Type character by character so we can check stop_event
-            for char in text:
+            # Multi-line: paste verbatim so auto-indenting editors don't compound
+            # the indentation (see _paste_text). Replaces any active selection,
+            # which is exactly what the line-edit workflow expects.
+            if '\n' in text:
                 if self.stop_event and self.stop_event.is_set():
-                    logger.info("typewrite (pyautogui) interrupted by stop_event")
+                    logger.info("typewrite (paste) interrupted by stop_event")
                     return {"status": "stopped", "action": "typewrite", "message": "Stopped by user"}
-                pyautogui.write(char, interval=0.04)
+                self._paste_text(text)
+            else:
+                # Type character by character so we can check stop_event
+                for char in text:
+                    if self.stop_event and self.stop_event.is_set():
+                        logger.info("typewrite (pyautogui) interrupted by stop_event")
+                        return {"status": "stopped", "action": "typewrite", "message": "Stopped by user"}
+                    pyautogui.write(char, interval=0.04)
             time.sleep(0.22)
             
             logger.info(f"Canvas input: typed '{text}' ({len(text)} chars)")

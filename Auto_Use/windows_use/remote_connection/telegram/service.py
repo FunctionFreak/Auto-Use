@@ -275,9 +275,9 @@ def _build_prior_history(task, assistant_messages, tool_responses,
     surface deliberately avoids. Packages a finished run's memory lists into
     the prior_history dict AgentService expects, capped with the synthetic
     terminal bridge step + None tool slot. The bridge JSON must contain
-    _BRIDGE_SIGNATURE ('"decision": "Previous run concluded."', main_driver
-    service.py:42) verbatim, or the <updated_user_request> run-marker logic
-    silently stops firing on resume. Returns None when the run produced no
+    main_driver's _BRIDGE_SIGNATURE ('"next_goal": "Previous run concluded.')
+    verbatim, or the <updated_user_request> run-marker logic silently stops
+    firing on resume. Returns None when the run produced no
     steps — the caller keeps the previous memory then. prior_task freezes the
     ORIGINAL run-1 objective across continuations."""
     full_assistant = list(assistant_messages or [])
@@ -296,9 +296,8 @@ def _build_prior_history(task, assistant_messages, tool_responses,
     else:
         done_message = f"Agent stopped before completing: {message}".strip().rstrip(":")
     full_assistant.append(json.dumps({
-        "decision": "Previous run concluded.",
         "memory": done_message,
-        "next_goal": "Awaiting the user's next request; resume from this point.",
+        "next_goal": "Previous run concluded. Awaiting the user's next request; resume from this point.",
     }, ensure_ascii=False, indent=2))
     tools.append(None)
     return {

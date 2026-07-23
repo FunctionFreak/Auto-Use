@@ -681,9 +681,22 @@ def walk(element, results, depth, screen, clip=None, parent_frame=None,
                                 elem_pid = 0
                         except Exception:
                             elem_pid = 0
+                        # Capture the element's value (URL for the omnibox, typed
+                        # text for inputs) for single-line value-bearing controls —
+                        # mirrors the Windows scanner's ValuePattern read. AXTextArea
+                        # is deliberately excluded so multi-line editors (code cells /
+                        # documents) don't dump their whole contents into the tree.
+                        value = None
+                        if role_str in ("AXTextField", "AXComboBox"):
+                            raw_val = ax_attr(element, "AXValue")
+                            if raw_val is not None:
+                                v = str(raw_val).replace("\n", " ").strip()
+                                if v and v.lower() != label.lower():
+                                    value = v[:200]  # safety cap (domain is at front)
                         results.append({
                             "type": role_str,
                             "label": label,
+                            "value": value,
                             "x": frame["x"],
                             "y": frame["y"],
                             "width": frame["width"],
@@ -1546,7 +1559,7 @@ class UIElementScanner:
                 "type": clean_type,
                 "active": True,
                 "index": None,  # assigned after position sorting
-                "value": None,
+                "value": e.get("value"),
                 "actions": None,
                 "visibility": vis,
                 "clipped_by": None,
