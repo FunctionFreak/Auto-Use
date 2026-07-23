@@ -39,11 +39,8 @@ from io import BytesIO
 # run ("Previous run concluded.", saved by agent_conversation._build_history with
 # an empty tool slot) gets its slot filled with the NEW run's request, so the
 # persisted memory attributes every run's steps to the request that drove them.
-# New bridges carry the sentence in next_goal (prefix match — the sentence
-# continues); sessions saved before the macOS 4-block redesign carried it in
-# the decision field — detection accepts both.
+# The sentence rides in the bridge's next_goal (prefix match — it continues).
 _BRIDGE_SIGNATURE = '"next_goal": "Previous run concluded.'
-_BRIDGE_SIGNATURE_LEGACY = '"decision": "Previous run concluded."'
 _REQUEST_MARKER_PREFIX = "<updated_user_request"
 
 def _request_marker(n: int, task: str) -> str:
@@ -347,23 +344,6 @@ class AgentService:
                     return response_json
             return response_json
 
-    def _remove_thinking_from_response(self, response_json: str) -> str:
-        """Remove 'thinking' field from assistant response to save tokens in history"""
-        try:
-            response_data = json.loads(response_json)
-            
-            # Remove thinking field if it exists
-            if "thinking" in response_data:
-                del response_data["thinking"]
-            
-            # Remove eval field if it exists
-            if "eval" in response_data:
-                del response_data["eval"]
-            
-            return json.dumps(response_data, indent=2, ensure_ascii=False)
-        except Exception:
-            return response_json
-
     def _tool_response_for_memory(self, action_result: dict) -> dict:
         """Build the compact tool_response preserved in agent memory for a step.
 
@@ -417,17 +397,17 @@ class AgentService:
         return json.dumps(data, indent=2, ensure_ascii=False)
 
     def _trim_history_entry(self, entry: str) -> str:
-        """Trim an OLDER history step for context: drop 'thinking', 'eval', and
-        'action' (keep decision/memory/next_goal). Only the most recent step is kept
-        full so the agent retains its latest reasoning; everything older is trimmed.
-        Handles the leading '<Step_no=N />' marker.
+        """Trim an OLDER history step for context: drop 'action' only.
+        'thinking' is RETAINED in history ("not required" on skip steps is ~2
+        tokens; FULL thinking is the durable route rationale the prompt tells the
+        agent to consult when re-routing). Handles the leading
+        '<Step_no=N />' marker.
         """
         m = re.match(r'(<Step_no=\d+ />\n)(.*)', entry, re.DOTALL)
         prefix, json_part = (m.group(1), m.group(2)) if m else ("", entry)
         try:
             data = json.loads(json_part)
-            for field in ("thinking", "eval", "action"):
-                data.pop(field, None)
+            data.pop("action", None)
             return prefix + json.dumps(data, indent=2, ensure_ascii=False)
         except Exception:
             return entry
@@ -497,13 +477,11 @@ class AgentService:
                 # slot with a numbered request marker so this run's task is durably
                 # attributed to the steps that follow it (the filled slot is part
                 # of the persisted lists, so it survives every save/seed cycle).
-                if tool_responses[-1] is None and (_BRIDGE_SIGNATURE in assistant_messages[-1]
-                                                   or _BRIDGE_SIGNATURE_LEGACY in assistant_messages[-1]):
+                if tool_responses[-1] is None and _BRIDGE_SIGNATURE in assistant_messages[-1]:
                     # Next marker number: compression can swallow bridge entries,
                     # so count BOTH remaining bridges and existing marker numbers
                     # and continue past the highest.
-                    n_bridges = sum(1 for m in assistant_messages
-                                    if _BRIDGE_SIGNATURE in str(m) or _BRIDGE_SIGNATURE_LEGACY in str(m))
+                    n_bridges = sum(1 for m in assistant_messages if _BRIDGE_SIGNATURE in str(m))
                     marker_nos = [int(n) for tr in tool_responses if isinstance(tr, str)
                                   for n in re.findall(r'<updated_user_request no="(\d+)">', tr)]
                     tool_responses[-1] = _request_marker(max([n_bridges] + marker_nos) + 1, task)
@@ -576,12 +554,12 @@ class AgentService:
             
             # Handle UAC secure desktop detection
             if uac_detected:
-                print("🔒 UAC detected - asking agent for decision")
+                print("🔒 UAC detected - asking agent to accept or decline")
                 image_sent = False
                 formatted_element_tree = ""
                 user_message = """<UAC_Trigger>
 A Windows UAC prompt is blocking the screen. Based on your previous actions, do you want to allow this?
-Respond with "action": [{"type": "hotkey", "value": "alt+y"}] to accept or "action": [{"type": "hotkey", "value": "alt+n"}] to decline. Skip visual_decision analysis.
+Respond with "action": [{"type": "hotkey", "value": "alt+y"}] to accept or "action": [{"type": "hotkey", "value": "alt+n"}] to decline. No screenshot or element tree is provided this step - set "thinking" to "not required" and answer with the hotkey action only.
 </UAC_Trigger>"""
             
             elif not uac_detected:
@@ -797,13 +775,13 @@ No image and element tree provided. Focus on digesting the web response below.
             #   system, then for each past step:  assistant(step) -> user(tool_response),
             #   and finally the current user message (live screen + <last_response>).
             #
-            # Sliding-window trim: only the MOST RECENT past step keeps its full
-            # thinking/eval/action; every older step is trimmed to
-            # decision/memory/next_goal (_trim_history_entry), so the agent always sees
-            # its latest reasoning in full and just the outline of older steps.
-            # Tool results stay on the USER side (correct role -> clean eval, no schema
-            # leakage). The most recent step's result is NOT re-emitted here — it already
-            # rides in the current user message as <last_response>.
+            # Sliding-window trim: only the MOST RECENT past step keeps its 'action';
+            # every older step is trimmed to thinking/memory/next_goal
+            # (_trim_history_entry) — thinking is retained as the durable route
+            # rationale, actions are outlined by their <tool_response> turns.
+            # Tool results stay on the USER side (correct role -> clean verification, no
+            # schema leakage). The most recent step's result is NOT re-emitted here — it
+            # already rides in the current user message as <last_response>.
             messages = [
                 {"role": "system", "content": self.system_prompt}
             ]
@@ -919,9 +897,9 @@ No image and element tree provided. Focus on digesting the web response below.
                 # this step's response — a true peek into agent memory.
                 self._save_conversation(messages, normalized_json, image_sent, step_number)
 
-                # Store the FULL response (thinking/eval/action included). The sliding-window
-                # trim at send time keeps it full only while it's the most recent step, then
-                # trims thinking/eval/action once it's older.
+                # Store the FULL response (action included). The sliding-window trim at
+                # send time keeps it full only while it's the most recent step, then drops
+                # 'action' once it's older — thinking/memory/next_goal are retained.
                 assistant_messages.append(f"<Step_no={step_number} />\n{normalized_json}")
                 # Keep tool_responses aligned 1:1 with assistant_messages; filled in after the
                 # action runs below (stays None for a step that takes no action).

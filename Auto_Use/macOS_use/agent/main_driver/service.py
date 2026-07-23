@@ -39,11 +39,8 @@ from io import BytesIO
 # run ("Previous run concluded.", saved by agent_conversation._build_history with
 # an empty tool slot) gets its slot filled with the NEW run's request, so the
 # persisted memory attributes every run's steps to the request that drove them.
-# New bridges carry the sentence in next_goal (prefix match — the sentence
-# continues); sessions saved before the 4-block redesign carried it in the
-# now-removed decision field — detection accepts both.
+# The sentence rides in the bridge's next_goal (prefix match — it continues).
 _BRIDGE_SIGNATURE = '"next_goal": "Previous run concluded.'
-_BRIDGE_SIGNATURE_LEGACY = '"decision": "Previous run concluded."'
 _REQUEST_MARKER_PREFIX = "<updated_user_request"
 
 def _request_marker(n: int, task: str) -> str:
@@ -408,16 +405,14 @@ class AgentService:
         """Trim an OLDER history step for context: drop 'action' only.
         'thinking' is RETAINED in history ("not required" on skip steps is ~2
         tokens; FULL thinking is the durable route rationale the prompt tells the
-        agent to consult when re-routing). 'eval' is popped defensively for
-        entries replayed from old-format sessions. Handles the leading
+        agent to consult when re-routing). Handles the leading
         '<Step_no=N />' marker.
         """
         m = re.match(r'(<Step_no=\d+ />\n)(.*)', entry, re.DOTALL)
         prefix, json_part = (m.group(1), m.group(2)) if m else ("", entry)
         try:
             data = json.loads(json_part)
-            for field in ("eval", "action"):
-                data.pop(field, None)
+            data.pop("action", None)
             return prefix + json.dumps(data, indent=2, ensure_ascii=False)
         except Exception:
             return entry
@@ -487,13 +482,11 @@ class AgentService:
                 # slot with a numbered request marker so this run's task is durably
                 # attributed to the steps that follow it (the filled slot is part
                 # of the persisted lists, so it survives every save/seed cycle).
-                if tool_responses[-1] is None and (_BRIDGE_SIGNATURE in assistant_messages[-1]
-                                                   or _BRIDGE_SIGNATURE_LEGACY in assistant_messages[-1]):
+                if tool_responses[-1] is None and _BRIDGE_SIGNATURE in assistant_messages[-1]:
                     # Next marker number: compression can swallow bridge entries,
                     # so count BOTH remaining bridges and existing marker numbers
                     # and continue past the highest.
-                    n_bridges = sum(1 for m in assistant_messages
-                                    if _BRIDGE_SIGNATURE in str(m) or _BRIDGE_SIGNATURE_LEGACY in str(m))
+                    n_bridges = sum(1 for m in assistant_messages if _BRIDGE_SIGNATURE in str(m))
                     marker_nos = [int(n) for tr in tool_responses if isinstance(tr, str)
                                   for n in re.findall(r'<updated_user_request no="(\d+)">', tr)]
                     tool_responses[-1] = _request_marker(max([n_bridges] + marker_nos) + 1, task)

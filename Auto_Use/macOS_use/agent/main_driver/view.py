@@ -188,13 +188,10 @@ class AgentResponseFormatter:
                 return (False, None, raw_response)
             
             # Ensure all required fields are present (NEW FORMAT)
-            # eval/decision no longer exist in ANY mode — strip any a legacy-prompted
-            # model emits (groq runs the schema with strict:False) so they never
-            # re-enter history; never pad them back in.
-            for f in ("eval", "decision"):
-                json_data.pop(f, None)
             if speed == "fast":
-                # Fast mode: thinking must also be GENUINELY absent from agent memory.
+                # Fast mode: thinking must be GENUINELY absent from agent memory —
+                # strip it if the model emitted it anyway (groq runs the schema
+                # with strict:False).
                 json_data.pop("thinking", None)
                 required_fields = ["next_goal", "memory", "action"]
             else:
