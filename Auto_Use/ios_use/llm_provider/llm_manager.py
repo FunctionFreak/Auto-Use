@@ -416,8 +416,13 @@ class LLMManager:
                 vertex_project_id = None
                 vertex_location = None
                 try:
-                    from pathlib import Path
-                    key_file = Path(__file__).parent.parent / "api_key" / "api_key.txt"
+                    # autouse_data/api_key/api_key.txt — outside the install
+                    # folder, and the SAME file the Settings panel writes. The
+                    # old walk stopped one level short at ios_use/api_key/, a
+                    # folder that never existed, so Vertex config always read
+                    # back empty here.
+                    from Auto_Use import api_key_file
+                    key_file = api_key_file()
                     if key_file.exists():
                         with open(key_file, 'r', encoding='utf-8') as f:
                             for line in f:

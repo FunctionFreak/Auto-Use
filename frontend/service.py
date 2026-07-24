@@ -47,6 +47,9 @@ from pathlib import Path
 
 from flask import Flask, jsonify, send_from_directory
 
+# Where the user's data lives (autouse_data/, outside the install folder).
+from Auto_Use import api_key_file
+
 # Resumable chat memory + per-chat token tracker. Platform-agnostic, pure-stdlib.
 from Auto_Use.agent_conversation.service import conversation
 from Auto_Use.memory_compression.memory_tracker import MemoryTracker
@@ -767,8 +770,11 @@ EXTRA_KEYS = ['VERTEX_PROJECT_ID', 'VERTEX_LOCATION']
 
 
 def get_api_key_file():
-    """Get path to api_key.txt (lives at Auto_Use/api_key/, shared across platforms)"""
-    return get_auto_use_path() / "api_key" / "api_key.txt"
+    """Path to api_key.txt — autouse_data/api_key/, OUTSIDE the install folder so
+    an uninstall/reinstall no longer wipes every API key. Shared across
+    platforms; resolved in Auto_Use/__init__.py so the Settings panel, the
+    Telegram bot and each llm_provider can't disagree about it."""
+    return api_key_file()
 
 
 def read_api_keys():

@@ -64,19 +64,15 @@ logger = logging.getLogger(__name__)
 # env-loading concern; keeping the bot self-contained against api_key.txt
 # avoids two-files-of-record confusion.
 #
-# Resolve api_key.txt the same way app.py's get_auto_use_path() does: in a
-# compiled/frozen build __file__ points INSIDE the bundle, so the parents[4]
-# walk would miss the editable api_key.txt that lives next to the executable
-# (the one the Settings panel and the regular agent use). Fall back to the
-# source-tree path in dev (python app.py).
-_IS_COMPILED = getattr(sys, "frozen", False) or "__compiled__" in globals()
-if _IS_COMPILED:
-    _API_KEY_FILE = Path(sys.executable).parent / "Auto_Use" / "api_key" / "api_key.txt"
-else:
-    # service.py → telegram → remote_connection → macOS_use → Auto_Use → repo root
-    _API_KEY_FILE = (
-        Path(__file__).resolve().parents[4] / "Auto_Use" / "api_key" / "api_key.txt"
-    )
+# api_key.txt now lives in autouse_data/api_key/, OUTSIDE the install folder, so
+# trashing AutoUse.app no longer wipes the bot token along with every API key.
+# Auto_Use/__init__.py owns that resolution for the whole app — the Settings
+# panel, the agent's llm_provider and this bot all call the same function, so
+# they cannot drift onto different files (the old __file__-walk here had to
+# special-case the compiled build for exactly that reason).
+from Auto_Use import api_key_file
+
+_API_KEY_FILE = api_key_file()
 
 # Agent writes per-step "milestone" lines here. We tail this file during a
 # task and forward each new line back to the user's Telegram chat so they

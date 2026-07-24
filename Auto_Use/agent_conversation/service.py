@@ -64,7 +64,6 @@ log adds the system prompt for readability only, supplied by app.py at export.)
 
 import os
 import re
-import sys
 import json
 import time
 import shutil
@@ -74,83 +73,9 @@ from pathlib import Path
 
 logger = logging.getLogger("agent_conversation")
 
-# =============================================================================
-# WHERE the user's data lives
-# =============================================================================
-# User data must NOT sit inside the install folder — the uninstaller deletes all
-# of {app}. Everything the user creates goes in one folder no installer owns:
-#
-#     <base>/autouse_data/agent_conversation/
-#
-#     base = Path.home()   packaged build   -> C:/Users/<u>/autouse_data
-#                                           -> /Users/<u>/autouse_data on macOS
-#     base = <repo root>   `python app.py`  -> <repo>/autouse_data
-#
-# Stdlib only, and NEVER print(): AutoUse re-execs itself as --banner-mode, which
-# speaks a JSON-per-line protocol on stdout, and sys.stdout can be None at import
-# time in the Windows GUI-subsystem binary. Log to `logger` (stderr) instead.
-#
-# Also never use the builtin open() on a path under autouse_data: compiled builds
-# monkey-patch builtins.open to resolve embedded resources by path suffix
-# (frontend/service.py setup_embedded_resources), and a matching write is
-# silently swallowed into a StringIO. Use Path.read_bytes / write_bytes /
-# os.replace here.
-
-DATA_DIR_NAME = "autouse_data"
-
-# Absolute-path override; wins over the rules below. The --cli-mode /
-# --minion-mode / --banner-mode children are spawned with os.environ.copy(), so
-# they inherit it and parent + children can never disagree on the data root.
-ENV_DATA_DIR = "AUTOUSE_DATA_DIR"
-
-# Compiled (Nuitka) binary vs dev run — mirrors the detection in app.py.
-_IS_COMPILED = bool(getattr(sys, "frozen", False)) or ("__compiled__" in globals())
-
-# <repo>/Auto_Use/agent_conversation/service.py -> <repo>. __file__-based, NEVER
-# cwd-based: the cli / minion children are spawned with no explicit cwd.
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-
-
-def _home_dir() -> Path:
-    """The user's home. Path.home() honours USERPROFILE on Windows."""
-    try:
-        return Path.home()
-    except Exception:
-        return Path(os.path.expanduser("~"))
-
-
-def _base_dir() -> Path:
-    """Parent folder that holds autouse_data/ (not created here)."""
-    if _IS_COMPILED:
-        return _home_dir()
-    # Dev = the checkout this file lives in. Belt-and-braces: if the compiled
-    # probe above ever fails inside a packaged build, a dist folder has no
-    # app.py at the repo root — so fall back to home rather than silently
-    # writing the user's chats back into the install folder, which is the exact
-    # bug this indirection exists to fix.
-    if (_REPO_ROOT / "app.py").is_file():
-        return _REPO_ROOT
-    return _home_dir()
-
-
-def _ensure(p: Path) -> Path:
-    """mkdir -p, best effort. Every caller already guards its own reads and
-    writes, so a read-only or full disk degrades to 'no chats' rather than
-    crashing the GUI on startup."""
-    try:
-        p.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        logger.exception("mkdir %s", p)
-    return p
-
-
-def data_root() -> Path:
-    """<home>/autouse_data (packaged) or <repo>/autouse_data (dev)."""
-    # A blank/whitespace override must read as UNSET: Path("") resolves to ".",
-    # and delete_session() rmtree's paths under this root.
-    override = (os.environ.get(ENV_DATA_DIR) or "").strip()
-    root = Path(override).expanduser() if override else _base_dir() / DATA_DIR_NAME
-    return _ensure(root)
+# Where the user's data lives — one definition for the whole app, in the package
+# root, so chats / api keys / everything else can never disagree about it.
+from Auto_Use import data_root, install_dir, _ensure
 
 
 class ConversationService:
@@ -176,6 +101,9 @@ class ConversationService:
 
     def _index_file(self) -> Path:
         return self.root() / "index.json"
+
+    def _is_safe_id(self, session_id) -> bool:
+        return bool(self._SAFE_ID.match(str(session_id)))
 
     def _session_dir(self, session_id) -> Path:
         sid = str(session_id)
@@ -213,8 +141,7 @@ class ConversationService:
 
     def _legacy_root(self) -> Path:
         """Where root() used to point before the move to autouse_data/."""
-        base = Path(sys.executable).resolve().parent if _IS_COMPILED else _REPO_ROOT
-        return base / "Auto_Use" / "agent_conversation"
+        return install_dir() / "Auto_Use" / "agent_conversation"
 
     @staticmethod
     def _read_bytes(p: Path):
@@ -556,7 +483,13 @@ class ConversationService:
           - otherwise -> fresh start: mint a new id and seed its index entry so
             the sidebar shows it immediately. prior_history is None.
         """
-        if req_session_id and req_session_id != "new" and self._session_dir(req_session_id).exists():
+        # A malformed id (stale/corrupt client state) is treated as "no such
+        # session" and falls through to a fresh start, exactly as it did before
+        # _session_dir began rejecting unsafe ids — starting a run must never
+        # fail just because the client sent a junk id.
+        if (req_session_id and req_session_id != "new"
+                and self._is_safe_id(req_session_id)
+                and self._session_dir(req_session_id).exists()):
             sid = str(req_session_id)
             return sid, self._read_session(sid)
         sid = self._new_id()
@@ -683,6 +616,12 @@ class ConversationService:
 
     def delete_session(self, session_id) -> bool:
         """Remove a session's folder and its index entry (idempotent)."""
+        # Nothing with a malformed id can exist on disk, so refuse quietly
+        # rather than letting _session_dir raise into the handler below and
+        # log a traceback for what is simply a bad request.
+        if not self._is_safe_id(session_id):
+            logger.warning("delete_session: ignoring unsafe id %r", session_id)
+            return False
         try:
             d = self._session_dir(session_id)
             if d.exists():

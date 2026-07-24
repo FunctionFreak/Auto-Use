@@ -534,9 +534,10 @@ class LLMManager:
                 vertex_project_id = None
                 vertex_location = None
                 try:
-                    from pathlib import Path
-                    # llm_manager.py -> llm_provider -> windows_use -> Auto_Use / api_key / api_key.txt
-                    key_file = Path(__file__).parent.parent.parent / "api_key" / "api_key.txt"
+                    # autouse_data/api_key/api_key.txt — outside the install
+                    # folder, and the SAME file the Settings panel writes.
+                    from Auto_Use import api_key_file
+                    key_file = api_key_file()
                     if key_file.exists():
                         with open(key_file, 'r', encoding='utf-8') as f:
                             for line in f:
