@@ -27,7 +27,13 @@ button, input, textarea, select, a, [role="button"],
     z-index: 99999;
     /* Same off-white as the app background so the splash blends seamlessly. */
     background: #D0CFC9;
-    opacity: 1;
+    /* 0.999, NOT 1: an opaque overlay lets Chromium occlusion-cull the app
+       beneath, so the first fade frame had to rasterise every backdrop-filter
+       glass card at once — a burst that jittered the handoff right as the PC
+       finished fading. At 0.999 (visually identical) the app rasterises early,
+       during the calm particle-assembly phase. */
+    opacity: 0.999;
+    will-change: opacity;
     margin: 0;
     padding: 0;
     overflow: hidden;
