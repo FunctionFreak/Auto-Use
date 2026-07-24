@@ -1,0 +1,68 @@
+<!-- Skills stage — mounted INTO #zoneBigCenter (the full-grid container that
+     shows one thing at a time). skills.js reveals it when the composer's Skills
+     icon is clicked and hides the Agent Notes so the two never overlap. Cancel
+     just makes this content vanish from the container again.
+     Two tabs (Computer use / Mobile use); each has two inputs, a big write area
+     and Cancel / Save at the bottom. Design-only: nothing is persisted. -->
+<div class="skills-stage" id="skillsStage" aria-label="Skills">
+
+    <div class="skills-stage-inner">
+
+        <!-- Tabs: Computer use / Mobile use (segmented control) -->
+        <div class="skills-tabs" role="tablist" aria-label="Skill target">
+            <button class="skills-tab active" data-tab="computer" role="tab" aria-selected="true" type="button">
+                <svg class="skills-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1"/><path d="M7 20h10"/><path d="M9 16v4"/><path d="M15 16v4"/></svg>
+                <span>Computer use</span>
+            </button>
+            <button class="skills-tab" data-tab="mobile" role="tab" aria-selected="false" type="button">
+                <svg class="skills-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="2" width="13" height="20" rx="2.5"/><path d="M10.5 18h3"/></svg>
+                <span>Mobile use</span>
+            </button>
+        </div>
+
+        <!-- Computer use form -->
+        <div class="skills-form active" data-form="computer" role="tabpanel">
+            <div class="skills-row">
+                <div class="skills-field">
+                    <label class="skills-field-label">Link / Application</label>
+                    <input type="text" class="skills-input" placeholder="https://…  or  application name" autocomplete="off" />
+                </div>
+                <div class="skills-field">
+                    <label class="skills-field-label">Skill name</label>
+                    <input type="text" class="skills-input" placeholder="Name this skill" autocomplete="off" />
+                </div>
+            </div>
+            <div class="skills-field skills-field-grow">
+                <label class="skills-field-label">Skill</label>
+                <textarea class="skills-textarea" placeholder="Write the skill here…"></textarea>
+            </div>
+            <div class="skills-actions">
+                <button class="skills-cancel" type="button">Cancel</button>
+                <button class="skills-save" type="button">Save</button>
+            </div>
+        </div>
+
+        <!-- Mobile use form -->
+        <div class="skills-form" data-form="mobile" role="tabpanel" hidden>
+            <div class="skills-row">
+                <div class="skills-field">
+                    <label class="skills-field-label">Application / File name</label>
+                    <input type="text" class="skills-input" placeholder="application or file name" autocomplete="off" />
+                </div>
+                <div class="skills-field">
+                    <label class="skills-field-label">Skill name</label>
+                    <input type="text" class="skills-input" placeholder="Name this skill" autocomplete="off" />
+                </div>
+            </div>
+            <div class="skills-field skills-field-grow">
+                <label class="skills-field-label">Skill</label>
+                <textarea class="skills-textarea" placeholder="Write the skill here…"></textarea>
+            </div>
+            <div class="skills-actions">
+                <button class="skills-cancel" type="button">Cancel</button>
+                <button class="skills-save" type="button">Save</button>
+            </div>
+        </div>
+
+    </div>
+</div>

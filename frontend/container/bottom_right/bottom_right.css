@@ -16,12 +16,12 @@
     overflow: hidden;
 }
 
-/* While the notes stage covers the grid (run done / stopped / old chat
+/* While the big-center stage covers the grid (run done / stopped / old chat
    reopened) this cell hides completely — the stage is transparent, and a long
    notes list would clash with the todo words behind it. Same treatment as the
    top-left screenshot; returns on the next run. visibility (not display) so
    the todo renderer's row measurements keep working underneath. */
-.main-grid:has(.notes-stage-zone.active) .bottom-right-zone {
+.main-grid:has(.big-center-zone.active) .bottom-right-zone {
     visibility: hidden;
 }
 

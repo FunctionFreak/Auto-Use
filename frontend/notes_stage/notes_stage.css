@@ -1,39 +1,10 @@
 /* =====================================================================
-   Notes stage — 5th container overlaying the WHOLE 2x2 grid (grid-column /
-   grid-row 1 / -1 = the combined size of all four zones + their gaps).
-   Home of the Agent Notes (moved out of the top-left cell): the pen +
-   "Agent Notes" header centred at the top, the numbered notes below in a
-   centred column. Hidden by default; notes_stage.js adds .active on:
-   run end (window.showAgentNotes), stop-button click, saved-chat reopen.
-   Removed on: new task sent, New chat. Fully transparent — only the notes
-   themselves show (the judging-phase grey border is retired).
-   ===================================================================== */
-.notes-stage-zone {
-    grid-column: 1 / -1;
-    grid-row: 1 / -1;
-    min-width: 0;
-    min-height: 0;
-    position: relative;
-    z-index: 5;                 /* above the four zones it covers (mount order varies) */
-    box-sizing: border-box;
-    border: 1.5px solid transparent;   /* judging border retired; keeps the geometry */
-    border-radius: var(--glass-radius);
-    background: transparent;
-    pointer-events: none;
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity 0.35s ease, visibility 0.35s ease;
-}
-.notes-stage-zone.active {
-    opacity: 1;
-    visibility: visible;
-    pointer-events: auto;       /* the notes list scrolls; the zones behind are stale here */
-}
-
-/* =====================================================================
-   Agent Notes — the scratchpad (13px to match the todo list). Header centred
-   at the top of the stage, numbered notes below. Same accent treatment as the
-   todo tick / tracking dots: #9292d8 drifting through the color_test.html hues.
+   Agent Notes — the scratchpad (13px to match the todo list). Lives inside
+   #zoneBigCenter (container/big_center_container/). Header centred at the
+   top of the stage, numbered notes below in a centred column. Same accent
+   treatment as the todo tick / tracking dots: #9292d8 drifting through the
+   color_test.html hues. Zone show/hide (.active) is owned by big_center_container.css;
+   notes_stage.js toggles it.
    ===================================================================== */
 .agent-notes {
     position: absolute;

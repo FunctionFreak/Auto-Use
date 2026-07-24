@@ -1,0 +1,211 @@
+/* =====================================================================
+   Skills — composer icon that sits just to the RIGHT of the Computer/Mobile use
+   picker (it's appended inside .agent-mode-wrap, at the composer's bottom-left).
+   Transparent icon button; the scroll's writing scrolls upward on hover (the
+   name comes from the native title tooltip). Fades with the picker on run start
+   (inherited from .agent-mode-wrap's own hide-on-active rule).
+   ===================================================================== */
+.skills-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: clamp(4px, 0.6vw, 8px);   /* gap from the picker's chevron */
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: rgba(90, 90, 90, 0.8);   /* exact grey of the picker's mode icon; never shifts */
+    cursor: pointer;
+    flex-shrink: 0;
+    border-radius: 8px;
+    -webkit-user-select: none;
+    user-select: none;
+    transition: opacity 0.3s ease;
+}
+.skills-btn:focus-visible {
+    outline: 2px solid #9aa0ab;
+    outline-offset: 3px;
+}
+
+.skills-mark {
+    width: clamp(20px, 2.1vw, 23px);
+    height: clamp(20px, 2.1vw, 23px);
+    display: block;
+}
+
+/* The sheet's lines travel upward through the clip while hovered. The -8.7 is in
+   SVG user units (one line's spacing), so it's independent of rendered size. */
+.skills-lines { animation-play-state: paused; }
+.skills-btn:hover .skills-lines,
+.skills-btn:focus-visible .skills-lines {
+    animation: skills-scroll-up 3s linear infinite;
+}
+@keyframes skills-scroll-up {
+    from { transform: translateY(0); }
+    to   { transform: translateY(-8.7px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .skills-btn:hover .skills-lines,
+    .skills-btn:focus-visible .skills-lines { animation: none; }
+}
+
+
+/* =====================================================================
+   Skills STAGE — mounted inside #zoneBigCenter (the full-grid container that
+   shows one thing at a time). Fills the zone like Agent Notes does; skills.js
+   reveals it (and hides the notes) on the Skills icon click. Default hidden;
+   .active shows it. Light greige + grey text to match the app; Save uses the
+   app's blue "Save" tone.
+   ===================================================================== */
+.skills-stage {
+    position: absolute;
+    inset: 0;
+    box-sizing: border-box;
+    /* Tight top/bottom so the fields sit near the top and the buttons hug the
+       bottom border — the freed height flows into the flex:1 write area.
+       (top / sides / bottom — bottom is smallest to push content down inside
+       the container without resizing the container itself.) */
+    padding: clamp(8px, 1vw, 14px) clamp(16px, 2.4vw, 30px) clamp(3px, 0.6vw, 7px);
+    display: none;                     /* .active reveals it (zone owns the fade) */
+    flex-direction: column;            /* single centred column, fills the height */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+.skills-stage.active { display: flex; }
+
+/* The form lives in a centred, capped-width column that fills the stage height,
+   so the write area flex-grows and the buttons stay pinned at the bottom. */
+.skills-stage-inner {
+    width: min(100%, 1100px);
+    margin: 0 auto;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(12px, 1.4vw, 16px);     /* tighter tabs → fields gap */
+}
+
+/* ── Tabs (segmented control) ─────────────────────────────────────── */
+.skills-tabs {
+    display: inline-flex;
+    align-self: flex-start;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.05);
+}
+.skills-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: clamp(7px, 0.8vw, 9px) clamp(14px, 1.4vw, 18px);
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: rgba(110, 110, 110, 0.9);
+    font-family: inherit;
+    font-size: clamp(12px, 1.2vw, 14px);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.25s ease, color 0.25s ease, box-shadow 0.25s ease;
+}
+.skills-tab-icon { width: clamp(15px, 1.5vw, 17px); height: clamp(15px, 1.5vw, 17px); }
+.skills-tab:hover { color: rgba(70, 70, 70, 0.95); }
+.skills-tab.active {
+    background: #eceae3;               /* soft off-white — not a stark pure white */
+    color: rgba(55, 55, 55, 0.98);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+/* ── Forms ────────────────────────────────────────────────────────── */
+.skills-form {
+    display: none;
+    flex-direction: column;
+    gap: clamp(14px, 1.6vw, 18px);
+    flex: 1;
+    min-height: 0;                     /* let the textarea flex/scroll inside */
+}
+.skills-form.active { display: flex; }
+
+/* Two small inputs side by side */
+.skills-row {
+    display: flex;
+    gap: clamp(12px, 1.4vw, 16px);
+}
+.skills-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+}
+.skills-field-grow { flex: 1; min-height: 0; }
+
+.skills-field-label {
+    font-size: clamp(11px, 1.1vw, 13px);
+    font-weight: 600;
+    color: rgba(90, 90, 90, 0.9);
+}
+
+.skills-input {
+    height: clamp(38px, 3.4vw, 42px);
+    padding: 0 clamp(11px, 1.2vw, 14px);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: clamp(9px, 1vw, 12px);
+    background: rgba(255, 255, 255, 0.7);
+    font-family: inherit;
+    font-size: clamp(12px, 1.2vw, 14px);
+    color: rgba(55, 55, 55, 0.95);
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+.skills-textarea {
+    flex: 1;                                 /* fills the space between the inputs and the buttons */
+    min-height: clamp(140px, 20vh, 300px);   /* floor only; stays ABOVE the buttons, never under them */
+    padding: clamp(11px, 1.2vw, 14px);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: clamp(9px, 1vw, 12px);
+    background: rgba(255, 255, 255, 0.7);
+    font-family: inherit;
+    font-size: clamp(12px, 1.2vw, 14px);
+    line-height: 1.55;
+    color: rgba(55, 55, 55, 0.95);
+    outline: none;
+    resize: none;                            /* auto-fills the height; no dragging over the buttons */
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+.skills-input:focus,
+.skills-textarea:focus {
+    border-color: rgba(80, 165, 230, 0.7);
+    background: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 0 0 3px rgba(80, 165, 230, 0.18);
+}
+.skills-input::placeholder,
+.skills-textarea::placeholder { color: rgba(90, 90, 90, 0.45); }
+
+/* ── Cancel / Save (centred, pinned at the bottom) ────────────────── */
+.skills-actions {
+    display: flex;
+    flex: 0 0 auto;                    /* never shrinks; always below the write area */
+    justify-content: center;
+    gap: clamp(10px, 1.2vw, 14px);
+    margin-top: clamp(2px, 0.5vw, 6px);
+}
+.skills-cancel,
+.skills-save {
+    height: clamp(38px, 3.4vw, 42px);
+    padding: 0 clamp(22px, 2.4vw, 30px);
+    border: none;
+    border-radius: clamp(9px, 1vw, 12px);
+    font-family: inherit;
+    font-size: clamp(13px, 1.3vw, 15px);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s ease, transform 0.15s ease;
+}
+.skills-cancel { background: rgba(0, 0, 0, 0.06); color: rgba(70, 70, 70, 0.95); }
+.skills-cancel:hover { background: rgba(0, 0, 0, 0.1); }
+.skills-save { background: rgba(80, 165, 230, 0.92); color: #fff; }
+.skills-save:hover { background: rgba(80, 165, 230, 1); }
+.skills-cancel:active,
+.skills-save:active { transform: scale(0.97); }

@@ -1,5 +1,5 @@
-// Notes stage loader — injects the full-grid 5th container into #mainGrid and
-// drives its visibility. Also OWNS the Agent Notes hooks (moved here from
+// Notes stage — mounts Agent Notes into #zoneBigCenter (container/big_center_container/)
+// and drives that zone's visibility. Also OWNS the Agent Notes hooks (moved here from
 // container/top_left): window.showAgentNotes renders the numbered scratchpad
 // into the stage and reveals it; window.hideAgentNotes hides + clears it.
 //
@@ -15,7 +15,7 @@
 (function () {
     'use strict';
 
-    function stage() { return document.getElementById('zoneNotesStage'); }
+    function stage() { return document.getElementById('zoneBigCenter'); }
     function show() { var z = stage(); if (z) z.classList.add('active'); }
     function hide() { var z = stage(); if (z) z.classList.remove('active'); }
 
@@ -133,25 +133,24 @@
     // .chat-input is itself fetch-injected by chat_input.js.
     document.addEventListener('chatinput:ready', watchRunState);
 
-    function mount() {
-        var grid = document.getElementById('mainGrid');
-        if (!grid || grid.querySelector('.notes-stage-zone')) return;
+    function mountNotes() {
+        var zone = stage();
+        if (!zone || zone.querySelector('.agent-notes')) return;
         fetch('notes_stage/notes_stage.html')
             .then(function (r) { return r.text(); })
             .then(function (html) {
-                if (grid.querySelector('.notes-stage-zone')) return; // guard race
+                if (!zone || zone.querySelector('.agent-notes')) return; // guard race
                 var holder = document.createElement('div');
                 holder.innerHTML = html.trim();
-                var zone = holder.querySelector('.notes-stage-zone');
-                if (zone) grid.appendChild(zone);
+                var notes = holder.querySelector('.agent-notes');
+                if (notes) zone.appendChild(notes);
             })
             .catch(function () { /* non-fatal */ });
         watchRunState();   // in case chat_input mounted before this script ran
     }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', mount);
-    } else {
-        mount();
-    }
+    // Mount once the big-center shell is in the DOM (big_center_container.js
+    // fires 'bigcenter:ready'; also try immediately if it already is).
+    document.addEventListener('bigcenter:ready', mountNotes);
+    if (stage()) mountNotes();
 })();

@@ -43,14 +43,14 @@
     object-position: clamp(12px, 1.4vw, 16px) center;
 }
 
-/* While the notes stage covers the grid (run ended / stopped / old chat
+/* While the big-center stage covers the grid (run ended / stopped / old chat
    reopened) the last screenshot must be GONE — the stage is transparent, so a
    stale frame would sit behind and clash with the notes. Purely CSS-synced to
    the stage's .active: it returns on the next run (clearAgentImage has wiped
    the stale frame by then anyway). */
-.main-grid:has(.notes-stage-zone.active) .screenshot-frame {
+.main-grid:has(.big-center-zone.active) .screenshot-frame {
     display: none;
 }
 
-/* The Agent Notes styles used to live here; they moved with the notes to the
-   full-grid notes stage (notes_stage/notes_stage.css). */
+/* The Agent Notes styles used to live here; they moved with the notes to
+   notes_stage/ (content) inside container/big_center_container/ (shell). */

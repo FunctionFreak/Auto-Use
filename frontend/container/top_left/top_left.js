@@ -1,7 +1,7 @@
 // Top-left container loader — injects the screenshot cell into #mainGrid
 // (column 1, row 1). The Agent Notes hooks (window.show/hideAgentNotes) used to
-// live here; they moved with the notes to the full-grid notes stage
-// (notes_stage/notes_stage.js).
+// live here; they moved with the notes to notes_stage/ (inside
+// container/big_center_container/).
 (function () {
     'use strict';
 
