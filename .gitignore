@@ -119,8 +119,14 @@ screen_record.py
 /cli_minion_result
 /Auto_Use/windows_use/scratchpad/cli_minion
 
-# Resumable chat memory (UI) — runtime session data lives inside the package;
-# the code (service.py / __init__.py) is tracked, the saved chats are not.
+# User data — lives OUTSIDE the install folder so an uninstall can't destroy it
+# (the installer's [UninstallDelete] wipes all of {app}). `python app.py` puts it
+# at the repo root; the packaged build uses <home>/autouse_data. See Auto_Use/paths.py.
+/autouse_data/
+
+# LEGACY chat location (pre-autouse_data) — kept ignored until every checkout has
+# migrated, so a contributor who pulls this change before launching the app can't
+# commit real chat transcripts still sitting in the package folder.
 /Auto_Use/agent_conversation/index.json
 /Auto_Use/agent_conversation/chat_*/
 automation_grant.json

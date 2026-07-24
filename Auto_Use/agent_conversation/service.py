@@ -28,13 +28,22 @@ replayed. app.py is thin glue:
     conversation.save_run(sid, agent.assistant_messages,          # save
                           agent.tool_responses, status, message, task)
 
-On-disk layout (data lives INSIDE this package's folder, in sub-folders):
+On-disk layout — data lives OUTSIDE the install folder, so uninstalling the app
+can never destroy the user's chats (the Windows installer uninstalls with
+`[UninstallDelete] Type: filesandordirs; Name: "{app}"`, i.e. it deletes the
+WHOLE install directory, and chats used to be written inside it):
 
-    Auto_Use/agent_conversation/
+    <home>/autouse_data/agent_conversation/     (packaged build)
+    <repo>/autouse_data/agent_conversation/     (python app.py)
         index.json                      <- { id: {title, created_at,
                                               updated_at, last_done_message} }
+        settings.json                   <- last-used provider/model (frontend)
         <session_id>/conversation.json  <- one folder per session: the
                                            optimized, resumable history snapshot
+
+There is exactly ONE of these for the whole app — windows_use, macOS_use and
+ios_use all route their memory through this single service — so this one root
+is every platform's chat store.
 
 The saved history is the agent's FULL per-step memory: each assistant step with
 its thinking / eval / decision / memory / next_goal / action intact, paired 1:1
@@ -60,34 +69,119 @@ import json
 import time
 import shutil
 import logging
+import threading
 from pathlib import Path
 
 logger = logging.getLogger("agent_conversation")
 
-# Compiled (Nuitka) binary vs dev run — mirrors the detection in app.py so the
-# data root lands next to the executable in a packaged build and inside this
-# package in development.
+# =============================================================================
+# WHERE the user's data lives
+# =============================================================================
+# User data must NOT sit inside the install folder — the uninstaller deletes all
+# of {app}. Everything the user creates goes in one folder no installer owns:
+#
+#     <base>/autouse_data/agent_conversation/
+#
+#     base = Path.home()   packaged build   -> C:/Users/<u>/autouse_data
+#                                           -> /Users/<u>/autouse_data on macOS
+#     base = <repo root>   `python app.py`  -> <repo>/autouse_data
+#
+# Stdlib only, and NEVER print(): AutoUse re-execs itself as --banner-mode, which
+# speaks a JSON-per-line protocol on stdout, and sys.stdout can be None at import
+# time in the Windows GUI-subsystem binary. Log to `logger` (stderr) instead.
+#
+# Also never use the builtin open() on a path under autouse_data: compiled builds
+# monkey-patch builtins.open to resolve embedded resources by path suffix
+# (frontend/service.py setup_embedded_resources), and a matching write is
+# silently swallowed into a StringIO. Use Path.read_bytes / write_bytes /
+# os.replace here.
+
+DATA_DIR_NAME = "autouse_data"
+
+# Absolute-path override; wins over the rules below. The --cli-mode /
+# --minion-mode / --banner-mode children are spawned with os.environ.copy(), so
+# they inherit it and parent + children can never disagree on the data root.
+ENV_DATA_DIR = "AUTOUSE_DATA_DIR"
+
+# Compiled (Nuitka) binary vs dev run — mirrors the detection in app.py.
 _IS_COMPILED = bool(getattr(sys, "frozen", False)) or ("__compiled__" in globals())
+
+# <repo>/Auto_Use/agent_conversation/service.py -> <repo>. __file__-based, NEVER
+# cwd-based: the cli / minion children are spawned with no explicit cwd.
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _home_dir() -> Path:
+    """The user's home. Path.home() honours USERPROFILE on Windows."""
+    try:
+        return Path.home()
+    except Exception:
+        return Path(os.path.expanduser("~"))
+
+
+def _base_dir() -> Path:
+    """Parent folder that holds autouse_data/ (not created here)."""
+    if _IS_COMPILED:
+        return _home_dir()
+    # Dev = the checkout this file lives in. Belt-and-braces: if the compiled
+    # probe above ever fails inside a packaged build, a dist folder has no
+    # app.py at the repo root — so fall back to home rather than silently
+    # writing the user's chats back into the install folder, which is the exact
+    # bug this indirection exists to fix.
+    if (_REPO_ROOT / "app.py").is_file():
+        return _REPO_ROOT
+    return _home_dir()
+
+
+def _ensure(p: Path) -> Path:
+    """mkdir -p, best effort. Every caller already guards its own reads and
+    writes, so a read-only or full disk degrades to 'no chats' rather than
+    crashing the GUI on startup."""
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        logger.exception("mkdir %s", p)
+    return p
+
+
+def data_root() -> Path:
+    """<home>/autouse_data (packaged) or <repo>/autouse_data (dev)."""
+    # A blank/whitespace override must read as UNSET: Path("") resolves to ".",
+    # and delete_session() rmtree's paths under this root.
+    override = (os.environ.get(ENV_DATA_DIR) or "").strip()
+    root = Path(override).expanduser() if override else _base_dir() / DATA_DIR_NAME
+    return _ensure(root)
 
 
 class ConversationService:
     """Owns all conversation-memory persistence + optimization for the UI."""
 
+    # Chat ids are minted as chat_<hex ms>, but they arrive from the CLIENT
+    # (start_or_resume's request body, DELETE /api/chats/<id>) and are joined
+    # into a path that delete_session() rmtree's. Now that root() sits in the
+    # user's own data folder rather than inside the package, a traversal would
+    # be far more destructive — so validate before building the path.
+    _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
     # ── storage paths ──────────────────────────────────────────────────────
     def root(self) -> Path:
-        """Root folder holding index.json + one sub-folder per session."""
-        if _IS_COMPILED:
-            base = Path(sys.executable).parent / "Auto_Use" / "agent_conversation"
-        else:
-            base = Path(__file__).resolve().parent
-        base.mkdir(parents=True, exist_ok=True)
-        return base
+        """Root folder holding index.json + one sub-folder per session.
+
+        Lives in autouse_data/, OUTSIDE the install folder, so uninstalling the
+        app no longer deletes the user's chats. The first call also migrates any
+        chats left behind in this package's own directory by an older build."""
+        d = _ensure(data_root() / "agent_conversation")
+        self._migrate_legacy(d)
+        return d
 
     def _index_file(self) -> Path:
         return self.root() / "index.json"
 
     def _session_dir(self, session_id) -> Path:
-        return self.root() / str(session_id)
+        sid = str(session_id)
+        if not self._SAFE_ID.match(sid):
+            raise ValueError(f"unsafe session id: {sid!r}")
+        return self.root() / sid
 
     def _session_file(self, session_id) -> Path:
         return self._session_dir(session_id) / "conversation.json"
@@ -101,6 +195,178 @@ class ConversationService:
         # ending, appended by save_run — separate from conversation.json (which
         # is REWRITTEN each run) so the full request/outcome history survives.
         return self._session_dir(session_id) / "exchanges.json"
+
+    # ── one-time migration: chats out of the install folder ────────────────
+    # Old layout, from this service's previous root():
+    #     packaged : <exe dir>/Auto_Use/agent_conversation/
+    #     dev      : <repo>/Auto_Use/agent_conversation/   <- THIS package's dir
+    # In dev the package's own source (service.py, __init__.py, __pycache__) sits
+    # in that very folder, so the migration is an ALLOWLIST, never a denylist:
+    # only index.json, settings.json and chat_* directories are ever touched. No
+    # file added to the package later can be moved by accident.
+    _LEGACY_FILES = ("index.json", "settings.json")
+    _LEGACY_DIR_PREFIX = "chat_"
+    _SAFE_ENTRY = re.compile(r"^[A-Za-z0-9._-]+$")
+
+    _migrate_lock = threading.Lock()
+    _migrated_dests = set()      # keyed by destination, so tests can repoint the env var
+
+    def _legacy_root(self) -> Path:
+        """Where root() used to point before the move to autouse_data/."""
+        base = Path(sys.executable).resolve().parent if _IS_COMPILED else _REPO_ROOT
+        return base / "Auto_Use" / "agent_conversation"
+
+    @staticmethod
+    def _read_bytes(p: Path):
+        """Path.read_bytes goes through io.open, which the compiled build's
+        builtins.open patch does NOT replace. Reading a legacy path with the
+        plain builtin open() inside AutoUse.exe could hand back the BUILD
+        MACHINE's embedded copy instead of this user's file."""
+        try:
+            return p.read_bytes()
+        except Exception:
+            logger.exception("read %s", p)
+            return None
+
+    def _move_tree(self, src: Path, dst: Path) -> int:
+        """Move one chat folder, crash- AND volume-safe.
+
+        shutil.move degrades to copy+delete across volumes (the install drive is
+        often not the home drive), so a crash mid-copy would leave a HALF-WRITTEN
+        dst that the next run would accept as 'already migrated'. Stage into
+        '<dst>.part' and rename into place: the rename is atomic within the
+        destination folder, so dst either does not exist or is complete. The
+        source is removed only after the rename succeeds."""
+        if dst.exists():
+            return 0                                      # newer data wins; never clobber
+        part = dst.with_name(dst.name + ".part")
+        try:
+            if part.exists():
+                shutil.rmtree(part, ignore_errors=True)   # stale attempt from a crash
+            shutil.copytree(str(src), str(part))
+            os.replace(str(part), str(dst))
+            shutil.rmtree(str(src), ignore_errors=True)
+            return 1
+        except Exception:
+            logger.exception("migrate chat folder %s", src)
+            shutil.rmtree(part, ignore_errors=True)
+            return 0
+
+    def _move_file(self, src: Path, dst: Path) -> int:
+        if dst.exists():
+            return 0
+        data = self._read_bytes(src)
+        if data is None:
+            return 0
+        part = dst.with_name(dst.name + ".part")
+        try:
+            part.write_bytes(data)
+            os.replace(str(part), str(dst))
+            src.unlink()
+            return 1
+        except Exception:
+            logger.exception("migrate %s", src)
+            try:
+                part.unlink()
+            except Exception:
+                pass
+            return 0
+
+    def _read_json_dict(self, p: Path) -> dict:
+        raw = self._read_bytes(p)
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw.decode("utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            logger.exception("parse %s", p)
+            return {}
+
+    def _merge_legacy_index(self, legacy: Path, dest: Path) -> None:
+        """Both index.json exist — reachable after an interrupted migration, or
+        when a user ran an older build again after migrating. The NEW file always
+        wins per chat id; a legacy row is adopted only when its chat folder is
+        actually present now, so the sidebar never shows a ghost row pointing at
+        a chat that never made it across."""
+        merged = self._read_json_dict(dest)
+        added = 0
+        for cid, entry in self._read_json_dict(legacy).items():
+            if cid in merged or not (dest.parent / str(cid)).is_dir():
+                continue
+            merged[cid] = entry
+            added += 1
+        if added:
+            part = dest.with_name(dest.name + ".part")
+            try:
+                part.write_bytes(json.dumps(merged, indent=2).encode("utf-8"))
+                os.replace(str(part), str(dest))   # atomic: never a truncated index
+                logger.info("merged %d legacy chat(s) into %s", added, dest)
+            except Exception:
+                logger.exception("merge index.json")
+                return
+        try:
+            legacy.unlink()
+        except Exception:
+            pass
+
+    def _migrate_legacy(self, dest: Path) -> None:
+        """Move pre-autouse_data chats into `dest` exactly once.
+
+        WHERE IT RUNS: lazily, on the first root() call in each process. That
+        covers EVERY entry point — the GUI, the --cli-mode / --minion-mode
+        re-execs, a bare import of this module — with no ordering requirement on
+        app.py, and it only runs when chat data is actually touched.
+
+        IDEMPOTENT + CRASH-SAFE BY CONSTRUCTION, with NO on-disk 'done' marker:
+        every item moves only when the destination does not exist, so a re-run is
+        a no-op, a crash resumes on the next run, and a user who restores an old
+        folder months later still gets it picked up. A marker would introduce
+        state that can disagree with the filesystem; the in-process set below is
+        only a fast path, never a correctness gate.
+
+        CONCURRENCY: the lock covers threads (Flask serves the chat routes from
+        worker threads). Across processes, skip-if-exists plus the broad excepts
+        make a double run harmless."""
+        key = str(dest)
+        if key in self._migrated_dests:
+            return
+        with self._migrate_lock:
+            if key in self._migrated_dests:
+                return
+            try:
+                legacy = self._legacy_root()
+                if not legacy.is_dir() or legacy.resolve() == dest.resolve():
+                    return
+                moved = 0
+                for item in sorted(legacy.iterdir()):
+                    name = item.name
+                    if not self._SAFE_ENTRY.match(name):
+                        continue
+                    if item.is_dir() and name.startswith(self._LEGACY_DIR_PREFIX):
+                        moved += self._move_tree(item, dest / name)
+                    elif item.is_file() and name in self._LEGACY_FILES:
+                        target = dest / name
+                        if name == "index.json" and target.exists():
+                            self._merge_legacy_index(item, target)
+                        else:
+                            moved += self._move_file(item, target)
+                # NEVER rmtree the legacy folder: in dev it IS this package's
+                # source dir. rmdir succeeds only when it is genuinely empty —
+                # i.e. the packaged case, where the folder held data and nothing
+                # else (Auto_Use is embedded in the binary, not copied to disk).
+                try:
+                    legacy.rmdir()
+                except OSError:
+                    pass
+                if moved:
+                    logger.info("migrated %d chat item(s): %s -> %s", moved, legacy, dest)
+            except Exception:
+                logger.exception("migrate legacy conversation data")
+            finally:
+                # Set even on failure so we don't re-scan on every root() call.
+                # The next app start retries from scratch.
+                self._migrated_dests.add(key)
 
     # ── index.json (session -> display meta) ───────────────────────────────
     def _read_index(self) -> dict:
