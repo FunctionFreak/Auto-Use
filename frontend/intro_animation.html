@@ -23,7 +23,7 @@
       position: fixed;
       transform: scale(0.6);
       transform-origin: center center;
-      transition: opacity 0.5s ease;
+      /* macOS gets a CSS opacity transition applied from JS; Windows drives opacity per frame. */
     }
 
     .monitor-bezel {
@@ -131,6 +131,7 @@
       z-index: 1000;
       pointer-events: none;
     }
+
   </style>
 </head>
 <body>
@@ -155,20 +156,30 @@
   </div>
 
   <script>
+    // ------------------------------------------------------------------
+    // Platform detection.
+    // The choreography is identical on both. Only the rendering details
+    // that each OS needs to stay smooth are branched below.
+    // ------------------------------------------------------------------
+    const IS_MAC = /Mac|iPhone|iPad|iPod/i.test(
+      (navigator.userAgentData && navigator.userAgentData.platform) ||
+      navigator.platform ||
+      navigator.userAgent
+    );
+
     const canvas = document.getElementById('particleCanvas');
     const ctx = canvas.getContext('2d');
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
     const ASSEMBLE_DURATION = 2200;
-    const SETTLE_PAUSE = 500;
+    const SETTLE_PAUSE = 500;          // Windows only: hold the finished shape before handover
     const CROSSFADE_DURATION = 600;
-    const CURSOR_ENTER_DURATION = 800;
-    const CURSOR_PAUSE = 200;
-    const CURSOR_CLICK_DURATION = 200;
-    const GLOW_DURATION = 1600;
+    const BUILD_PAUSE = 150;           // pause after the PC is built, before the cursor
+    const CURSOR_ENTER_DURATION = 450;
+    const CURSOR_PAUSE = 60;
+    const CURSOR_CLICK_DURATION = 110;
     const ZOOM_FADE_DURATION = 1800;
-    const POST_PAUSE = 800;
 
     // Shape dimensions (matches CSS exactly)
     const bezelW = 456, bezelH = 346, bezelR = 35;
@@ -208,8 +219,12 @@
     }
 
     const S = 0.6;  // global scale (40% smaller)
-    const PS = 3 * S;   // particle size
     const SP = 3.5; // spacing
+
+    // macOS renders the small crisp particles cleanly; Windows needs them to
+    // overlap the grid step (plus a little jitter) to avoid shimmer.
+    const PS = IS_MAC ? 3 * S : SP * S + 0.5;
+    const JITTER = IS_MAC ? 0 : 0.4;
 
     const cx = canvas.width / 2;
     const cy = canvas.height / 2;
@@ -285,8 +300,8 @@
 
       return {
         sx, sy,
-        tx: cx + t.x * S,
-        ty: cy + t.y * S,
+        tx: cx + t.x * S + (Math.random() - 0.5) * JITTER,
+        ty: cy + t.y * S + (Math.random() - 0.5) * JITTER,
         x: sx, y: sy,
         color: t.color,
         delay: Math.random() * 0.35
@@ -297,9 +312,19 @@
       return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
     }
 
+    // macOS hands the fade-in to the compositor; Windows drives it per frame.
+    if (IS_MAC) {
+      document.getElementById('laptop').style.transition = 'opacity 0.5s ease';
+    }
+
     let startTime = null;
     let phase = 'assemble';
     let splashNotified = false;
+
+    function positionLaptop(laptopEl) {
+      laptopEl.style.left = (cx - baseW / 2) + 'px';
+      laptopEl.style.top = (cy - totalH / 2) + 'px';
+    }
 
     function animate(timestamp) {
       if (!startTime) startTime = timestamp;
@@ -326,30 +351,44 @@
         ctx.globalAlpha = 1;
 
         if (allDone) {
-          phase = 'reveal';
+          phase = IS_MAC ? 'reveal' : 'settle';
+          startTime = timestamp;
+        }
+      } else if (phase === 'settle') {
+        // Windows: hold the finished particle shape, then crossfade in JS
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        for (const p of particles) {
+          ctx.fillStyle = p.color;
+          ctx.fillRect(p.x - PS / 2, p.y - PS / 2, PS, PS);
+        }
+        if (elapsed >= SETTLE_PAUSE) {
+          const laptopEl = document.getElementById('laptop');
+          positionLaptop(laptopEl);
+          laptopEl.style.opacity = 0;
+          document.getElementById('loadingDots').style.opacity = 1;
+          phase = 'crossfade';
           startTime = timestamp;
         }
       } else if (phase === 'reveal') {
+        // macOS: show the laptop and let the CSS transition fade it in
         const laptopEl = document.getElementById('laptop');
-        laptopEl.style.left = (cx - baseW / 2) + 'px';
-        laptopEl.style.top = (cy - totalH / 2) + 'px';
-        // Start crossfade — show laptop, canvas fades out over CROSSFADE_DURATION
+        positionLaptop(laptopEl);
         laptopEl.style.opacity = 1;
         document.getElementById('loadingDots').style.opacity = 1;
         phase = 'crossfade';
         startTime = timestamp;
       } else if (phase === 'crossfade') {
         const progress = Math.min(1, elapsed / CROSSFADE_DURATION);
-        // Fade out the particle canvas smoothly
         canvas.style.opacity = 1 - progress;
+        if (!IS_MAC) document.getElementById('laptop').style.opacity = progress;
         if (progress >= 1) {
           ctx.clearRect(0, 0, canvas.width, canvas.height);
           canvas.style.opacity = 1;
-          phase = 'blink-wait';
+          phase = 'build-pause';
           startTime = timestamp;
         }
-      } else if (phase === 'blink-wait') {
-        if (elapsed >= 2000) {
+      } else if (phase === 'build-pause') {
+        if (elapsed >= BUILD_PAUSE) {   // cursor comes in almost immediately after the PC is built
           document.getElementById('loadingDots').style.opacity = 0;
           phase = 'cursor-in';
           startTime = timestamp;
@@ -377,53 +416,45 @@
           startTime = timestamp;
         }
       } else if (phase === 'click') {
+        // Fast press down — the zoom fires the instant it bottoms out
         const progress = Math.min(1, elapsed / CURSOR_CLICK_DURATION);
         const cursorEl = document.getElementById('cursor');
-        const scale = progress < 0.5
-          ? 1 - 0.2 * (progress / 0.5)
-          : 0.8 + 0.2 * ((progress - 0.5) / 0.5);
+        const scale = 1 - 0.18 * progress;
         cursorEl.style.transform = `translate(100px, 60px) scale(${scale})`;
 
         if (progress >= 1) {
-          phase = 'glow';
-          startTime = timestamp;
-        }
-      } else if (phase === 'glow') {
-        const progress = Math.min(1, elapsed / GLOW_DURATION);
-        const glowEl = document.getElementById('edgeGlow');
-        const cursorEl = document.getElementById('cursor');
-
-        // Glow fades in then holds
-        let glowOpacity;
-        if (progress < 0.3) glowOpacity = progress / 0.3;
-        else glowOpacity = 1;
-        glowEl.style.opacity = glowOpacity;
-
-        // Cursor fades out during glow
-        const cursorFade = Math.min(1, progress / 0.5);
-        cursorEl.style.opacity = 1 - cursorFade;
-        if (cursorFade >= 1) cursorEl.style.visibility = 'hidden';
-
-        if (progress >= 1) {
-          cursorEl.style.opacity = 0;
-          cursorEl.style.visibility = 'hidden';
           phase = 'zoom-fade';
           startTime = timestamp;
         }
       } else if (phase === 'zoom-fade') {
-        // PC zooms in (diving into screen) and fades to blank white
+        // PC zooms in (diving into screen) and fades to blank
         const progress = Math.min(1, elapsed / ZOOM_FADE_DURATION);
-        const eased = easeInOutCubic(progress);
+        // macOS: ease in and out. Windows: ease-out only, no stall mid-zoom.
+        const eased = IS_MAC
+          ? easeInOutCubic(progress)
+          : 1 - Math.pow(1 - progress, 3);
         const laptopEl = document.getElementById('laptop');
         const glowEl = document.getElementById('edgeGlow');
+        const cursorEl = document.getElementById('cursor');
+
+        // Glow snaps on with the click, then fades out with the dive
+        const glowIn = Math.min(1, progress / 0.1);
+        glowEl.style.opacity = glowIn * (1 - eased);
+
+        // Cursor drops away right after the click
+        const cursorFade = Math.min(1, progress / 0.18);
+        cursorEl.style.opacity = 1 - cursorFade;
+        if (cursorFade >= 1) cursorEl.style.visibility = 'hidden';
 
         const scale = 1 + eased * 2.5;
         laptopEl.style.transform = `scale(${S * scale})`;
-        laptopEl.style.opacity = 1 - eased;
-        glowEl.style.opacity = 1 - eased;
+        laptopEl.style.opacity = IS_MAC
+          ? 1 - eased
+          : Math.max(0, 1 - progress * 1.8);
 
-        // Notify parent early so main app fades in while dive is finishing
-        if (progress >= 0.6 && !splashNotified) {
+        // Notify parent early so the app fades in while the zoom dive is still
+        // running — keeps the handoff aligned with the splash overlay fade.
+        if (progress >= 0.48 && !splashNotified) {
           splashNotified = true;
           if (window.parent && window.parent !== window) {
             window.parent.postMessage('splashDone', '*');

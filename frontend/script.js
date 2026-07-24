@@ -1,15 +1,11 @@
 document.addEventListener('DOMContentLoaded', () => {
-    // Splash screen: pick the per-OS animation at runtime so a single checkout
-    // works on both macOS and Windows without any build-time file patching.
-    // Each animation HTML posts 'splashDone' back to us when finished.
+    // Splash screen: intro_animation.html handles macOS vs Windows rendering
+    // internally and posts 'splashDone' back to us when finished.
     const splash = document.getElementById('splashOverlay');
     if (splash) {
         const splashFrame = document.getElementById('splashFrame');
         if (splashFrame && !splashFrame.src) {
-            const ua = navigator.userAgent || '';
-            const plat = navigator.platform || '';
-            const isMac = /Mac/i.test(plat) || /Mac OS X/i.test(ua);
-            splashFrame.src = isMac ? 'mac_animation.html' : 'windows_animation.html';
+            splashFrame.src = 'intro_animation.html';
         }
         window.addEventListener('message', (e) => {
             if (e.data === 'splashDone') {

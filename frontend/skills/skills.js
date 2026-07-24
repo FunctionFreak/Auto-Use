@@ -13,15 +13,30 @@
     function stageEl() { return document.getElementById('skillsStage'); }
     function notesEl() { return document.getElementById('agentNotes'); }
 
+    // Skills is "open" only when the stage AND the zone are active. The stage
+    // class alone can go stale (a run start hides the zone without touching the
+    // stage), and then the icon's first click would "close" an invisible panel.
     function skillsOpen() {
-        var s = stageEl();
-        return !!(s && s.classList.contains('active'));
+        var s = stageEl(), z = zoneEl();
+        return !!(s && s.classList.contains('active') &&
+                  z && z.classList.contains('active'));
+    }
+
+    // Whether Agent Notes was on screen when Skills opened — closing Skills
+    // must return to that exact state (notes back, or the plain 4-zone grid).
+    var notesWereShowing = false;
+
+    function notesShowing() {
+        var zone = zoneEl(), notes = notesEl();
+        return !!(zone && zone.classList.contains('active') &&
+                  notes && notes.style.display !== 'none');
     }
 
     // Show Skills in the container — and hide the notes so it's the only thing.
     function openSkills() {
         var stage = stageEl(), zone = zoneEl();
         if (!stage || !zone) return;
+        notesWereShowing = notesShowing();
         var notes = notesEl();
         if (notes) notes.style.display = 'none';       // one thing at a time
         stage.classList.add('active');
@@ -37,11 +52,23 @@
         if (notes) notes.style.display = '';           // restore the notes' own visibility
     }
 
-    // Close button: make the content vanish FROM the container (hide the zone too).
+    // Close button: put the screen back the way it was before Skills opened.
+    // If Agent Notes was showing, leave the zone active (hideSkillsOnly already
+    // restored the notes); otherwise hide the zone so the 4-zone grid returns.
+    // Never ADDS active — if something else (new run, New chat) hid the zone
+    // while Skills was open, closing must not resurrect stale notes.
     function closeSkills() {
         hideSkillsOnly();
         var zone = zoneEl();
-        if (zone) zone.classList.remove('active');
+        if (zone && !notesWereShowing) {
+            zone.classList.remove('active');
+            // Re-hide the (empty) notes so they don't ghost through the zone's
+            // 0.35s fade-out; every show path runs hideSkillsOnly first, which
+            // restores display before the notes are next revealed.
+            var notes = notesEl();
+            if (notes) notes.style.display = 'none';
+        }
+        notesWereShowing = false;
     }
 
     function wireStage() {
@@ -102,7 +129,20 @@
             }
         });
         document.addEventListener('chat:opened', hideSkillsOnly);
-        document.addEventListener('chat:new', hideSkillsOnly);
+        // New chat: hideAgentNotes already dropped the zone (its fade-out is
+        // running) before 'chat:new' fires, so restoring the notes' display here
+        // would let the empty header ghost through the fade. Stage class checked
+        // directly — skillsOpen() is false once the zone is off.
+        document.addEventListener('chat:new', function () {
+            var stage = stageEl();
+            var wasOpen = !!(stage && stage.classList.contains('active'));
+            hideSkillsOnly();
+            if (!wasOpen) return;
+            var zone = zoneEl(), notes = notesEl();
+            if (notes && !(zone && zone.classList.contains('active'))) {
+                notes.style.display = 'none';
+            }
+        });
         window.addEventListener('message', function (e) {
             if (e.data === 'pcbtn:clicked') hideSkillsOnly();
         });
