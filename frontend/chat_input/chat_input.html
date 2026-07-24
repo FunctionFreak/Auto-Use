@@ -66,10 +66,10 @@
             <div class="model-dropdown chat-model-dropdown" id="chatModelDropdown">
                 <button class="model-dropdown-trigger" type="button" aria-label="Select model">
                     <span class="model-dropdown-value placeholder">select model</span>
-                    <svg class="chat-dropdown-chevron" width="14" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <polyline points="6 10 12 4 18 10"></polyline>
-                        <polyline points="6 14 12 20 18 14"></polyline>
-                    </svg>
+                    <!-- Same mark as the Computer/Mobile use picker's .am-chev
+                         (agent_mode.html): a single caret that flips 180° on
+                         open, so the two drop-ups across the row behave alike. -->
+                    <svg class="chat-dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 15l-6-6-6 6"/></svg>
                 </button>
                 <div class="model-dropdown-menu"></div>
             </div>
