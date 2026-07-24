@@ -178,26 +178,28 @@
 }
 .skills-view.active { display: flex; }
 
-/* File list — one white rounded row per skill .md. Scrollbar hidden like
-   every other scroller in the app (agent-notes-list, todo-list, …). */
+/* File list — one white rounded row per skill .md. Rows are deliberately COMPACT
+   (a row is just a file name + bin, so it doesn't need card-sized padding): tight
+   vertical padding and a small gap so many more fit before scrolling. Scrollbar
+   hidden like every other scroller in the app (agent-notes-list, todo-list, …). */
 .skills-list {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: clamp(8px, 1vw, 10px);
+    gap: clamp(4px, 0.5vw, 6px);
     scrollbar-width: none;             /* Firefox */
 }
 .skills-list::-webkit-scrollbar { display: none; }
 .skills-item {
     display: flex;
     align-items: center;
-    gap: clamp(8px, 1vw, 10px);
+    gap: clamp(6px, 0.7vw, 8px);
     flex-shrink: 0;                    /* rows keep height inside the scroller */
-    padding: clamp(9px, 1.1vw, 12px) clamp(12px, 1.4vw, 16px);
+    padding: clamp(4px, 0.5vw, 6px) clamp(9px, 1vw, 12px);
     border: 1px solid rgba(0, 0, 0, 0.08);
-    border-radius: clamp(9px, 1vw, 12px);
+    border-radius: clamp(7px, 0.75vw, 9px);
     background: rgba(255, 255, 255, 0.7);
 }
 .skills-item-name {
@@ -208,8 +210,9 @@
     background: transparent;
     text-align: left;
     font-family: inherit;
-    font-size: clamp(12px, 1.2vw, 14px);
+    font-size: clamp(11px, 1.1vw, 12.5px);
     font-weight: 600;
+    line-height: 1.45;
     color: rgba(55, 55, 55, 0.95);
     cursor: pointer;
     overflow: hidden;
@@ -220,19 +223,19 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: clamp(24px, 2.4vw, 28px);
-    height: clamp(24px, 2.4vw, 28px);
+    width: clamp(19px, 1.9vw, 22px);
+    height: clamp(19px, 1.9vw, 22px);
     flex-shrink: 0;
     padding: 0;
     border: none;
-    border-radius: 7px;
+    border-radius: 6px;
     background: transparent;
     color: rgba(120, 120, 120, 0.85);
     cursor: pointer;
     transition: color 0.2s ease;
 }
 .skills-item-del:hover { color: rgba(205, 65, 65, 0.95); }   /* destructive cue */
-.skills-item-del svg { width: clamp(14px, 1.4vw, 16px); height: clamp(14px, 1.4vw, 16px); }
+.skills-item-del svg { width: clamp(12px, 1.2vw, 13.5px); height: clamp(12px, 1.2vw, 13.5px); }
 
 /* Empty state — centred in the list area */
 .skills-empty {
