@@ -123,6 +123,68 @@ def install_dir() -> Path:
 
 
 # =============================================================================
+# skills — the user-editable .md knowledge files
+# =============================================================================
+# autouse_data/skills/windows/ and .../mac/, seeded once from the defaults that
+# ship in Auto_Use/<pkg>/agent/skills/. Seeding happens ONLY when the folder is
+# new, so a skill the user deletes in the UI stays deleted.
+_SKILL_PKG = {"windows": "windows_use", "mac": "macOS_use"}
+
+
+def skills_platform(value=None) -> str:
+    """'windows' | 'mac'. Accepts sys.platform or a '<x>_use' package name."""
+    key = str(sys.platform if value is None else value).lower()
+    return "mac" if ("darwin" in key or "mac" in key) else "windows"
+
+
+def _shipped_skills(pkg: str) -> dict:
+    """{filename: text} of the defaults shipped for `pkg`."""
+    out = {}
+    try:
+        # Compiled build: Auto_Use/ isn't on disk — the .md/.json files are
+        # base64 blobs in the generated _embedded_resources module.
+        from _embedded_resources import RESOURCES
+        needle = "%s/agent/skills/" % pkg
+        for key, blob in RESOURCES.items():
+            k = str(key).replace("\\", "/")
+            i = k.find(needle)
+            name = k[i + len(needle):] if i >= 0 else ""
+            if name and "/" not in name and (name.endswith(".md") or name == "skills.json"):
+                import base64
+                out[name] = base64.b64decode(blob).decode("utf-8")
+    except Exception:
+        pass
+    if out:
+        return out
+    src = _REPO_ROOT / "Auto_Use" / pkg / "agent" / "skills"
+    if src.is_dir():
+        for p in sorted(src.iterdir()):
+            if p.is_file() and (p.suffix.lower() == ".md" or p.name == "skills.json"):
+                try:
+                    out[p.name] = p.read_text(encoding="utf-8")
+                except Exception:
+                    logger.warning("unreadable default skill %s", p)
+    return out
+
+
+def skills_dir(platform=None) -> Path:
+    """autouse_data/skills/<windows|mac>, seeded on first use."""
+    plat = skills_platform(platform)
+    d = data_root() / "skills" / plat
+    if d.is_dir():
+        return d                       # already set up — never re-seed
+    _ensure(d)
+    for name, text in _shipped_skills(_SKILL_PKG[plat]).items():
+        try:
+            # write_text -> io.open, so the compiled build's builtins.open
+            # patch can't swallow the write into a throwaway buffer.
+            (d / name).write_text(text, encoding="utf-8")
+        except Exception:
+            logger.warning("could not seed skill %s", name)
+    return d
+
+
+# =============================================================================
 # api_key.txt — provider keys, the Telegram bot token, and Vertex config
 # =============================================================================
 # Every consumer must agree on this ONE path, or the Settings panel writes a key

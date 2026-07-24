@@ -48,7 +48,7 @@ from pathlib import Path
 from flask import Flask, jsonify, send_from_directory
 
 # Where the user's data lives (autouse_data/, outside the install folder).
-from Auto_Use import api_key_file
+from Auto_Use import api_key_file, skills_dir
 
 # Resumable chat memory + per-chat token tracker. Platform-agnostic, pure-stdlib.
 from Auto_Use.agent_conversation.service import conversation
@@ -1861,8 +1861,10 @@ def open_github():
 # the same code serves windows_use on Windows and macOS_use on Mac)
 # =============================================================================
 def _skills_dir():
-    """The active platform's skill-markdown folder."""
-    return get_platform_use_path() / "agent" / "skills"
+    """The active platform's skill-markdown folder — autouse_data/skills/
+    <windows|mac>/, OUTSIDE the install folder so uninstalling never deletes
+    the user's edited skills."""
+    return skills_dir()
 
 
 def _safe_skill_path(name):
