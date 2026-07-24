@@ -18,9 +18,15 @@ class VaultService:
     def _load_credentials(self):
         """Load credentials from JSON file"""
         try:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            credentials_path = os.path.join(current_dir, 'credentials.json')
-            
+            # autouse_data/vault/credentials.json — outside the install folder,
+            # so uninstalling AutoUse can't delete the user's credentials.
+            try:
+                from Auto_Use import vault_file
+                credentials_path = str(vault_file())
+            except Exception:
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                credentials_path = os.path.join(current_dir, 'credentials.json')
+
             if os.path.exists(credentials_path):
                 with open(credentials_path, 'r', encoding='utf-8') as f:
                     self.credentials = json.load(f)
