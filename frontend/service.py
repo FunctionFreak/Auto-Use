@@ -1850,6 +1850,115 @@ def open_github():
 
 
 # =============================================================================
+# Flask routes — skills (the Skills stage's Computer-use tab: list / preview /
+# delete the active platform's Auto_Use/<platform>_use/agent/skills/*.md, so
+# the same code serves windows_use on Windows and macOS_use on Mac)
+# =============================================================================
+def _skills_dir():
+    """The active platform's skill-markdown folder."""
+    return get_platform_use_path() / "agent" / "skills"
+
+
+def _safe_skill_path(name):
+    """Resolve a skill filename inside the skills dir, or None. Only bare
+    '<something>.md' basenames are accepted — no separators, no traversal.
+    Extension check is case-insensitive to match Windows' case-insensitive
+    glob in list_skills (a listed FOO.MD must also preview/delete)."""
+    if (not name or not name.lower().endswith('.md')
+            or '/' in name or '\\' in name or name != os.path.basename(name)
+            or name.startswith('.')):
+        return None
+    p = _skills_dir() / name
+    return p if p.is_file() else None
+
+
+@app.route('/api/skills', methods=['GET'])
+def list_skills():
+    """List the platform's skill .md files (sorted, names only) for the
+    Skills stage's default list view."""
+    try:
+        d = _skills_dir()
+        files = sorted((f.name for f in d.glob('*.md')), key=str.lower) if d.is_dir() else []
+        return jsonify({'skills': files})
+    except Exception:
+        debug_exception("list_skills")
+        return jsonify({'skills': []})
+
+
+@app.route('/api/skills/<name>', methods=['GET'])
+def get_skill(name):
+    """A single skill file's raw markdown, for the preview view."""
+    try:
+        p = _safe_skill_path(name)
+        if not p:
+            return jsonify({'error': 'Not found'}), 404
+        with open(p, 'r', encoding='utf-8', errors='replace') as f:
+            return jsonify({'name': name, 'content': f.read()})
+    except Exception:
+        debug_exception("get_skill")
+        return jsonify({'error': 'Failed'}), 500
+
+
+@app.route('/api/skills/<name>', methods=['PUT'])
+def save_skill(name):
+    """Overwrite an EXISTING skill .md with edited content from the preview's
+    Edit mode. Atomic write (temp + replace) so a crash can't truncate the
+    skill; the .tmp never matches list_skills' *.md glob."""
+    from flask import request
+    try:
+        p = _safe_skill_path(name)
+        if not p:
+            return jsonify({'error': 'Not found'}), 404
+        data = request.get_json(silent=True) or {}
+        content = data.get('content')
+        if not isinstance(content, str):
+            return jsonify({'error': 'Bad content'}), 400
+        tmp = p.parent / (p.name + '.tmp')
+        with open(tmp, 'w', encoding='utf-8') as f:
+            f.write(content)
+        os.replace(tmp, p)
+        return jsonify({'status': 'saved'})
+    except Exception:
+        debug_exception("save_skill")
+        return jsonify({'error': 'Failed to save'}), 500
+
+
+@app.route('/api/skills/<name>', methods=['DELETE'])
+def delete_skill(name):
+    """Delete a skill .md (idempotent) and scrub any skills.json entries that
+    pointed at it, so the agent's site/app→skill index never dangles."""
+    try:
+        p = _safe_skill_path(name)
+        if p:
+            p.unlink()
+        try:
+            idx = _skills_dir() / 'skills.json'
+            if idx.is_file():
+                with open(idx, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                changed = False
+                for mapping in data.values():
+                    if isinstance(mapping, dict):
+                        for key in [k for k, v in mapping.items() if v == name]:
+                            del mapping[key]
+                            changed = True
+                if changed:
+                    # Atomic rewrite: never leave skills.json truncated if we
+                    # die mid-dump (the agent falls back to empty mappings on a
+                    # broken index, silently disabling all skill injection).
+                    tmp = idx.with_suffix('.json.tmp')
+                    with open(tmp, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2)
+                    os.replace(tmp, idx)
+        except Exception:
+            debug_exception("delete_skill_index")
+        return jsonify({'status': 'deleted'})
+    except Exception:
+        debug_exception("delete_skill")
+        return jsonify({'error': 'Failed to delete'}), 500
+
+
+# =============================================================================
 # Flask routes — chat history
 # =============================================================================
 @app.route('/api/chats', methods=['GET'])

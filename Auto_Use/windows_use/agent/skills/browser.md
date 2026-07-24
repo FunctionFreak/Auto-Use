@@ -5,7 +5,6 @@
 4. If content hasn't loaded, wait 3 seconds.
 5. CRITICAL — Cookie/privacy banners: always Reject over Accept. Accept only if Reject fails or isn't offered.
 </browser_rules>
-</browser_rules>
 <download_rules>
 1. Never click the on-screen download pop-up, even if highlighted. Always open the browser's downloads tab (use hotkeys) to access, verify, and track files.
 2. Confirm completion there ("done" status) before proceeding. Download only from genuine, reputable sites.
