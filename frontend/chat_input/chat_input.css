@@ -530,8 +530,18 @@
    dropdown is open, lift the whole wrapper above the grid (and the other in-flow
    chrome: glass button 20, toast 25, left bar 30) so every menu item is clickable.
    :has() is supported in the WKWebView host (verified). Reverts the instant the
-   dropdown closes, so the grid stays interactive the rest of the time. */
-.chat-container-wrapper:has(.chat-model-dropdown.open) {
+   dropdown closes, so the grid stays interactive the rest of the time.
+
+   The SAME trap bit the textarea itself: a long multi-line draft grows the box up
+   past the grid's bottom edge (grid reserves only ~160-196px), so the grid painted
+   over the upper lines and stole the clicks there — you could click/edit the bottom
+   couple of lines but the ones above were keyboard-only. So also lift while the
+   textarea is focused (i.e. while editing the draft): the box's upper lines then
+   sit above the grid and every visible line is clickable. The grid's four base
+   zones are pure display (no controls), so covering them while editing costs
+   nothing; focus-out reverts, keeping the grid interactive the rest of the time. */
+.chat-container-wrapper:has(.chat-model-dropdown.open),
+.chat-container-wrapper:has(.chat-input:focus) {
     z-index: 40;
 }
 
