@@ -349,9 +349,23 @@
     flex-shrink: 0;
     user-select: none;
     -webkit-user-select: none;
-    transition: background-color 0.3s ease;
+    /* Pin the pill to its own compositing layer. Without this WKWebView creates
+       a layer for the opacity fade and throws it away afterwards, and that
+       round-trip re-snaps the SVG icons by a subpixel — the little upward jitter
+       as the toggle fades back in. Pinned, both directions render identically. */
+    transform: translateZ(0);
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+    transition: background-color 0.3s ease, opacity 0.18s ease;
 }
 .fast-quality-toggle:hover { background: #e2e8f0; }
+/* Shell use has no fast/quality split — the coder agent runs one way — so the
+   toggle just fades out (and back in on the way to another mode).
+   data-agent-mode is mirrored onto .input-area-wrapper by agent_mode.js. */
+.input-area-wrapper[data-agent-mode="shell"] .fast-quality-toggle {
+    opacity: 0;
+    pointer-events: none;
+}
 .fq-thumb {
     position: absolute;
     top: 2px;
@@ -413,8 +427,11 @@
     transform: translate(-50%, 0);
 }
 
-/* RUNNING: same read-only treatment as the model picker beside it. */
-.input-area-wrapper:has(.chat-input.agent-active) .fast-quality-toggle {
+/* RUNNING: same read-only treatment as the model picker beside it. Skipped in
+   Shell use — :has() scores as its most specific argument, so this selector
+   (0,4,0) outweighs the shell hide rule (0,3,0) and would fade the toggle back
+   IN at 45% the moment a shell run started. */
+.input-area-wrapper:not([data-agent-mode="shell"]):has(.chat-input.agent-active) .fast-quality-toggle {
     opacity: 0.45;
     pointer-events: none;
 }

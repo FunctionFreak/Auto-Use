@@ -1818,6 +1818,148 @@ def start_agent():
         return jsonify({'error': str(e)}), 500
 
 
+def run_shell_task(task, provider, model, api_key, run_pkg,
+                   cli_callback=None, stop_event=None):
+    """Shell use — a DIRECT line from the composer to the coder (CLI) agent.
+
+    Runs ONE task on the coder and BLOCKS until it finishes; call from a
+    background thread. No main agent, no chat session, no conversation memory,
+    no todo/milestone watchers — the CLI stage (frontend/cli/) is the whole UI,
+    showing the same terminal / tool-chain / tracking-progress card the coder
+    shows when the MAIN agent dispatches one, because it is the same event
+    stream.
+
+    That reuse is the point. Rather than re-implement the subprocess spawn, the
+    stdout reader threads, the `__MINION_UI_EVENT__` bridge and the cli_*
+    lifecycle, this drives the platform ControllerView's existing `cli_agent`
+    (dispatch) + `cli_await` (block) actions — the two the main agent itself
+    uses. macOS and Windows go through the same two calls; only run_pkg differs,
+    and the coder subprocess command is already branched inside ControllerView.
+
+    Args:
+        task: the user's typed request, handed to the coder verbatim.
+        provider/model/api_key: same LLM selection the main agent would use.
+        run_pkg: 'macOS_use' | 'windows_use' (PLATFORM_PKG).
+        cli_callback: send_cli_event_to_frontend — drives the CLI stage.
+        stop_event: threading.Event shared with /api/stop-agent, so the
+            composer's stop orb kills the coder subprocess mid-run.
+
+    Returns:
+        The cli_await result dict: {"status", "completed": [...]}, or
+        {"status": "stopped"} if the user stopped the run.
+    """
+    ControllerView = importlib.import_module(
+        f"Auto_Use.{run_pkg}.controller.view"
+    ).ControllerView
+
+    # cli_mode=True with NO session_id: keeps this run off the MAIN agent's
+    # scratchpad/todo files (it writes to the shared cli_milestone/ folder
+    # instead) without minting a per-run sandbox folder on the Desktop.
+    controller = ControllerView(
+        provider=provider,
+        model=model,
+        cli_mode=True,
+        cli_callback=cli_callback,
+        api_key=api_key,
+        stop_event=stop_event,
+    )
+
+    logging.getLogger(__name__).info(f"Shell use — dispatching coder agent for: {task[:120]}")
+    try:
+        # 1. Dispatch: spawns the coder subprocess, emits task_start and starts
+        #    streaming its stdout/stderr into the card.
+        controller.route_action([{"type": "cli_agent", "value": task}])
+        # 2. Await: emits await_start (stage slides up), blocks until the coder
+        #    writes its result file, then emits task_end + await_end.
+        return controller.route_action([{"type": "cli_await", "value": "Shell use"}])
+    finally:
+        # Safety net for an early exception — a no-op on the normal path, where
+        # cli_await already drained the task list.
+        try:
+            controller.stop_cli_agent()
+        except Exception:
+            debug_exception("shell run cleanup")
+
+
+@app.route('/api/start-shell', methods=['POST'])
+def start_shell():
+    """Agent mode → Shell use: send the task STRAIGHT to the coder agent.
+
+    Deliberately tiny next to /api/start-agent — no chat session, no memory,
+    no todo/milestone watchers, no Agent Notes. The CLI stage is the whole UI.
+    All of the actual work lives in run_shell_task() above; this route only owns
+    the thread + the run-end signal back to the composer.
+
+    Shares active_agent_stop_event / active_agent_session_id with the normal
+    run so the stop orb (/api/stop-agent) and New chat work unchanged.
+    """
+    from flask import request
+    global active_agent_stop_event, active_agent_session_id
+
+    try:
+        data = request.get_json() or {}
+        provider = data.get('provider')
+        model = data.get('model')
+        task = data.get('task')
+
+        if not all([provider, model, task]):
+            return jsonify({'error': 'Missing provider, model, or task'}), 400
+
+        api_key = get_provider_api_key(provider)
+
+        active_agent_stop_event = threading.Event()
+        active_agent_session_id = str(time.time())   # per-RUN guard
+        current_session_id = active_agent_session_id
+        stop_event = active_agent_stop_event
+
+        def run_shell():
+            outcome = {"status": "success", "message": ""}
+            try:
+                run_shell_task(
+                    task=task,
+                    provider=provider,
+                    model=model,
+                    api_key=api_key,
+                    run_pkg=PLATFORM_PKG,
+                    cli_callback=send_cli_event_to_frontend,
+                    stop_event=stop_event,
+                )
+            except Exception as shell_exc:
+                debug_exception("run_shell")
+                outcome = {"status": "error", "message": str(shell_exc)}
+            finally:
+                stop_event.set()
+                # Same completion signal as a normal run: rolls the composer's
+                # orb, placeholder and input box back to idle.
+                if webview_window and current_session_id == active_agent_session_id:
+                    try:
+                        if outcome["status"] == "success":
+                            webview_window.evaluate_js("window.agentComplete()")
+                        else:
+                            reason = "❌ Error: " + (outcome["message"] or "")
+                            # agentError writes to the milestone stream, which lives in a
+                            # zone body.cli-stage hides — so ALSO put it on the terminal,
+                            # the only surface visible in Shell use.
+                            webview_window.evaluate_js(
+                                f"window.cliShellNote && window.cliShellNote('{_js_escape(reason)}')"
+                            )
+                            webview_window.evaluate_js(
+                                f"window.agentError('{_js_escape(reason)}')"
+                            )
+                    except Exception:
+                        debug_exception("signaling shell run completion")
+
+        thread = threading.Thread(target=run_shell)
+        thread.daemon = True
+        thread.start()
+
+        return jsonify({'status': 'started'})
+
+    except Exception as e:
+        debug_exception("start_shell API")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/stop-agent', methods=['POST'])
 def stop_agent():
     """Stop the currently running agent"""

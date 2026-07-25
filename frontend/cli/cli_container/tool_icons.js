@@ -7,6 +7,7 @@
 // API (window.CliToolIcons):
 //   createChain(treeEl, {orientation})        -> { addAction(tool)->bool, dispose }
 //   createTracker(treeEl, flowEl, zoneEl)     -> { push(text), dispose }  (scratchpad stream)
+//   createMascot(canvas, size)                -> { dispose }  (the blinking agent head, big)
 // where `tool` = { name: <action type>, arg: <label param> }. Unmapped names (todo/minion/
 // scratchpad/exit) are skipped by the chain — they're shown elsewhere.
 (function () {
@@ -361,6 +362,36 @@
     function startEngine() { if (!rafId) rafId = requestAnimationFrame(frame); }
     function dropStep(step) { var i = liveSteps.indexOf(step); if (i >= 0) liveSteps.splice(i, 1); }
 
+    // The same blinking agent head as the chain's `agent` icon, but standalone and
+    // at any size — the Shell-use terminal shows it under its name. Rides the
+    // shared rAF loop through the _render escape hatch, so no second loop starts.
+    // agentPainter draws a 60-unit head already scaled by VSCALE, so pre-scale by
+    // k about the centre to land it at exactly `size` px.
+    function createMascot(canvas, size) {
+        size = size || 44;
+        var ctx = canvas.getContext('2d');
+        var dpr = window.devicePixelRatio || 1;
+        canvas.width = size * dpr; canvas.height = size * dpr;
+        canvas.style.width = size + 'px'; canvas.style.height = size + 'px';
+        ctx.scale(dpr, dpr);
+        var paint = agentPainter();
+        var k = (size / 60) / VSCALE;
+        var step = {
+            _render: function (t) {
+                ctx.clearRect(0, 0, size, size);
+                ctx.save();
+                ctx.translate(size / 2, size / 2);
+                ctx.scale(k, k);
+                ctx.translate(-size / 2, -size / 2);
+                paint(ctx, size / 2, size / 2, t, 1);
+                ctx.restore();
+            }
+        };
+        liveSteps.push(step);
+        startEngine();
+        return { dispose: function () { dropStep(step); } };
+    }
+
     function typeText(el, text) {
         if (!el) return;
         clearTimeout(el._typeTimer);
@@ -511,5 +542,5 @@
         return { push: push, dispose: dispose };
     }
 
-    window.CliToolIcons = { createChain: createChain, createTracker: createTracker };
+    window.CliToolIcons = { createChain: createChain, createTracker: createTracker, createMascot: createMascot };
 })();

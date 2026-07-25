@@ -184,6 +184,74 @@
 #cliContainer .cc-mchain .cc-chain-item.in::before { transform: scaleX(1); }
 #cliContainer .cc-mchain .cc-chain-word { display: none; }
 
+/* ---- terminal header (.has-head — Shell use only) ----
+   The card stops leading with `>`: a blinking dot + the agent name sit on top,
+   the blinking agent head goes under them, and the `>` prompt below that is
+   where every streamed line comes from. Built by coder_card.js create(desc,
+   {header}); the head itself is the shared mascot from tool_icons.js.
+   The header line and the `>` run a step larger than the card's 10px body text
+   (the streamed output keeps that size). */
+/* --cc-gutter is the dot's lane. The name, the head and the `>` all start at
+   its right edge, so the "A" of AutoUse Code, the head and the prompt sit on
+   one vertical line with only the blinking dot out to their left. */
+.coder-card.has-head { --cc-gutter: 14px; }
+.coder-card .cc-head { display: flex; align-items: center; gap: 0; }
+.coder-card .cc-hdot {
+    width: 6px; height: 6px; flex: 0 0 auto;
+    margin-left: 4px;                       /* nudged off the card's left edge */
+    border-radius: 50%; background: rgba(0, 0, 0, 0.55);
+    animation: cc-blink 1.2s ease-in-out infinite;
+}
+.coder-card .cc-hname {
+    color: rgba(0, 0, 0, 0.82);
+    font-size: 13px;
+    margin-left: 4px;                       /* 4 + 6 + 4 = the 14px gutter */
+}
+/* head + the reply's prose on ONE line beside it. The `>` terminal below is the
+   agent's ACTIONS; this row is the agent's words, ticking left-to-right and
+   paginating (hold → clear → continue) so it never grows past a single line. */
+.coder-card .cc-brain {
+    display: flex; align-items: center; gap: 10px;
+    margin: 8px 0 10px var(--cc-gutter, 0px);
+}
+.coder-card .cc-mascot { display: block; flex: 0 0 auto; }
+.coder-card .cc-think {
+    flex: 1 1 auto; min-width: 0; overflow: hidden;
+    color: rgba(0, 0, 0, 0.6);
+}
+.coder-card.has-head .cc-out { padding-left: var(--cc-gutter, 0px); }
+/* the minion tree hangs off the `>`, so its trunk shifts by the same gutter
+   (keeping the original 3px offset that tucks it just under the prompt) */
+.coder-card.has-head .cc-minions { margin-left: calc(var(--cc-gutter, 0px) + 3px); }
+/* The blinking dot moved up into the header, so the prompt swaps it for a
+   terminal underscore cursor — same blink, reset from the dot's circle.
+   It sits at the prompt only while the terminal is EMPTY; as soon as there's
+   output the cursor follows the newest line's last character, like a real
+   terminal caret (the two rules below hand it over). */
+.coder-card.has-head .cc-p::after {
+    content: "_";
+    display: inline;
+    width: auto; height: auto;
+    margin-left: 1px;
+    background: none;
+    border-radius: 0;
+    color: rgba(0, 0, 0, 0.55);
+}
+.coder-card.has-head .cc-out:has(.cc-line) .cc-p::after { content: none; }
+.coder-card.has-head .cc-out-text .cc-line:last-child::after {
+    content: "_";
+    color: rgba(0, 0, 0, 0.55);
+    /* the newest line usually carries .cc-shimmer, which paints its text with a
+       clipped gradient and -webkit-text-fill-color: transparent. Inherited, that
+       makes the cursor invisible — so opt this pseudo-element back out of it. */
+    -webkit-text-fill-color: rgba(0, 0, 0, 0.55);
+    background: none;
+    -webkit-background-clip: border-box;
+            background-clip: border-box;
+    animation: cc-blink 1.2s ease-in-out infinite;
+}
+.coder-card.has-head .cc-p { font-size: 13px; line-height: 1.1; }
+
 /* the live `>` output — now a 5-LINE scrolling terminal of action narration. The `>` pill sits
    at the TOP of the block (align-items:flex-start), beside the fixed-height scrolling viewport. */
 .coder-card .cc-out { display: flex; align-items: flex-start; }
@@ -278,3 +346,71 @@
 
 @keyframes cc-orbit { 80%, 100% { transform: rotate(360deg); } }
 @keyframes cc-flow { 0% { transform: translateX(-75%); opacity: 0.8; } 50% { opacity: 1; } 100% { transform: translateX(75%); opacity: 0.8; } }
+
+/* ---- SHELL USE layout ----
+   Shell use is a terminal-first mode, so the card stops being a narrow column
+   between two side rails and becomes the surface: the terminal spans the panel
+   end to end and runs down to roughly the middle of the window, with "Tool
+   response" and "tracking progress" moved BELOW it, side by side. A 2-column
+   grid does the whole rearrangement — the DOM order (chain, terminal, track)
+   is untouched, grid-area just places them. body.cli-shell is toggled by
+   cli/cli_stage.js; every other mode keeps the left | center | right columns. */
+body.cli-shell #cliContainer .cc-agent {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    /* Row 1: the terminal. Its height also places the progress bar (pinned to the
+       row's bottom) and everything below it, so it sets how far down the whole
+       lower half sits. Row 2 needs a DEFINITE height, not auto: .cc-chain /
+       .cc-track-tree are position:absolute, so their flow parents have zero content
+       height and would collapse in an auto row — icons present but clipped to
+       nothing. 150px ≈ caption + exactly 4 chain links (12 pad + 4×20 + 3×12 gap);
+       the 5th pushes the conveyor up, which is the intended "only 4 at a time". */
+    grid-template-rows: minmax(42vh, auto) minmax(150px, auto);
+    grid-template-areas:
+        "term  term"
+        "tools track";
+    align-content: start;
+    column-gap: 14px;
+}
+/* stretch (not flex-start) so the card fills the whole terminal row: .cc-body
+   grows and pins .cc-progress to the row's bottom edge, where it reads as the
+   terminal's baseline just above the Tool response row. Content-height would let
+   the bar float up under the text wherever the output happened to end. */
+body.cli-shell #cliContainer .cc-card-wrap {
+    grid-area: term;
+    align-items: stretch;
+}
+body.cli-shell #cliContainer .cc-actions { grid-area: tools; }
+body.cli-shell #cliContainer .cc-track   { grid-area: track; }
+/* The terminal goes full-bleed (normally capped at 340px and centred) and picks up
+   the faintest grey wash — just enough to read as its own surface against the panel
+   without becoming a boxed-in card. */
+body.cli-shell #cliContainer .coder-card {
+    position: relative;
+    width: 100%;
+    background: rgba(0, 0, 0, 0.025);
+}
+/* Thin outline in the memory bar's grey — solid along the bottom, fading out
+   toward the top. Same ::after + mask technique as .memory-bar-track, so the two
+   read as the same family: the terminal gets a defined base line without being
+   boxed in. */
+body.cli-shell #cliContainer .coder-card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    box-sizing: border-box;
+    border: 1px solid rgba(120, 124, 130, 0.55);
+    border-radius: inherit;
+    pointer-events: none;
+    -webkit-mask: linear-gradient(to top, #000 0%, #000 45%, transparent 100%);
+            mask: linear-gradient(to top, #000 0%, #000 45%, transparent 100%);
+}
+
+/* ---- IDLE card (Shell use) ----
+   Shell use parks an empty terminal in the stage whenever nothing is running, so
+   the mode always LOOKS like a terminal instead of a blank panel. It's an
+   ordinary coder card that's simply never fed events, mounted WITHOUT its side
+   zones (cli_stage.js's mountIdle) — terminal only until a real run starts.
+   The one style difference: nothing is running, so the progress bar's shimmer
+   is parked. */
+#cliContainer .cc-idle .cc-fill { animation: none; opacity: 0; }

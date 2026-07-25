@@ -54,6 +54,10 @@
             });
             wrap.dataset.mode = state.mode;                       // mode logo (CSS)
             wrap.dataset.sub = state.subs[state.mode] || 'none';  // sub logo; This PC/none -> nothing
+            // Mirror the mode onto the composer so SIBLING controls can react in
+            // pure CSS (the picker sits after them, so ~ / + can't reach back).
+            // Used by chat_input.css to drop the Fast/Quality toggle in Shell use.
+            if (wrap.parentElement) wrap.parentElement.dataset.agentMode = state.mode;
             curLabel.textContent = MODE_LABEL[state.mode];
             Array.prototype.forEach.call(wrapRows, function (w) {
                 w.classList.toggle('mode-locked', !!lockedMode && w.dataset.mode !== lockedMode);

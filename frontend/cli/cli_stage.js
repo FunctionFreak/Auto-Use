@@ -18,6 +18,7 @@
     var cards = new Map();             // task_id -> card (VISIBLE cards only)
     var queue = [];                    // FIFO of { taskId, desc } waiting for a free slot
     var minionParent = new Map();      // minion_id -> parent task_id
+    var idleCard = null;               // the waiting terminal shown in Shell use
 
     function getContainer() { return document.getElementById('cliContainer'); }
     // 1 card -> full-size; 2 -> halves; 3 -> thirds (drives the height transition in CSS).
@@ -46,22 +47,38 @@
         cards.clear();
         queue.length = 0;
         minionParent.clear();
+        idleCard = null;                  // innerHTML wiped it too
+        if (shellPinned) mountIdle();     // Shell use never shows a bare panel
     }
 
-    // Mount one coder agent as a `.cc-agent` row (left tool-chain | center terminal | right
-    // scratchpad) appended BELOW any existing card, then fade/slide it in. Oldest stays on top.
-    function mountAgent(taskId, desc) {
-        var c = getContainer();
-        if (!c || !window.CliCoderCard || cards.has(taskId)) return;
-        var card = window.CliCoderCard.create(desc);
+    // Shell use gets the terminal header — blinking dot + name, the agent head
+    // under it, then the `>` prompt everything streams from. The other modes keep
+    // the plain `> AutoUse Code` card.
+    function cardOpts() { return shellPinned ? { header: 'AutoUse Code' } : {}; }
+
+    // One agent row: left tool-chain | center terminal | right scratchpad.
+    // Shared by the live cards and the idle placeholder so they're the same shape.
+    function buildUnit(card) {
         var unit = document.createElement('div');
-        unit.className = 'cc-agent entering';
+        unit.className = 'cc-agent';
         if (card.chainEl) unit.appendChild(card.chainEl);     // "Tool response" — LEFT
         var wrap = document.createElement('div');
         wrap.className = 'cc-card-wrap';
         wrap.appendChild(card.el);                            // terminal — CENTER
         unit.appendChild(wrap);
         if (card.trackEl) unit.appendChild(card.trackEl);     // "tracking progress" — RIGHT
+        return unit;
+    }
+
+    // Mount one coder agent appended BELOW any existing card, then fade/slide it
+    // in. Oldest stays on top.
+    function mountAgent(taskId, desc) {
+        var c = getContainer();
+        if (!c || !window.CliCoderCard || cards.has(taskId)) return;
+        unmountIdle();                    // a real run takes the idle card's place
+        var card = window.CliCoderCard.create(desc, cardOpts());
+        var unit = buildUnit(card);
+        unit.classList.add('entering');
         card._unit = unit;
         c.appendChild(unit);
         cards.set(taskId, card);
@@ -80,6 +97,60 @@
         cards.delete(taskId);
         syncLayout();
         if (queue.length) { var next = queue.shift(); mountAgent(next.taskId, next.desc); }
+        else if (shellPinned && !cards.size) mountIdle();   // back to the waiting terminal
+    }
+
+    // Shell use PINS the stage open: the terminal is that mode's home screen, so
+    // the panel slides up the moment the mode is picked and stays after a run
+    // ends (empty, waiting for the next task) instead of sliding away. Every
+    // other mode keeps the original behaviour — the stage exists only for the
+    // duration of a cli_await.
+    var shellPinned = false;    // Shell use selected?
+    var awaitActive = false;    // a cli_await is in flight?
+
+    // The waiting terminal: a normal coder card that's simply never fed any
+    // events, so it sits there as an empty `>` prompt with its blinking cursor.
+    // It keeps the mode looking like a terminal instead of a blank panel; a real
+    // run swaps it out, and it comes back when the run ends.
+    //
+    // TERMINAL ONLY — the card's chainEl / trackEl are deliberately NOT passed to
+    // buildUnit, so "Tool response" and "tracking progress" don't exist until a
+    // real run mounts its own card and has something to put in them.
+    function mountIdle() {
+        var c = getContainer();
+        if (!c || idleCard || cards.size || !window.CliCoderCard) return;
+        idleCard = window.CliCoderCard.create('', cardOpts());
+        var unit = buildUnit({ el: idleCard.el });
+        unit.classList.add('cc-idle');
+        idleCard._unit = unit;
+        c.appendChild(unit);
+    }
+
+    function unmountIdle() {
+        if (!idleCard) return;
+        if (idleCard.dispose) idleCard.dispose();
+        if (idleCard._unit && idleCard._unit.parentNode) {
+            idleCard._unit.parentNode.removeChild(idleCard._unit);
+        }
+        idleCard = null;
+    }
+
+    function syncShellStage() {
+        var wrap = document.getElementById('agentModeWrap');
+        shellPinned = !!wrap && wrap.dataset.mode === 'shell';
+        // Shell use re-lays-out the card: full-width terminal on top, the two
+        // side zones moved BELOW it (coder_card.css). Dispatched-coder runs in
+        // the other modes keep the left | center | right columns.
+        document.body.classList.toggle('cli-shell', shellPinned);
+        if (shellPinned) {
+            injectPanel();
+            document.body.classList.add('cli-stage');
+            mountIdle();
+        } else {
+            unmountIdle();
+            // left Shell use — but never yank the stage out from under a live run
+            if (!awaitActive) document.body.classList.remove('cli-stage');
+        }
     }
 
     function installHooks() {
@@ -88,12 +159,20 @@
         // Slide the panel in / out. The chat box is untouched (no .cli-mode).
         window.cliAwaitStart = function (reason) {
             injectPanel();
+            awaitActive = true;
             document.body.classList.add('cli-stage');
         };
         window.cliAwaitEnd = function () {
-            document.body.classList.remove('cli-stage');
+            awaitActive = false;
+            if (!shellPinned) document.body.classList.remove('cli-stage');
             setTimeout(clearAll, 600);   // clear cards after the slide-down finishes
         };
+
+        // agent_mode.js paints the picker's data-mode BEFORE dispatching either
+        // event, so reading it back here is always current.
+        document.addEventListener('agentmode:ready', syncShellStage);
+        document.addEventListener('agentmode:changed', syncShellStage);
+        syncShellStage();   // in case the picker mounted first
 
         // A coder agent starts → mount it if a slot is free, else queue it. Up to 2 show at once;
         // the rest wait FIFO. Bare "[minion] " task_starts are ignored.
@@ -108,9 +187,13 @@
             var card = cards.get(taskId);   // queued (unmounted) agents' lines are dropped until shown
             if (card) card.setLine(line);
         };
-        // Todos are handled internally by the agent and intentionally NOT rendered in the UI.
-        // The backend still emits todo_update events, so keep a no-op stub to swallow them.
-        window.cliTaskTodo = function () {};
+        // Todos are handled internally by the agent and NOT rendered as a checklist. The
+        // card swallows them in every mode except Shell use, where the terminal is the
+        // full transcript and setTodo() streams the list into it.
+        window.cliTaskTodo = function (taskId, payload) {
+            var card = cards.get(taskId);
+            if (card && card.setTodo) card.setTodo(payload);
+        };
         window.cliTaskEnd = function (taskId, status, summary) {
             if (cards.has(taskId)) { unmountAgent(taskId); return; }   // instant vanish + pull next queued
             // finished before it was ever shown → just drop it from the queue
@@ -132,6 +215,15 @@
             var parent = minionParent.get(taskId);
             var card = (parent != null) ? cards.get(parent) : null;
             if (card) card.endMinion(taskId, status);
+        };
+
+        // Stage-level message straight onto the terminal. In Shell use the four zones
+        // that normally carry errors (milestone stream et al.) are hidden, so a run that
+        // fails before producing any output would otherwise read as "nothing happened".
+        window.cliShellNote = function (text) {
+            var card = idleCard;
+            if (!card) { var first = cards.values().next(); card = first && first.value; }
+            if (card && card.note) card.note(text);
         };
 
         window.cliPillWebLoadingStart = function (taskId) { var c = cards.get(taskId); if (c) c.setWeb(true); };

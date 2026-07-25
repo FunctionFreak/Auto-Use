@@ -199,6 +199,23 @@
         };
     }
 
+    // Everything the agent REPLIED except `action` — thinking / memory / next_goal and
+    // whatever the schema grows later, in the order the model wrote them. This is what the
+    // Shell-use terminal streams: the agent's own words, not a synthesized per-action
+    // narration. "null" thinking (the fast-mode skip convention) drops out.
+    function proseLines(obj) {
+        var out = [];
+        if (!obj || typeof obj !== 'object') return out;
+        Object.keys(obj).forEach(function (k) {
+            if (k === 'action' || obj[k] == null) return;
+            var v = obj[k];
+            var text = String(typeof v === 'string' ? v : JSON.stringify(v)).trim();
+            if (!text || text.toLowerCase() === 'null') return;
+            out.push(text);
+        });
+        return out;
+    }
+
     // The most label-worthy field of an action, for the icon's caption.
     function argOf(a) {
         return a.pattern || a.path || a.command || a.value || a.query || '';
@@ -232,17 +249,30 @@
         }
     }
 
-    function create(desc) {
+    // opts.header: <name> — the Shell-use card. Instead of leading with `>` it splits the
+    //   step in two: a blinking dot + the name on top, then the agent head with the reply's
+    //   PROSE (every JSON key except `action`) ticking beside it ONE line at a time, then
+    //   the `>` terminal below carrying the ACTIONS — 10 lines deep, since Shell use gives
+    //   the card the whole panel. Asked for by cli_stage.js only; dispatched coder cards in
+    //   the other modes are unchanged: no header, actions on a 5-line `> AutoUse Code`.
+    function create(desc, opts) {
+        opts = opts || {};
+        var header = opts.header || '';
         var el = document.createElement('div');
-        el.className = 'coder-card';
+        el.className = 'coder-card' + (header ? ' has-head' : '');
         // The terminal card holds ONLY the streamed output + todo + minion output. Nothing else
         // (the action chain and scratchpad live in their own zones beside the card).
         el.innerHTML =
             '<div class="cc-body">' +
+                (header
+                    ? '<div class="cc-head"><span class="cc-hdot"></span><span class="cc-hname"></span></div>' +
+                      '<div class="cc-brain"><canvas class="cc-mascot"></canvas><span class="cc-think"></span></div>'
+                    : '') +
                 '<div class="cc-out"><span class="cc-p">&gt;</span> <span class="cc-out-text"></span></div>' +
                 '<div class="cc-minions"><span class="cc-trunk"></span></div>' +
             '</div>' +
             '<div class="cc-progress"><span class="cc-fill"></span></div>';
+        if (header) el.querySelector('.cc-hname').textContent = header;
 
         var outEl = el.querySelector('.cc-out');
         var pEl = el.querySelector('.cc-p');           // the `>` prompt — trunk anchors just below it
@@ -252,7 +282,14 @@
 
         // The `>` terminal shows a clean, multi-line scrolling log of the coder's ACTIONS
         // (synthesized narration, NOT the raw JSON). Up to 5 lines visible, then it auto-scrolls.
-        var outStream = makeLineStreamer(outText, 'AutoUse Code', { multiline: true, maxLines: 5 });
+        // With a header the name is already on top, so the stream starts empty instead of
+        // repeating it as a first line that would just scroll away.
+        var outStream = makeLineStreamer(outText, header ? null : 'AutoUse Code',
+                                         { multiline: true, maxLines: 5 });
+        // Shell use only: the agent's own words, ONE line at a time beside the head. A
+        // single-line paginating ticker (same streamer the minion rows use), so a long
+        // field flows left-to-right, holds, clears and continues instead of stacking up.
+        var thinkStream = header ? makeLineStreamer(el.querySelector('.cc-think'), null) : null;
         var minionStreams = {};   // minion id -> its line streamer
 
         // LEFT zone — "Tool response: N tools used" + the vertical action-icon chain (extreme
@@ -289,6 +326,9 @@
             '<div class="cc-track-flow"><div class="cc-track-tree"></div></div>';
 
         var ICONS = window.CliToolIcons;
+        // the header's blinking agent head (same mark as the chain's `agent` icon)
+        var mascotEl = el.querySelector('.cc-mascot');
+        var mascot = (mascotEl && ICONS && ICONS.createMascot) ? ICONS.createMascot(mascotEl, 20) : null;
         var actionChain = ICONS ? ICONS.createChain(chainEl.querySelector('.cc-chain'), { orientation: 'vertical' }) : null;
         var tracker = ICONS ? ICONS.createTracker(trackEl.querySelector('.cc-track-tree'), trackEl.querySelector('.cc-track-flow'), trackEl) : null;
         var minionChains = {};         // minion id -> its own horizontal chain
@@ -329,11 +369,22 @@
             if (thinkingStep) { thinkingStep.complete('packet received'); thinkingStep = null; }
         }
         function hasExit(obj) { return actionList(obj).some(function (a) { return a && a.type === 'exit'; }); }
+        function hasMinion(obj) { return actionList(obj).some(function (a) { return a && a.type === 'minion'; }); }
+
+        // Stream one reply's prose into a streamer, a field per line (Shell use only).
+        function streamProse(stream, obj) {
+            proseLines(obj).forEach(function (t) { stream.push(t); });
+        }
 
         var coderActionParser = makeActionParser(function (obj) {
             markReceived();                       // this JSON IS the packet -> tick "thinking"
-            pushActions(actionChain, obj, true);  // play this step's tools (+ scratchpad/count)
-            if (!hasExit(obj)) startOpening();    // anticipate the next step (skip on the final one)
+            if (thinkStream) streamProse(thinkStream, obj);   // Shell use: words beside the head
+            pushActions(actionChain, obj, true);  // actions -> the `>` terminal (+ chain/count)
+            // Anticipate the next step — but NOT after a dispatched minion: the coder is
+            // blocked until that minion returns, so the chain would sit on "communicating
+            // with llm service / thinking" while nothing is being asked. It stops at
+            // "dispatched minion" and endMinion() restarts the opening phase.
+            if (!hasExit(obj) && !hasMinion(obj)) startOpening();
         });
 
         function setLine(text) {
@@ -347,7 +398,10 @@
         // Anchor the single trunk so it starts just below the `>` prompt (a tiny CONSTANT gap,
         // NOT the centre of the now-tall 5-line terminal) and runs down to the LAST minion's
         // head centre. TRUNK_GAP keeps the "almost touching the >" look constant.
-        var TRUNK_GAP = 3;
+        // Gap between the `>` and where the trunk starts. The Shell-use card's prompt is
+        // bigger and sits alone atop a wide terminal, so the trunk is cut further back to
+        // leave clean air under the glyph; the compact card keeps its almost-touching look.
+        var TRUNK_GAP = header ? 12 : 3;
         function layoutTrunk() {
             var rows = minionsEl.querySelectorAll('.cc-mrow');
             if (!rows.length) { trunk.style.height = '0'; return; }
@@ -381,6 +435,9 @@
             minionStreams[id] = makeLineStreamer(row.querySelector('.mline'), query || 'minion');
             if (ICONS) minionChains[id] = ICONS.createChain(row.querySelector('.cc-mchain'), { orientation: 'horizontal' });
             minionParsers[id] = makeActionParser(function (obj) {
+                // Shell use: same rule as the coder — the minion's row streams its OWN
+                // reply (action excluded) instead of the raw JSON it printed.
+                if (header && minionStreams[id]) streamProse(minionStreams[id], obj);
                 pushActions(minionChains[id], obj, false);
                 var mc = row.querySelector('.cc-mchain');
                 if (mc && mc.children.length) row.classList.add('has-tools');   // reveal the loader→sub-chain L
@@ -391,8 +448,25 @@
         }
 
         function setMinionLine(id, line) {
-            if (minionStreams[id]) minionStreams[id].push(line);
+            // Default: the raw line IS the row's text. In Shell use the parser below
+            // streams the parsed prose instead, so the raw JSON never lands in the row.
+            if (!header && minionStreams[id]) minionStreams[id].push(line);
             if (minionParsers[id]) minionParsers[id](line);   // read `action` -> this minion's chain
+        }
+
+        // Todo updates — dropped everywhere else (the agent owns its list), but in Shell
+        // use the terminal is the full transcript, so the list streams there too.
+        // payload is the JSON string service.py sends: {objective, tasks:[{text, done}]}.
+        function setTodo(payload) {
+            if (!header) return;
+            var data;
+            try { data = (typeof payload === 'string') ? JSON.parse(payload) : payload; }
+            catch (e) { return; }
+            if (!data) return;
+            if (data.objective) outStream.push('todo: ' + data.objective);
+            (data.tasks || []).forEach(function (t) {
+                if (t && t.text) outStream.push((t.done ? '[x] ' : '[ ] ') + t.text);
+            });
         }
 
         // The minion is done — DON'T wait for its streaming or show a mark. Immediately fade the
@@ -410,6 +484,17 @@
             if (window.requestAnimationFrame) {
                 requestAnimationFrame(function () { row.classList.add('leaving'); row.style.maxHeight = '0px'; });
             } else { row.classList.add('leaving'); row.style.maxHeight = '0px'; }
+
+            // The chain paused at "dispatched minion" while the coder waited. Once the
+            // LAST live minion is back the coder resumes talking to the LLM, so pick the
+            // opening phase up again. `row` is excluded explicitly rather than by the
+            // .leaving class — that class is only added on the next animation frame, so
+            // it isn't set yet here; .leaving rows are mid-collapse and don't count either.
+            var stillRunning = Array.prototype.filter.call(
+                minionsEl.querySelectorAll('.cc-mrow'),
+                function (r) { return r !== row && !r.classList.contains('leaving'); }
+            ).length;
+            if (!stillRunning) startOpening();
 
             var done = false;
             function finish() {
@@ -437,6 +522,8 @@
         }
 
         function dispose() {
+            if (mascot) mascot.dispose();
+            if (thinkStream) thinkStream.dispose();
             outStream.dispose();
             for (var k in minionStreams) if (minionStreams[k]) minionStreams[k].dispose();
             if (actionChain) actionChain.dispose();
@@ -449,6 +536,10 @@
             chainEl: chainEl,
             trackEl: trackEl,
             setLine: setLine,
+            // raw text straight onto the terminal, bypassing the JSON parser — used for
+            // stage-level messages (e.g. a run that failed before it produced any output)
+            note: function (t) { outStream.push(t); },
+            setTodo: setTodo,
             addMinion: addMinion,
             setMinionLine: setMinionLine,
             endMinion: endMinion,
