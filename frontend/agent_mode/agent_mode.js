@@ -23,9 +23,15 @@
         // Two-level selection: the mode, plus each mode's chosen sub-option
         // (remembered per mode). Only Computer use has a default (This PC);
         // Mobile use starts with NO platform picked.
-        var state = { mode: 'computer', subs: { computer: 'thispc', mobile: null } };
-        var MODE_LABEL = { computer: 'Computer use', mobile: 'Mobile use' };
+        var state = { mode: 'computer', subs: { computer: 'thispc', mobile: null, shell: null } };
+        var MODE_LABEL = { computer: 'Computer use', mobile: 'Mobile use', shell: 'Shell use' };
         var SUB_LABEL = { thispc: 'This PC', daisy: 'Daisy chain', ios: 'iOS', android: 'Android' };
+
+        // Modes with NO sub-menu at all. They're selectable on their own, so
+        // they must skip the "pick a sub-option first" gate below that Mobile
+        // use relies on. Their sub stays null, which means no sub logo on the
+        // trigger and no " on X" suffix in the running placeholder.
+        var NO_SUB_MODES = { shell: true };
 
         // Per-chat mode lock: once a chat has run in one mode it stays there —
         // the OTHER mode's row greys out with an "Open a new chat" hover hint.
@@ -85,7 +91,7 @@
             opt.addEventListener('click', function () {
                 var mode = opt.dataset.mode;
                 if (lockedMode && mode !== lockedMode) return;   // chat is locked to the other mode
-                if (!state.subs[mode]) {
+                if (!NO_SUB_MODES[mode] && !state.subs[mode]) {
                     setTimeout(function () { setOpen(false); }, 120);
                     return;               // no platform picked -> no selection change
                 }
@@ -147,7 +153,7 @@
         // failed and ios_session.js puts the menu back on Computer use.
         document.addEventListener('agentmode:set', function (e) {
             var d = e.detail || {};
-            if (d.mode && (d.mode === 'computer' || d.mode === 'mobile')) {
+            if (d.mode && MODE_LABEL[d.mode]) {
                 state.mode = d.mode;
                 if (d.sub !== undefined) state.subs[d.mode] = d.sub;
             }
