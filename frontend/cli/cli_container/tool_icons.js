@@ -188,8 +188,18 @@
         };
     }
 
+    // Master intensity of the working glow — one number for the whole effect (both the
+    // blurred halo and the crisp rim scale off it). The stop-orb colours are vivid, so
+    // at full strength they read as neon against the card's soft greys.
+    var GLOW_A = 0.18;
+
     // --- agent mascot head (blinking) — from bottom_left agentPainter ---
-    function agentPainter() {
+    // opts.glow: () => bool. When it returns true the head is ringed with the stop orb's
+    // rotating gradient (tool_icon.html's agentPainter) — used to show the agent is
+    // WORKING. A live getter, not a flag, so the same painter instance can be switched
+    // at runtime. The chain's small `agent` icon passes nothing and never glows.
+    function agentPainter(opts) {
+        opts = opts || {};
         return function (ctx, cx, cy, t, alpha) {
             ctx.save();
             ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
@@ -197,6 +207,38 @@
             ctx.beginPath();
             if (ctx.roundRect) ctx.roundRect(-30, -30, 60, 60, 13); else ctx.rect(-30, -30, 60, 60);
             ctx.fill();
+
+            // The glow strokes the head's OWN path — no beginPath between fill and stroke.
+            if (opts.glow && opts.glow()) {
+                var gradAng = t / 500;
+                var gx = Math.cos(gradAng) * 45, gy = Math.sin(gradAng) * 45;
+                var grad = ctx.createLinearGradient(gx, gy, -gx, -gy);
+                grad.addColorStop(0, '#ff0073');
+                grad.addColorStop(0.5, '#9292d8');
+                grad.addColorStop(1, '#00bbff');
+                ctx.strokeStyle = grad;
+                ctx.lineJoin = 'round';
+                var breath = (Math.sin(t / 400) + 1) / 2;   // 0..1 smooth pulse
+                if (typeof ctx.filter !== 'undefined') {
+                    // a real canvas blur — a wide stroke alone bands into visible squares
+                    ctx.save();
+                    ctx.filter = 'blur(' + (4 + 4 * breath) + 'px)';
+                    ctx.lineWidth = 6 + 2 * breath;
+                    ctx.globalAlpha = alpha * 0.7 * GLOW_A;
+                    ctx.stroke();
+                    ctx.restore();                          // drop the filter for the crisp line
+                } else {
+                    ctx.shadowColor = 'rgba(146, 146, 216, 0.8)';
+                    ctx.shadowBlur = 8 + 4 * breath;
+                    ctx.lineWidth = 4;
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
+                }
+                ctx.lineWidth = 1.5;
+                ctx.globalAlpha = alpha * 0.95 * GLOW_A;
+                ctx.stroke();
+            }
+
             var bt = t % 1800, sy = 1;
             if (bt > 1620) sy = bt < 1710 ? 1 - ((bt - 1620) / 90) * 0.92 : 0.08 + ((bt - 1710) / 90) * 0.92;
             var eh = 14 * sy, ey = -5 - eh / 2, er = Math.min(4, eh / 2);
@@ -413,6 +455,9 @@
     // shared rAF loop through the _render escape hatch, so no second loop starts.
     // agentPainter draws a 60-unit head already scaled by VSCALE, so pre-scale by
     // k about the centre to land it at exactly `size` px.
+    // `size` is the CANVAS box; the head is drawn at HEAD_FRAC of it so the working
+    // glow has room to bleed instead of being clipped square at the canvas edge.
+    var HEAD_FRAC = 0.78;
     function createMascot(canvas, size) {
         size = size || 44;
         var ctx = canvas.getContext('2d');
@@ -420,8 +465,9 @@
         canvas.width = size * dpr; canvas.height = size * dpr;
         canvas.style.width = size + 'px'; canvas.style.height = size + 'px';
         ctx.scale(dpr, dpr);
-        var paint = agentPainter();
-        var k = (size / 60) / VSCALE;
+        var glowOn = false;
+        var paint = agentPainter({ glow: function () { return glowOn; } });
+        var k = (size * HEAD_FRAC / 60) / VSCALE;
         var step = {
             _render: function (t) {
                 ctx.clearRect(0, 0, size, size);
@@ -435,7 +481,10 @@
         };
         liveSteps.push(step);
         startEngine();
-        return { dispose: function () { dropStep(step); } };
+        return {
+            setGlow: function (on) { glowOn = !!on; },
+            dispose: function () { dropStep(step); }
+        };
     }
 
     function typeText(el, text) {

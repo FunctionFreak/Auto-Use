@@ -51,6 +51,19 @@
         // Sits between one step's lines and the next's — see reset().
         var CLEAR = {};
 
+        // The trailing line keeps .cc-shimmer because the shimmer means "more is coming" —
+        // it's only cleared when the NEXT line starts. When a hand-typed command has
+        // exited, nothing is coming, so the caller asks the stream to settle: drop the
+        // shimmer once everything queued has actually finished typing (not at exit — the
+        // pump is usually still catching up then).
+        var settleWanted = false;
+        function dropShimmer() {
+            var host = multiline ? scroll : target;
+            if (!host || !host.children.length) return;
+            var last = host.children[host.children.length - 1];
+            if (last && last.classList) last.classList.remove('cc-shimmer');
+        }
+
         function hardClear() {
             if (multiline) {
                 scroll.replaceChildren();
@@ -136,7 +149,13 @@
                             // (shines until the next line starts / the step ends).
                             mline.textContent = mline.textContent;
                             mline.classList.add('cc-shimmer');
-                            timer = setTimeout(function () { running = false; pump(); }, HOLD_MS);
+                            timer = setTimeout(function () {
+                                running = false;
+                                // nothing left to play and the caller asked to settle →
+                                // this really is the last line, so stop it shimmering
+                                if (settleWanted && !queue.length) dropShimmer();
+                                pump();
+                            }, HOLD_MS);
                             return;
                         }
                         var firstOnLine = mline.childElementCount === 0;
@@ -174,7 +193,13 @@
                         // loading shimmer (it shines until the next line replaces it / the step ends).
                         page.textContent = page.textContent;
                         page.classList.add('cc-shimmer');
-                        timer = setTimeout(function () { running = false; pump(); }, HOLD_MS);
+                        timer = setTimeout(function () {
+                                running = false;
+                                // nothing left to play and the caller asked to settle →
+                                // this really is the last line, so stop it shimmering
+                                if (settleWanted && !queue.length) dropShimmer();
+                                pump();
+                            }, HOLD_MS);
                         return;
                     }
                     var firstOnPage = page.childElementCount === 0;
@@ -211,6 +236,7 @@
             // `cls`, so callers can mark specific lines (the terminal tags prompt echoes).
             push: function (text, cls) {
                 if (text == null || !String(text).trim()) return;
+                settleWanted = false;          // more IS coming again
                 queue.push(cls ? { text: String(text), cls: String(cls) } : String(text));
                 if (queue.length > 600) queue.splice(0, queue.length - 600);   // memory safety only
                 if (!running) pump();
@@ -225,6 +251,12 @@
             reset: function () {
                 if (!running && !queue.length) { hardClear(); return; }
                 queue.push(CLEAR);
+            },
+            // "that was the last line" — stop the trailing shimmer, now if the stream is
+            // already idle, otherwise as soon as the queue drains.
+            settle: function () {
+                settleWanted = true;
+                if (!running && !queue.length) dropShimmer();
             },
             // Swap the conveyor for real scrolling (and back). Native mode drops the
             // translateY so scrollTop is free to move, and the top-fade mask goes with
@@ -446,7 +478,8 @@
         var ICONS = window.CliToolIcons;
         // the header's blinking agent head (same mark as the chain's `agent` icon)
         var mascotEl = el.querySelector('.cc-mascot');
-        var mascot = (mascotEl && ICONS && ICONS.createMascot) ? ICONS.createMascot(mascotEl, 20) : null;
+        // 26px canvas -> a ~20px head, the remainder being bleed room for the working glow
+        var mascot = (mascotEl && ICONS && ICONS.createMascot) ? ICONS.createMascot(mascotEl, 26) : null;
         var actionChain = ICONS ? ICONS.createChain(chainEl.querySelector('.cc-chain'), { orientation: 'vertical' }) : null;
         var tracker = ICONS ? ICONS.createTracker(trackEl.querySelector('.cc-track-tree'), trackEl.querySelector('.cc-track-flow'), trackEl) : null;
         var minionChains = {};         // minion id -> its own horizontal chain
@@ -511,6 +544,11 @@
         // too — under 'use strict' a function declared in a block isn't visible outside.
         // The location stays up for the WHOLE of user mode, not just while focused: it's
         // the terminal's identity, and it stamps every executed line.
+        // The header names whoever owns the terminal: "AutoUse Code" while the agent has
+        // it, "AutoUse Terminal" once you click in and start driving it by hand.
+        var nameEl = el.querySelector('.cc-hname');
+        function setName(t) { if (nameEl) nameEl.textContent = t; }
+
         var curPath = '';
         function showPath(short) { if (short) { curPath = short; pEl.textContent = short + ' >'; } }
         function clearPrompt() { curPath = ''; pEl.textContent = '>'; }
@@ -547,6 +585,7 @@
                 // body-level, not card-level: the hard cap is enforced on the grid row
                 // that holds the card, which a class on the card itself can't reach.
                 document.body.classList.add('cli-typing');
+                setName('AutoUse Terminal');       // it's yours now, not the coder's
                 outStream.setNativeScroll(true);   // old output stays reachable
                 loadPath();
             });
@@ -597,9 +636,14 @@
                     var text = String(d.output || '').replace(/\s+$/, '');
                     if (text) text.split('\n').forEach(function (l) { outStream.push(l); });
                     else if (d.error) outStream.push(d.error);
+                    outStream.settle();   // inline reply (cd / failure) — nothing more coming
                     setBusy(false);
                 })
-                .catch(function () { outStream.push('failed to reach the shell'); setBusy(false); });
+                .catch(function () {
+                    outStream.push('failed to reach the shell');
+                    outStream.settle();
+                    setBusy(false);
+                });
             });
         }
 
@@ -816,6 +860,8 @@
                     cmdEl.textContent = '';                 // drop anything half-typed
                     if (document.activeElement === cmdEl) cmdEl.blur();
                 }
+                setName(header);             // back to "AutoUse Code" — the agent's again
+                if (mascot && mascot.setGlow) mascot.setGlow(true);   // head lights up: working
                 clearPrompt();               // bare `>`, and no stale path on echoed lines
                 el.classList.remove('cc-has-out');
                 startOpening();
@@ -827,6 +873,7 @@
             // a hand-typed command exited — hand the prompt back
             termEnd: function (code) {
                 if (code) outStream.push('[exit ' + code + ']');
+                outStream.settle();      // the command is done — stop the trailing shimmer
                 setBusy(false);
             },
             setTodo: setTodo,
