@@ -29,7 +29,14 @@ class DomainKnowledgeService:
     
     def __init__(self):
         """Initialize and load domain knowledge mappings"""
-        self.current_dir = os.path.dirname(os.path.abspath(__file__))
+        # The LIVE skills the user can edit live in autouse_data/skills/windows/,
+        # outside the install folder. Fall back to the .md files shipped beside
+        # this module if that can't be resolved for any reason.
+        try:
+            from Auto_Use import skills_dir
+            self.current_dir = str(skills_dir("windows"))
+        except Exception:
+            self.current_dir = os.path.dirname(os.path.abspath(__file__))
         self.mappings = self._load_mappings()
         
         # Browser detection keywords

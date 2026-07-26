@@ -169,13 +169,16 @@ class CLIAgentResponseFormatter:
 
     @staticmethod
     def format_stream_json(normalized_response: str) -> str:
-        """Per-step payload for the streaming UI (app.py, piped subprocess) — ONLY the
-        action block. The frontend reads `action` from this for both the `>` stream and the
-        tool-icon chain. On parse error, fall back to the input unchanged.
+        """Per-step payload for the streaming UI (app.py, piped subprocess) — the COMPLETE
+        validated step: thinking / memory / next_goal AND the action block (the same shape
+        the minion already streams). The frontend reads `action` for the tool-icon chain in
+        every mode, and the prose fields for the Shell-use terminal, which streams the
+        agent's own words instead of a synthesized per-action narration.
+        On parse error, fall back to the input unchanged.
         For a real terminal (cli.py / main.py) use format_terminal instead.
         """
         try:
             json_data = json.loads(normalized_response)
-            return json.dumps({"action": json_data.get("action", [])}, indent=2, ensure_ascii=False)
+            return json.dumps(json_data, indent=2, ensure_ascii=False)
         except Exception:
             return normalized_response

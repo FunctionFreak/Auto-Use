@@ -100,7 +100,14 @@
                 resetChatUi();
             }
 
-            fetch('/api/start-agent', {
+            // Shell use bypasses the main agent entirely: the task goes STRAIGHT
+            // to the coder agent (backend: run_shell_task in service.py) and the CLI
+            // stage is the only UI it drives — no chat session, no memory. Every
+            // other line of this send path is shared, so the composer, stop orb
+            // and completion teardown behave identically in both modes.
+            const endpoint = (agentMode === 'shell') ? '/api/start-shell' : '/api/start-agent';
+
+            fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 // session_id threads the active chat: null/"new" => fresh start,
@@ -125,7 +132,10 @@
                     // server-side) so the run-end save + future sends target it.
                     if (data.session_id) window.currentSessionId = data.session_id;
                     // First run commits the chat to this mode — lock the picker.
-                    document.dispatchEvent(new CustomEvent('agentmode:lock', { detail: { mode: agentMode } }));
+                    // Shell use isn't part of a chat, so it never sets the lock.
+                    if (agentMode !== 'shell') {
+                        document.dispatchEvent(new CustomEvent('agentmode:lock', { detail: { mode: agentMode } }));
+                    }
                     // Show the just-created chat in the sidebar immediately.
                     document.dispatchEvent(new CustomEvent('chats:refresh'));
                 } else if (data.error) {

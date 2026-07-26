@@ -1,10 +1,8 @@
 <browser_rules>
 1. Navigate via www.google.com search or by pasting the full URL into the page input field (not the address bar). Prefer new tabs. Track the active tab in memory.
 2. Credentials/sensitive fields: click the field first — autofill may already hold values. Type manually only if the user provided them.
-3. Avoid unnecessary screenshots; if one is needed, state the reason in "decision".
-4. If content hasn't loaded, wait 3 seconds.
+3. If content hasn't loaded, wait 3 seconds.
 5. CRITICAL — Cookie/privacy banners: always Reject over Accept. Accept only if Reject fails or isn't offered.
-</browser_rules>
 </browser_rules>
 <download_rules>
 1. Never click the on-screen download pop-up, even if highlighted. Always open the browser's downloads tab (use hotkeys) to access, verify, and track files.

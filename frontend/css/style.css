@@ -27,11 +27,17 @@ button, input, textarea, select, a, [role="button"],
     z-index: 99999;
     /* Same off-white as the app background so the splash blends seamlessly. */
     background: #D0CFC9;
-    opacity: 1;
+    /* 0.999, NOT 1: an opaque overlay lets Chromium occlusion-cull the app
+       beneath, so the first fade frame had to rasterise every backdrop-filter
+       glass card at once — a burst that jittered the handoff right as the PC
+       finished fading. At 0.999 (visually identical) the app rasterises early,
+       during the calm particle-assembly phase. */
+    opacity: 0.999;
+    will-change: opacity;
     margin: 0;
     padding: 0;
     overflow: hidden;
-    transition: opacity 1.5s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: opacity 0.9s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .splash-overlay.fade-out {
     opacity: 0;
@@ -1660,7 +1666,14 @@ body.cli-mode .glass-button-wrapper {
     backdrop-filter: blur(18px) saturate(140%);
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
     display: none;
+
+    /* Hide the scrollbar — the list still scrolls, the track just isn't drawn
+       (same treatment as .sub-menu-content and every other scroller in the app).
+       Applies to the chat drop-up too: it reuses this class. */
+    scrollbar-width: none;             /* Firefox */
+    -ms-overflow-style: none;
 }
+.model-dropdown-menu::-webkit-scrollbar { display: none; }
 .model-dropdown.open .model-dropdown-menu { display: block; }
 .model-dropdown-option {
     display: flex;

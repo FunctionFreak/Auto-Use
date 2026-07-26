@@ -35,6 +35,7 @@ import os
 import sys
 import json
 import logging
+import signal
 import platform
 import importlib
 import threading
@@ -46,6 +47,9 @@ from datetime import datetime
 from pathlib import Path
 
 from flask import Flask, jsonify, send_from_directory
+
+# Where the user's data lives (autouse_data/, outside the install folder).
+from Auto_Use import api_key_file, skills_dir
 
 # Resumable chat memory + per-chat token tracker. Platform-agnostic, pure-stdlib.
 from Auto_Use.agent_conversation.service import conversation
@@ -767,8 +771,11 @@ EXTRA_KEYS = ['VERTEX_PROJECT_ID', 'VERTEX_LOCATION']
 
 
 def get_api_key_file():
-    """Get path to api_key.txt (lives at Auto_Use/api_key/, shared across platforms)"""
-    return get_auto_use_path() / "api_key" / "api_key.txt"
+    """Path to api_key.txt — autouse_data/api_key/, OUTSIDE the install folder so
+    an uninstall/reinstall no longer wipes every API key. Shared across
+    platforms; resolved in Auto_Use/__init__.py so the Settings panel, the
+    Telegram bot and each llm_provider can't disagree about it."""
+    return api_key_file()
 
 
 def read_api_keys():
@@ -1812,6 +1819,401 @@ def start_agent():
         return jsonify({'error': str(e)}), 500
 
 
+def run_shell_task(task, provider, model, api_key, run_pkg,
+                   cli_callback=None, stop_event=None):
+    """Shell use — a DIRECT line from the composer to the coder (CLI) agent.
+
+    Runs ONE task on the coder and BLOCKS until it finishes; call from a
+    background thread. No main agent, no chat session, no conversation memory,
+    no todo/milestone watchers — the CLI stage (frontend/cli/) is the whole UI,
+    showing the same terminal / tool-chain / tracking-progress card the coder
+    shows when the MAIN agent dispatches one, because it is the same event
+    stream.
+
+    That reuse is the point. Rather than re-implement the subprocess spawn, the
+    stdout reader threads, the `__MINION_UI_EVENT__` bridge and the cli_*
+    lifecycle, this drives the platform ControllerView's existing `cli_agent`
+    (dispatch) + `cli_await` (block) actions — the two the main agent itself
+    uses. macOS and Windows go through the same two calls; only run_pkg differs,
+    and the coder subprocess command is already branched inside ControllerView.
+
+    Args:
+        task: the user's typed request, handed to the coder verbatim.
+        provider/model/api_key: same LLM selection the main agent would use.
+        run_pkg: 'macOS_use' | 'windows_use' (PLATFORM_PKG).
+        cli_callback: send_cli_event_to_frontend — drives the CLI stage.
+        stop_event: threading.Event shared with /api/stop-agent, so the
+            composer's stop orb kills the coder subprocess mid-run.
+
+    Returns:
+        The cli_await result dict: {"status", "completed": [...]}, or
+        {"status": "stopped"} if the user stopped the run.
+    """
+    ControllerView = importlib.import_module(
+        f"Auto_Use.{run_pkg}.controller.view"
+    ).ControllerView
+
+    # cli_mode=True with NO session_id: keeps this run off the MAIN agent's
+    # scratchpad/todo files (it writes to the shared cli_milestone/ folder
+    # instead) without minting a per-run sandbox folder on the Desktop.
+    controller = ControllerView(
+        provider=provider,
+        model=model,
+        cli_mode=True,
+        cli_callback=cli_callback,
+        api_key=api_key,
+        stop_event=stop_event,
+    )
+
+    logging.getLogger(__name__).info(f"Shell use — dispatching coder agent for: {task[:120]}")
+    try:
+        # 1. Dispatch: spawns the coder subprocess, emits task_start and starts
+        #    streaming its stdout/stderr into the card.
+        controller.route_action([{"type": "cli_agent", "value": task}])
+        # 2. Await: emits await_start (stage slides up), blocks until the coder
+        #    writes its result file, then emits task_end + await_end.
+        return controller.route_action([{"type": "cli_await", "value": "Shell use"}])
+    finally:
+        # Safety net for an early exception — a no-op on the normal path, where
+        # cli_await already drained the task list.
+        try:
+            controller.stop_cli_agent()
+        except Exception:
+            debug_exception("shell run cleanup")
+
+
+@app.route('/api/start-shell', methods=['POST'])
+def start_shell():
+    """Agent mode → Shell use: send the task STRAIGHT to the coder agent.
+
+    Deliberately tiny next to /api/start-agent — no chat session, no memory,
+    no todo/milestone watchers, no Agent Notes. The CLI stage is the whole UI.
+    All of the actual work lives in run_shell_task() above; this route only owns
+    the thread + the run-end signal back to the composer.
+
+    Shares active_agent_stop_event / active_agent_session_id with the normal
+    run so the stop orb (/api/stop-agent) and New chat work unchanged.
+    """
+    from flask import request
+    global active_agent_stop_event, active_agent_session_id
+
+    try:
+        data = request.get_json() or {}
+        provider = data.get('provider')
+        model = data.get('model')
+        task = data.get('task')
+
+        if not all([provider, model, task]):
+            return jsonify({'error': 'Missing provider, model, or task'}), 400
+
+        api_key = get_provider_api_key(provider)
+
+        active_agent_stop_event = threading.Event()
+        active_agent_session_id = str(time.time())   # per-RUN guard
+        current_session_id = active_agent_session_id
+        stop_event = active_agent_stop_event
+
+        def run_shell():
+            outcome = {"status": "success", "message": ""}
+            try:
+                run_shell_task(
+                    task=task,
+                    provider=provider,
+                    model=model,
+                    api_key=api_key,
+                    run_pkg=PLATFORM_PKG,
+                    cli_callback=send_cli_event_to_frontend,
+                    stop_event=stop_event,
+                )
+            except Exception as shell_exc:
+                debug_exception("run_shell")
+                outcome = {"status": "error", "message": str(shell_exc)}
+            finally:
+                stop_event.set()
+                # Same completion signal as a normal run: rolls the composer's
+                # orb, placeholder and input box back to idle.
+                if webview_window and current_session_id == active_agent_session_id:
+                    try:
+                        if outcome["status"] == "success":
+                            webview_window.evaluate_js("window.agentComplete()")
+                        else:
+                            reason = "❌ Error: " + (outcome["message"] or "")
+                            # agentError writes to the milestone stream, which lives in a
+                            # zone body.cli-stage hides — so ALSO put it on the terminal,
+                            # the only surface visible in Shell use.
+                            webview_window.evaluate_js(
+                                f"window.cliShellNote && window.cliShellNote('{_js_escape(reason)}')"
+                            )
+                            webview_window.evaluate_js(
+                                f"window.agentError('{_js_escape(reason)}')"
+                            )
+                    except Exception:
+                        debug_exception("signaling shell run completion")
+
+        thread = threading.Thread(target=run_shell)
+        thread.daemon = True
+        thread.start()
+
+        return jsonify({'status': 'started'})
+
+    except Exception as e:
+        debug_exception("start_shell API")
+        return jsonify({'error': str(e)}), 500
+
+
+# One Sandbox for the hand-typed terminal, kept for the life of the app so its
+# working directory survives between commands (that's what makes `cd` stick).
+_manual_shell = None
+
+
+def _get_manual_shell():
+    global _manual_shell
+    if _manual_shell is None:
+        Sandbox = importlib.import_module(f"Auto_Use.{PLATFORM_PKG}.sandbox").Sandbox
+        _manual_shell = Sandbox()
+    return _manual_shell
+
+
+class _ManualTerminal:
+    """The live process behind Shell use's hand-typed `>` prompt.
+
+    Deliberately NOT Sandbox.run(): that blocks until the command exits and hands
+    back one blob, which is fine for an agent tool call but useless at a prompt —
+    `ping 8.8.8.8` would show nothing until it died. This spawns the command in its
+    OWN process group, streams stdout/stderr to the terminal as they arrive, and can
+    deliver a real SIGINT to that group, which is what Ctrl+C actually does.
+
+    One command at a time, because there is one prompt. Output is flushed in small
+    batches (~80ms) rather than per line, so a chatty command can't drown the UI
+    thread in evaluate_js calls.
+    """
+
+    FLUSH_MS = 0.08
+
+    def __init__(self):
+        self._proc = None
+        self._lock = threading.Lock()
+        self._buf = []
+        self._buf_lock = threading.Lock()
+
+    def is_running(self):
+        with self._lock:
+            return self._proc is not None and self._proc.poll() is None
+
+    # ---- output pump -------------------------------------------------------
+    def _emit(self, line):
+        with self._buf_lock:
+            self._buf.append(line)
+
+    def _flush(self):
+        with self._buf_lock:
+            if not self._buf:
+                return
+            lines, self._buf = self._buf, []
+        if not webview_window:
+            return
+        try:
+            payload = json.dumps(lines, ensure_ascii=False)
+            payload = _js_escape(payload)
+            webview_window.evaluate_js(
+                f"window.shellTermLines && window.shellTermLines('{payload}')"
+            )
+        except Exception:
+            debug_exception("shell term flush")
+
+    def _pump(self, proc):
+        while proc.poll() is None:
+            time.sleep(self.FLUSH_MS)
+            self._flush()
+        self._flush()   # drain whatever landed in the final moments
+
+    def _read(self, pipe):
+        try:
+            for raw in iter(pipe.readline, b""):
+                if not raw:
+                    break
+                self._emit(raw.decode("utf-8", errors="replace").rstrip("\r\n"))
+        except Exception:
+            pass
+        finally:
+            try:
+                pipe.close()
+            except Exception:
+                pass
+
+    # ---- lifecycle ---------------------------------------------------------
+    def start(self, command, cwd):
+        """Spawn `command`. Returns (started, error_message)."""
+        if self.is_running():
+            return False, "a command is already running — press Ctrl+C to stop it"
+
+        if IS_WINDOWS:
+            argv = ["powershell", "-NoProfile", "-Command", command]
+            # own group so CTRL_BREAK_EVENT reaches it and not us
+            kwargs = {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+        else:
+            argv = ["/bin/zsh", "-c", command]
+            kwargs = {"start_new_session": True}   # setsid -> killpg targets only the child
+
+        try:
+            proc = subprocess.Popen(
+                argv, cwd=cwd,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                bufsize=0, **kwargs
+            )
+        except Exception as e:
+            return False, str(e)
+
+        with self._lock:
+            self._proc = proc
+
+        threading.Thread(target=self._read, args=(proc.stdout,), daemon=True).start()
+        threading.Thread(target=self._pump, args=(proc,), daemon=True).start()
+
+        def _wait():
+            code = proc.wait()
+            self._flush()
+            with self._lock:
+                if self._proc is proc:
+                    self._proc = None
+            if webview_window:
+                try:
+                    webview_window.evaluate_js(
+                        f"window.shellTermEnd && window.shellTermEnd({int(code)})"
+                    )
+                except Exception:
+                    debug_exception("shell term end")
+
+        threading.Thread(target=_wait, daemon=True).start()
+        return True, ""
+
+    def interrupt(self):
+        """Ctrl+C: SIGINT the process GROUP (so pipelines and children go too),
+        then SIGKILL anything still alive a moment later."""
+        with self._lock:
+            proc = self._proc
+        if proc is None or proc.poll() is not None:
+            return False
+        try:
+            if IS_WINDOWS:
+                proc.send_signal(getattr(signal, "CTRL_BREAK_EVENT", signal.SIGTERM))
+            else:
+                os.killpg(os.getpgid(proc.pid), signal.SIGINT)
+        except Exception:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+        def _sigkill():
+            time.sleep(1.5)
+            if proc.poll() is None:
+                try:
+                    if IS_WINDOWS:
+                        proc.kill()
+                    else:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except Exception:
+                    pass
+
+        threading.Thread(target=_sigkill, daemon=True).start()
+        return True
+
+
+_manual_terminal = None
+
+
+def _manual_term():
+    global _manual_terminal
+    if _manual_terminal is None:
+        _manual_terminal = _ManualTerminal()
+    return _manual_terminal
+
+
+def _short_cwd(path):
+    """Prompt-friendly cwd: the home prefix collapsed to ~ (…/a/b/c stays as-is)."""
+    try:
+        home = str(Path.home())
+        p = str(path or "")
+        return "~" + p[len(home):] if p.startswith(home) else p
+    except Exception:
+        return str(path or "")
+
+
+@app.route('/api/shell-cwd', methods=['GET'])
+def shell_cwd():
+    """Where the hand-typed terminal currently is — the frontend shows this in the
+    prompt while it's focused, so `cd` is obvious."""
+    try:
+        cwd = _get_manual_shell().get_cwd()
+        return jsonify({'cwd': cwd, 'short': _short_cwd(cwd)})
+    except Exception as e:
+        debug_exception('shell_cwd API')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/shell-exec', methods=['POST'])
+def shell_exec():
+    """Shell use → a command the USER typed at the `>` prompt. No agent, no LLM.
+
+    Runs through the same Sandbox the coder's shell tool uses, so it's zsh on
+    macOS / PowerShell on Windows, the cwd persists between commands, and the
+    macOS TCC-popup watcher still applies. trusted=True skips the agent-oriented
+    blocked-path guard: the person typing is the one running it.
+    """
+    from flask import request
+    try:
+        data = request.get_json() or {}
+        command = (data.get('command') or '').strip()
+        if not command:
+            return jsonify({'error': 'Missing command'}), 400
+
+        sh = _get_manual_shell()
+
+        # `cd` has to move the Sandbox's own working dir — run as a subprocess it
+        # would change directory, exit, and leave nothing behind.
+        if command == 'cd' or command.startswith('cd '):
+            # Sandbox._validate_path resolves relative to the cwd and does NOT expand `~`,
+            # so `cd ~/Desktop` would look for "<cwd>/~/Desktop". Expand it here, and drop
+            # any quotes the user wrapped a spaced path in.
+            target = command[2:].strip().strip('"\'') or '~'
+            res = sh.cd(os.path.expanduser(target))
+            ok = bool(res.get('success'))
+            return jsonify({
+                'output': '' if ok else (res.get('error') or 'Directory not found'),
+                'status': 'success' if ok else 'error',
+                'cwd': sh.get_cwd(),
+                'short': _short_cwd(sh.get_cwd()),
+            })
+
+        # Everything else runs LIVE: the route returns as soon as the process is
+        # spawned and its output is pushed to the terminal line by line, so `ping`
+        # scrolls as it happens instead of appearing only once it dies.
+        started, err = _manual_term().start(command, sh.get_cwd())
+        if not started:
+            return jsonify({'output': err, 'status': 'error',
+                            'cwd': sh.get_cwd(), 'short': _short_cwd(sh.get_cwd())}), 200
+        return jsonify({'status': 'started',
+                        'cwd': sh.get_cwd(), 'short': _short_cwd(sh.get_cwd())})
+
+    except Exception as e:
+        debug_exception('shell_exec API')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/shell-kill', methods=['POST'])
+def shell_kill():
+    """Ctrl+C at the `>` prompt — interrupt whatever is running, exactly as a
+    terminal would: SIGINT to the whole process group first, SIGKILL only if it
+    refuses to die."""
+    try:
+        killed = _manual_term().interrupt()
+        return jsonify({'status': 'killed' if killed else 'idle'})
+    except Exception as e:
+        debug_exception('shell_kill API')
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/stop-agent', methods=['POST'])
 def stop_agent():
     """Stop the currently running agent"""
@@ -1847,6 +2249,117 @@ def open_github():
     except Exception:
         debug_exception("open_github")
         return jsonify({'error': 'failed'}), 500
+
+
+# =============================================================================
+# Flask routes — skills (the Skills stage's Computer-use tab: list / preview /
+# delete the active platform's Auto_Use/<platform>_use/agent/skills/*.md, so
+# the same code serves windows_use on Windows and macOS_use on Mac)
+# =============================================================================
+def _skills_dir():
+    """The active platform's skill-markdown folder — autouse_data/skills/
+    <windows|mac>/, OUTSIDE the install folder so uninstalling never deletes
+    the user's edited skills."""
+    return skills_dir()
+
+
+def _safe_skill_path(name):
+    """Resolve a skill filename inside the skills dir, or None. Only bare
+    '<something>.md' basenames are accepted — no separators, no traversal.
+    Extension check is case-insensitive to match Windows' case-insensitive
+    glob in list_skills (a listed FOO.MD must also preview/delete)."""
+    if (not name or not name.lower().endswith('.md')
+            or '/' in name or '\\' in name or name != os.path.basename(name)
+            or name.startswith('.')):
+        return None
+    p = _skills_dir() / name
+    return p if p.is_file() else None
+
+
+@app.route('/api/skills', methods=['GET'])
+def list_skills():
+    """List the platform's skill .md files (sorted, names only) for the
+    Skills stage's default list view."""
+    try:
+        d = _skills_dir()
+        files = sorted((f.name for f in d.glob('*.md')), key=str.lower) if d.is_dir() else []
+        return jsonify({'skills': files})
+    except Exception:
+        debug_exception("list_skills")
+        return jsonify({'skills': []})
+
+
+@app.route('/api/skills/<name>', methods=['GET'])
+def get_skill(name):
+    """A single skill file's raw markdown, for the preview view."""
+    try:
+        p = _safe_skill_path(name)
+        if not p:
+            return jsonify({'error': 'Not found'}), 404
+        with open(p, 'r', encoding='utf-8', errors='replace') as f:
+            return jsonify({'name': name, 'content': f.read()})
+    except Exception:
+        debug_exception("get_skill")
+        return jsonify({'error': 'Failed'}), 500
+
+
+@app.route('/api/skills/<name>', methods=['PUT'])
+def save_skill(name):
+    """Overwrite an EXISTING skill .md with edited content from the preview's
+    Edit mode. Atomic write (temp + replace) so a crash can't truncate the
+    skill; the .tmp never matches list_skills' *.md glob."""
+    from flask import request
+    try:
+        p = _safe_skill_path(name)
+        if not p:
+            return jsonify({'error': 'Not found'}), 404
+        data = request.get_json(silent=True) or {}
+        content = data.get('content')
+        if not isinstance(content, str):
+            return jsonify({'error': 'Bad content'}), 400
+        tmp = p.parent / (p.name + '.tmp')
+        with open(tmp, 'w', encoding='utf-8') as f:
+            f.write(content)
+        os.replace(tmp, p)
+        return jsonify({'status': 'saved'})
+    except Exception:
+        debug_exception("save_skill")
+        return jsonify({'error': 'Failed to save'}), 500
+
+
+@app.route('/api/skills/<name>', methods=['DELETE'])
+def delete_skill(name):
+    """Delete a skill .md (idempotent) and scrub any skills.json entries that
+    pointed at it, so the agent's site/app→skill index never dangles."""
+    try:
+        p = _safe_skill_path(name)
+        if p:
+            p.unlink()
+        try:
+            idx = _skills_dir() / 'skills.json'
+            if idx.is_file():
+                with open(idx, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                changed = False
+                for mapping in data.values():
+                    if isinstance(mapping, dict):
+                        for key in [k for k, v in mapping.items() if v == name]:
+                            del mapping[key]
+                            changed = True
+                if changed:
+                    # Atomic rewrite: never leave skills.json truncated if we
+                    # die mid-dump (the agent falls back to empty mappings on a
+                    # broken index, silently disabling all skill injection).
+                    tmp = idx.with_suffix('.json.tmp')
+                    with open(tmp, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2)
+                    os.replace(tmp, idx)
+        except Exception:
+            debug_exception("delete_skill_index")
+        return jsonify({'status': 'deleted'})
+    except Exception:
+        debug_exception("delete_skill")
+        return jsonify({'error': 'Failed to delete'}), 500
 
 
 # =============================================================================

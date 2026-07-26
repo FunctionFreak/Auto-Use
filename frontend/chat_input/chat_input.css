@@ -349,9 +349,23 @@
     flex-shrink: 0;
     user-select: none;
     -webkit-user-select: none;
-    transition: background-color 0.3s ease;
+    /* Pin the pill to its own compositing layer. Without this WKWebView creates
+       a layer for the opacity fade and throws it away afterwards, and that
+       round-trip re-snaps the SVG icons by a subpixel — the little upward jitter
+       as the toggle fades back in. Pinned, both directions render identically. */
+    transform: translateZ(0);
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+    transition: background-color 0.3s ease, opacity 0.18s ease;
 }
 .fast-quality-toggle:hover { background: #e2e8f0; }
+/* Shell use has no fast/quality split — the coder agent runs one way — so the
+   toggle just fades out (and back in on the way to another mode).
+   data-agent-mode is mirrored onto .input-area-wrapper by agent_mode.js. */
+.input-area-wrapper[data-agent-mode="shell"] .fast-quality-toggle {
+    opacity: 0;
+    pointer-events: none;
+}
 .fq-thumb {
     position: absolute;
     top: 2px;
@@ -413,8 +427,11 @@
     transform: translate(-50%, 0);
 }
 
-/* RUNNING: same read-only treatment as the model picker beside it. */
-.input-area-wrapper:has(.chat-input.agent-active) .fast-quality-toggle {
+/* RUNNING: same read-only treatment as the model picker beside it. Skipped in
+   Shell use — :has() scores as its most specific argument, so this selector
+   (0,4,0) outweighs the shell hide rule (0,3,0) and would fade the toggle back
+   IN at 45% the moment a shell run started. */
+.input-area-wrapper:not([data-agent-mode="shell"]):has(.chat-input.agent-active) .fast-quality-toggle {
     opacity: 0.45;
     pointer-events: none;
 }
@@ -452,18 +469,41 @@
     color: rgba(60, 60, 60, 0.65);
     font-weight: 500;
 }
+/* Identical to .am-chev on the Computer/Mobile use trigger (agent_mode.css) —
+   same size, same grey, same 0.25s flip — so both drop-ups on the row read as
+   one control set. */
 .chat-dropdown-chevron {
-    width: 12px;
+    width: 14px;
     height: 14px;
     flex-shrink: 0;
     color: rgba(90, 90, 90, 0.65);
+    transition: transform 0.25s ease;
 }
+.chat-model-dropdown.open .chat-dropdown-chevron { transform: rotate(180deg); }
 /* keep it clickable in the no-provider "disabled" state so the click can still toast */
 .chat-model-dropdown.disabled { opacity: 1; pointer-events: auto; }
 
 /* DROP-UP menu: opens upward (above the orb); white card matching the
-   Agent-mode menu across the row; height-capped so it SCROLLS. */
-.chat-model-dropdown .model-dropdown-menu {
+   Agent-mode menu across the row; height-capped so it SCROLLS.
+
+   OPENING ANIMATION: the base .model-dropdown-menu in style.css flips
+   display:none/block, which is instant — the menu just popped into existence.
+   Here it stays displayed and animates on opacity + transform instead, with the
+   exact timings the Computer/Mobile use menu uses (.agent-menu in
+   agent_mode.css): opacity 0.25s, transform 0.3s, rising 6px into place.
+   The selector is .model-dropdown.chat-model-dropdown (not just
+   .chat-model-dropdown) so it outranks style.css's
+   `.model-dropdown.open .model-dropdown-menu { display: block }` on specificity
+   rather than relying on stylesheet order. */
+.model-dropdown.chat-model-dropdown .model-dropdown-menu {
+    display: block;
+    opacity: 0;
+    transform: translateY(6px);
+    pointer-events: none;
+    transition:
+        opacity 0.25s ease,
+        transform 0.3s ease;
+    will-change: opacity, transform;   /* no re-raster settle when the slide ends */
     top: auto;
     bottom: calc(100% + 8px);
     /* Right-aligned to the trigger (which sits on the RIGHT, beside the orb) so the
@@ -487,6 +527,17 @@
     border-radius: 14px;
     box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
 }
+.model-dropdown.chat-model-dropdown.open .model-dropdown-menu {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+/* Mirrors agent_mode.css's reduced-motion block for the same controls. */
+@media (prefers-reduced-motion: reduce) {
+    .model-dropdown.chat-model-dropdown .model-dropdown-menu,
+    .chat-dropdown-chevron { transition: none; }
+}
 
 /* The drop-up opens UPWARD into screen space owned by #mainGrid (position:fixed,
    z-index:13) and its zone cells (pointer-events:auto). The menu's z-index:22 is
@@ -496,8 +547,18 @@
    dropdown is open, lift the whole wrapper above the grid (and the other in-flow
    chrome: glass button 20, toast 25, left bar 30) so every menu item is clickable.
    :has() is supported in the WKWebView host (verified). Reverts the instant the
-   dropdown closes, so the grid stays interactive the rest of the time. */
-.chat-container-wrapper:has(.chat-model-dropdown.open) {
+   dropdown closes, so the grid stays interactive the rest of the time.
+
+   The SAME trap bit the textarea itself: a long multi-line draft grows the box up
+   past the grid's bottom edge (grid reserves only ~160-196px), so the grid painted
+   over the upper lines and stole the clicks there — you could click/edit the bottom
+   couple of lines but the ones above were keyboard-only. So also lift while the
+   textarea is focused (i.e. while editing the draft): the box's upper lines then
+   sit above the grid and every visible line is clickable. The grid's four base
+   zones are pure display (no controls), so covering them while editing costs
+   nothing; focus-out reverts, keeping the grid interactive the rest of the time. */
+.chat-container-wrapper:has(.chat-model-dropdown.open),
+.chat-container-wrapper:has(.chat-input:focus) {
     z-index: 40;
 }
 

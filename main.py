@@ -27,7 +27,8 @@ MODEL = "gemini-3.5-flash" #refer to the model name correctly from model_list.tx
 # Your task here
 task = """
 
-using typeerite only write one nice poem . do not use input anythign other tool its already focused
+open  the chrome browser.
+
 """
 
 # Control conversation saving

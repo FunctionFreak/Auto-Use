@@ -7,6 +7,7 @@
 // API (window.CliToolIcons):
 //   createChain(treeEl, {orientation})        -> { addAction(tool)->bool, dispose }
 //   createTracker(treeEl, flowEl, zoneEl)     -> { push(text), dispose }  (scratchpad stream)
+//   createMascot(canvas, size)                -> { dispose }  (the blinking agent head, big)
 // where `tool` = { name: <action type>, arg: <label param> }. Unmapped names (todo/minion/
 // scratchpad/exit) are skipped by the chain — they're shown elsewhere.
 (function () {
@@ -143,8 +144,62 @@
         };
     }
 
+    // --- flowchart with flowing dashed links — "planning next steps" (tool_icon.html planPainter).
+    //     Animated rather than a vecPainter: lineDashOffset is driven off the frame clock. ---
+    function planPainter() {
+        return function (ctx, cx, cy, t, alpha) {
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = COLOR; ctx.fillStyle = COLOR;
+            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+            // flowing dashed lines linking the nodes
+            ctx.lineWidth = 2.2;
+            ctx.setLineDash([4, 4]);
+            ctx.lineDashOffset = -t / 40;
+            ctx.beginPath();
+            ctx.moveTo(0, -10); ctx.lineTo(0, 0);
+            ctx.lineTo(-23, 0); ctx.lineTo(-23, 10);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(0, 0); ctx.lineTo(23, 0); ctx.lineTo(23, 10);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // node boxes: one on top, two below
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-18, -26, 36, 16, 4); else ctx.rect(-18, -26, 36, 16);
+            ctx.stroke();
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-36, 10, 26, 16, 4); else ctx.rect(-36, 10, 26, 16);
+            ctx.stroke();
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(10, 10, 26, 16, 4); else ctx.rect(10, 10, 26, 16);
+            ctx.stroke();
+
+            // abstract task text inside each box
+            ctx.lineWidth = 2.2;
+            ctx.beginPath(); ctx.moveTo(-9, -18); ctx.lineTo(9, -18); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(-29, 18); ctx.lineTo(-17, 18); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(17, 18); ctx.lineTo(29, 18); ctx.stroke();
+
+            ctx.restore();
+        };
+    }
+
+    // Master intensity of the working glow — one number for the whole effect (both the
+    // blurred halo and the crisp rim scale off it). The stop-orb colours are vivid, so
+    // at full strength they read as neon against the card's soft greys.
+    var GLOW_A = 0.18;
+
     // --- agent mascot head (blinking) — from bottom_left agentPainter ---
-    function agentPainter() {
+    // opts.glow: () => bool. When it returns true the head is ringed with the stop orb's
+    // rotating gradient (tool_icon.html's agentPainter) — used to show the agent is
+    // WORKING. A live getter, not a flag, so the same painter instance can be switched
+    // at runtime. The chain's small `agent` icon passes nothing and never glows.
+    function agentPainter(opts) {
+        opts = opts || {};
         return function (ctx, cx, cy, t, alpha) {
             ctx.save();
             ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
@@ -152,6 +207,38 @@
             ctx.beginPath();
             if (ctx.roundRect) ctx.roundRect(-30, -30, 60, 60, 13); else ctx.rect(-30, -30, 60, 60);
             ctx.fill();
+
+            // The glow strokes the head's OWN path — no beginPath between fill and stroke.
+            if (opts.glow && opts.glow()) {
+                var gradAng = t / 500;
+                var gx = Math.cos(gradAng) * 45, gy = Math.sin(gradAng) * 45;
+                var grad = ctx.createLinearGradient(gx, gy, -gx, -gy);
+                grad.addColorStop(0, '#ff0073');
+                grad.addColorStop(0.5, '#9292d8');
+                grad.addColorStop(1, '#00bbff');
+                ctx.strokeStyle = grad;
+                ctx.lineJoin = 'round';
+                var breath = (Math.sin(t / 400) + 1) / 2;   // 0..1 smooth pulse
+                if (typeof ctx.filter !== 'undefined') {
+                    // a real canvas blur — a wide stroke alone bands into visible squares
+                    ctx.save();
+                    ctx.filter = 'blur(' + (4 + 4 * breath) + 'px)';
+                    ctx.lineWidth = 6 + 2 * breath;
+                    ctx.globalAlpha = alpha * 0.7 * GLOW_A;
+                    ctx.stroke();
+                    ctx.restore();                          // drop the filter for the crisp line
+                } else {
+                    ctx.shadowColor = 'rgba(146, 146, 216, 0.8)';
+                    ctx.shadowBlur = 8 + 4 * breath;
+                    ctx.lineWidth = 4;
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
+                }
+                ctx.lineWidth = 1.5;
+                ctx.globalAlpha = alpha * 0.95 * GLOW_A;
+                ctx.stroke();
+            }
+
             var bt = t % 1800, sy = 1;
             if (bt > 1620) sy = bt < 1710 ? 1 - ((bt - 1620) / 90) * 0.92 : 0.08 + ((bt - 1710) / 90) * 0.92;
             var eh = 14 * sy, ey = -5 - eh / 2, er = Math.min(4, eh / 2);
@@ -290,6 +377,7 @@
         write:   penPainter,
         web:     globePainter,
         book:    bookPainter,
+        plan:    planPainter,
         agent:   agentPainter,
         minion:  minionPainter,
         loader:  loaderPainter,
@@ -307,6 +395,7 @@
         web:     { shape: 'web',     label: 'searching the web' },
         wait:    { shape: 'loader',  label: 'waiting' },
         minion:  { shape: 'minion',  label: 'dispatched minion' },
+        plan:    { shape: 'plan',    label: 'planning next steps' },
     };
     // todo_list / update_todo / scratchpad / exit are intentionally absent — they are surfaced
     // elsewhere in the card (right tracker / not shown) and so are skipped. `minion` IS shown
@@ -360,6 +449,43 @@
     }
     function startEngine() { if (!rafId) rafId = requestAnimationFrame(frame); }
     function dropStep(step) { var i = liveSteps.indexOf(step); if (i >= 0) liveSteps.splice(i, 1); }
+
+    // The same blinking agent head as the chain's `agent` icon, but standalone and
+    // at any size — the Shell-use terminal shows it under its name. Rides the
+    // shared rAF loop through the _render escape hatch, so no second loop starts.
+    // agentPainter draws a 60-unit head already scaled by VSCALE, so pre-scale by
+    // k about the centre to land it at exactly `size` px.
+    // `size` is the CANVAS box; the head is drawn at HEAD_FRAC of it so the working
+    // glow has room to bleed instead of being clipped square at the canvas edge.
+    var HEAD_FRAC = 0.78;
+    function createMascot(canvas, size) {
+        size = size || 44;
+        var ctx = canvas.getContext('2d');
+        var dpr = window.devicePixelRatio || 1;
+        canvas.width = size * dpr; canvas.height = size * dpr;
+        canvas.style.width = size + 'px'; canvas.style.height = size + 'px';
+        ctx.scale(dpr, dpr);
+        var glowOn = false;
+        var paint = agentPainter({ glow: function () { return glowOn; } });
+        var k = (size * HEAD_FRAC / 60) / VSCALE;
+        var step = {
+            _render: function (t) {
+                ctx.clearRect(0, 0, size, size);
+                ctx.save();
+                ctx.translate(size / 2, size / 2);
+                ctx.scale(k, k);
+                ctx.translate(-size / 2, -size / 2);
+                paint(ctx, size / 2, size / 2, t, 1);
+                ctx.restore();
+            }
+        };
+        liveSteps.push(step);
+        startEngine();
+        return {
+            setGlow: function (on) { glowOn = !!on; },
+            dispose: function () { dropStep(step); }
+        };
+    }
 
     function typeText(el, text) {
         if (!el) return;
@@ -511,5 +637,5 @@
         return { push: push, dispose: dispose };
     }
 
-    window.CliToolIcons = { createChain: createChain, createTracker: createTracker };
+    window.CliToolIcons = { createChain: createChain, createTracker: createTracker, createMascot: createMascot };
 })();

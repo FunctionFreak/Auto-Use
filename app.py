@@ -129,8 +129,8 @@ if IS_COMPILED:
 
 # Soft off-white with a hint of grey (light greige), used to tint the native
 # title bar on BOTH macOS and Windows. KEEP IN SYNC with the app/splash
-# background in frontend (style.css `body` + `.splash-overlay`, and the two
-# *_animation.html bodies) so the bar and content read as one unified surface.
+# background in frontend (style.css `body` + `.splash-overlay`, and
+# intro_animation.html) so the bar and content read as one unified surface.
 TITLEBAR_COLOR = "#D0CFC9"
 
 
