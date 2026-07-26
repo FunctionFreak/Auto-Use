@@ -144,6 +144,50 @@
         };
     }
 
+    // --- flowchart with flowing dashed links — "planning next steps" (tool_icon.html planPainter).
+    //     Animated rather than a vecPainter: lineDashOffset is driven off the frame clock. ---
+    function planPainter() {
+        return function (ctx, cx, cy, t, alpha) {
+            ctx.save();
+            ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
+            ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = COLOR; ctx.fillStyle = COLOR;
+            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+            // flowing dashed lines linking the nodes
+            ctx.lineWidth = 2.2;
+            ctx.setLineDash([4, 4]);
+            ctx.lineDashOffset = -t / 40;
+            ctx.beginPath();
+            ctx.moveTo(0, -10); ctx.lineTo(0, 0);
+            ctx.lineTo(-23, 0); ctx.lineTo(-23, 10);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(0, 0); ctx.lineTo(23, 0); ctx.lineTo(23, 10);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // node boxes: one on top, two below
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-18, -26, 36, 16, 4); else ctx.rect(-18, -26, 36, 16);
+            ctx.stroke();
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-36, 10, 26, 16, 4); else ctx.rect(-36, 10, 26, 16);
+            ctx.stroke();
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(10, 10, 26, 16, 4); else ctx.rect(10, 10, 26, 16);
+            ctx.stroke();
+
+            // abstract task text inside each box
+            ctx.lineWidth = 2.2;
+            ctx.beginPath(); ctx.moveTo(-9, -18); ctx.lineTo(9, -18); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(-29, 18); ctx.lineTo(-17, 18); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(17, 18); ctx.lineTo(29, 18); ctx.stroke();
+
+            ctx.restore();
+        };
+    }
+
     // --- agent mascot head (blinking) — from bottom_left agentPainter ---
     function agentPainter() {
         return function (ctx, cx, cy, t, alpha) {
@@ -291,6 +335,7 @@
         write:   penPainter,
         web:     globePainter,
         book:    bookPainter,
+        plan:    planPainter,
         agent:   agentPainter,
         minion:  minionPainter,
         loader:  loaderPainter,
@@ -308,6 +353,7 @@
         web:     { shape: 'web',     label: 'searching the web' },
         wait:    { shape: 'loader',  label: 'waiting' },
         minion:  { shape: 'minion',  label: 'dispatched minion' },
+        plan:    { shape: 'plan',    label: 'planning next steps' },
     };
     // todo_list / update_todo / scratchpad / exit are intentionally absent — they are surfaced
     // elsewhere in the card (right tracker / not shown) and so are skipped. `minion` IS shown

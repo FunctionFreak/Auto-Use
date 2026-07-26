@@ -75,7 +75,26 @@
     function mountAgent(taskId, desc) {
         var c = getContainer();
         if (!c || !window.CliCoderCard || cards.has(taskId)) return;
-        unmountIdle();                    // a real run takes the idle card's place
+
+        // Shell use: PROMOTE the waiting terminal rather than swapping it out. It is already
+        // the same card, in the same place, with the same live mascot canvas — tearing it
+        // down and sliding an identical replacement up from 16px is exactly the jitter you
+        // see on send. Promotion just attaches the two side zones and starts the run, so the
+        // terminal simply carries on. Nothing to animate, nothing to repaint.
+        if (idleCard && !cards.size) {
+            var promoted = idleCard;
+            var pUnit = promoted._unit;
+            idleCard = null;                                   // it's a live card now
+            pUnit.classList.remove('cc-idle');
+            if (promoted.chainEl) pUnit.insertBefore(promoted.chainEl, pUnit.firstChild);
+            if (promoted.trackEl) pUnit.appendChild(promoted.trackEl);
+            cards.set(taskId, promoted);
+            syncLayout();
+            if (promoted.begin) promoted.begin();              // opening phase starts NOW
+            return;
+        }
+
+        unmountIdle();                    // (other modes / extra agents) idle makes way
         var card = window.CliCoderCard.create(desc, cardOpts());
         var unit = buildUnit(card);
         unit.classList.add('entering');
@@ -119,7 +138,10 @@
     function mountIdle() {
         var c = getContainer();
         if (!c || idleCard || cards.size || !window.CliCoderCard) return;
-        idleCard = window.CliCoderCard.create('', cardOpts());
+        // idle:true — don't start the opening phase; mountAgent's promotion calls begin().
+        var opts = cardOpts();
+        opts.idle = true;
+        idleCard = window.CliCoderCard.create('', opts);
         var unit = buildUnit({ el: idleCard.el });
         unit.classList.add('cc-idle');
         idleCard._unit = unit;

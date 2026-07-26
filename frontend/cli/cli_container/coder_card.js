@@ -41,6 +41,26 @@
         var queue = [];
         var running = false;
         var timer = null;
+        // Per-streamer pace, defaulting to the module constants. The Shell-use terminal
+        // overrides these to run faster: its viewport is only 3 lines and each packet
+        // REPLACES it, so a step's lines have to land before the next packet arrives.
+        var TICK_MS = opts.stagger || STAGGER;
+        var TICK_CHARS = opts.step || STEP;
+        var HOLD_MS = (opts.lineHold != null) ? opts.lineHold : LINE_HOLD;
+        // Queue sentinel (identity-compared, never a string): "wipe the screen HERE".
+        // Sits between one step's lines and the next's — see reset().
+        var CLEAR = {};
+
+        function hardClear() {
+            if (multiline) {
+                scroll.replaceChildren();
+                scroll.style.transform = 'translateY(0)';
+                target.classList.remove('cc-scrolled');
+                activeLine = null;
+            } else {
+                target.replaceChildren();
+            }
+        }
 
         // Multiline: the append-only conveyor + the line currently shimmering. maxLines drives the
         // viewport height via a CSS var (CSS computes the px from line-height).
@@ -74,6 +94,9 @@
             if (running || !queue.length) return;
             running = true;
             var text = queue.shift();
+            // Step boundary reached: the previous step has finished drawing, so wipe now
+            // and carry straight on with the next step's first line.
+            if (text === CLEAR) { hardClear(); running = false; pump(); return; }
             // Array.from splits by code point so emoji/surrogate pairs stay intact.
             var chars = Array.from(text);
             if (!chars.length) { running = false; pump(); return; }
@@ -91,13 +114,13 @@
 
                 var mi = 0;
                 (function mtick() {
-                    for (var n = 0; n < STEP; n++) {
+                    for (var n = 0; n < TICK_CHARS; n++) {
                         if (mi >= chars.length) {
                             // Line fully streamed — flatten spans and add the loading shimmer
                             // (shines until the next line starts / the step ends).
                             mline.textContent = mline.textContent;
                             mline.classList.add('cc-shimmer');
-                            timer = setTimeout(function () { running = false; pump(); }, LINE_HOLD);
+                            timer = setTimeout(function () { running = false; pump(); }, HOLD_MS);
                             return;
                         }
                         var firstOnLine = mline.childElementCount === 0;
@@ -113,7 +136,7 @@
                         mi++;
                     }
                     scrollToEnd();                       // line may have wrapped onto a new row -> re-pin bottom
-                    timer = setTimeout(mtick, STAGGER);
+                    timer = setTimeout(mtick, TICK_MS);
                 })();
                 return;
             }
@@ -129,13 +152,13 @@
 
             var i = 0;
             (function tick() {
-                for (var n = 0; n < STEP; n++) {     // reveal a few chars per tick for speed
+                for (var n = 0; n < TICK_CHARS; n++) {     // reveal a few chars per tick for speed
                     if (i >= chars.length) {
                         // Line fully streamed — flatten the char spans to plain text and add a
                         // loading shimmer (it shines until the next line replaces it / the step ends).
                         page.textContent = page.textContent;
                         page.classList.add('cc-shimmer');
-                        timer = setTimeout(function () { running = false; pump(); }, LINE_HOLD);
+                        timer = setTimeout(function () { running = false; pump(); }, HOLD_MS);
                         return;
                     }
                     var firstOnPage = page.childElementCount === 0;
@@ -163,7 +186,7 @@
                     else { requestAnimationFrame(function () { span.style.opacity = '1'; }); }
                     i++;
                 }
-                timer = setTimeout(tick, STAGGER);
+                timer = setTimeout(tick, TICK_MS);
             })();
         }
 
@@ -173,6 +196,17 @@
                 queue.push(String(text));
                 if (queue.length > 600) queue.splice(0, queue.length - 600);   // memory safety only
                 if (!running) pump();
+            },
+            // Start a fresh screen for the step that's about to be pushed, so the terminal
+            // only ever shows one step at a time.
+            //
+            // Idle → wipe now. Mid-flight → do NOT cut the current step off: queue the wipe
+            // so it lands after the last of its lines and before the new step's first. Two
+            // packets in quick succession therefore show step N in full, then step N+1 —
+            // rather than truncating N the moment N+1 arrives.
+            reset: function () {
+                if (!running && !queue.length) { hardClear(); return; }
+                queue.push(CLEAR);
             },
             dispose: function () { if (timer) { clearTimeout(timer); timer = null; } queue.length = 0; running = false; }
         };
@@ -226,12 +260,21 @@
     }
 
     // A clean, terminal-command-style narration line for ONE action — what the coder is
-    // actually doing this step. The backend only streams the `action` array (not the prose
-    // fields), so we synthesize a readable line here instead of dumping the raw JSON onto the
-    // `>` terminal. Returns '' for actions surfaced elsewhere (scratchpad → right tracker;
-    // todo → not shown), so the caller skips them.
+    // actually doing this step. We synthesize a readable line here instead of dumping the raw
+    // JSON onto the `>` terminal.
+    //
+    // `all` = narrate EVERY action type. Without it, scratchpad/todo actions return '' and the
+    // caller skips them, because the compact card surfaces those elsewhere (scratchpad → the
+    // right tracker, todo → nowhere). The Shell-use terminal passes all=true: it's meant to be
+    // the complete record of the step, so an action that produced no line there read as a
+    // dropped packet.
     function clip(s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
-    function narrationFor(a) {
+    // How many "- [ ]" / "- [x]" rows a todo_list action wrote (its value is markdown).
+    function todoCount(a) {
+        var m = String(argOf(a)).match(/- \[[ xX]\]/g);
+        return m ? m.length : 0;
+    }
+    function narrationFor(a, all) {
         if (!a || typeof a !== 'object' || !a.type) return '';
         switch (a.type) {
             case 'shell':   return '$ ' + clip(a.command || a.value || '', 240);
@@ -244,7 +287,12 @@
             case 'wait':    return 'wait ' + (a.value || '1') + 's';
             case 'minion':  return 'minion: ' + clip(a.value || a.query || '', 200);
             case 'exit':    return 'done' + (a.value ? (' — ' + clip(a.value, 240)) : '');
-            case 'scratchpad': case 'todo_list': case 'update_todo': return '';   // shown elsewhere / not shown
+            // Surfaced elsewhere on the compact card, so silent there — but narrated in full
+            // on the Shell-use terminal. todo_list's value is the whole markdown list, so it's
+            // summarised by item count rather than dumped into a 3-line window.
+            case 'scratchpad':  return all ? ('note: ' + clip(argOf(a), 200)) : '';
+            case 'todo_list':   return all ? ('todo list: ' + todoCount(a) + ' items') : '';
+            case 'update_todo': return all ? ('todo #' + (a.value || '?') + ' complete') : '';
             default:        return a.type + (argOf(a) ? (' ' + clip(argOf(a), 200)) : '');
         }
     }
@@ -262,30 +310,49 @@
         el.className = 'coder-card' + (header ? ' has-head' : '');
         // The terminal card holds ONLY the streamed output + todo + minion output. Nothing else
         // (the action chain and scratchpad live in their own zones beside the card).
+        // With a header the body is a ROW: .cc-main holds the terminal, with an (initially
+        // empty) todo column to its RIGHT — the wrapper is what lets the two sit side by
+        // side without the head/brain/out/minions each becoming their own column.
+        var inner =
+            (header
+                ? '<div class="cc-head"><span class="cc-hdot"></span><span class="cc-hname"></span></div>' +
+                  '<div class="cc-brain"><canvas class="cc-mascot"></canvas><span class="cc-think"></span></div>'
+                : '') +
+            // .cc-out-name is a PINNED row: the compact card's "AutoUse Code" label used to be
+            // the first line inside the scrolling conveyor, so it scrolled away as soon as the
+            // output overflowed. It now sits ABOVE the scroll view and stays put. The Shell-use
+            // card has no name here — its header already carries it.
+            '<div class="cc-out"><span class="cc-p">&gt;</span> <span class="cc-out-text">' +
+                (header ? '' : '<div class="cc-out-name">AutoUse Code</div>') +
+                '<div class="cc-out-view"></div>' +
+            '</span></div>' +
+            '<div class="cc-minions"><span class="cc-trunk"></span></div>';
         el.innerHTML =
             '<div class="cc-body">' +
-                (header
-                    ? '<div class="cc-head"><span class="cc-hdot"></span><span class="cc-hname"></span></div>' +
-                      '<div class="cc-brain"><canvas class="cc-mascot"></canvas><span class="cc-think"></span></div>'
-                    : '') +
-                '<div class="cc-out"><span class="cc-p">&gt;</span> <span class="cc-out-text"></span></div>' +
-                '<div class="cc-minions"><span class="cc-trunk"></span></div>' +
+                (header ? '<div class="cc-main">' + inner + '</div><div class="cc-todo"></div>' : inner) +
             '</div>' +
             '<div class="cc-progress"><span class="cc-fill"></span></div>';
         if (header) el.querySelector('.cc-hname').textContent = header;
 
         var outEl = el.querySelector('.cc-out');
         var pEl = el.querySelector('.cc-p');           // the `>` prompt — trunk anchors just below it
-        var outText = el.querySelector('.cc-out-text');
+        var outText = el.querySelector('.cc-out-view');   // the scrolling viewport, not the wrapper
         var minionsEl = el.querySelector('.cc-minions');
         var trunk = el.querySelector('.cc-trunk');
 
         // The `>` terminal shows a clean, multi-line scrolling log of the coder's ACTIONS
-        // (synthesized narration, NOT the raw JSON). Up to 5 lines visible, then it auto-scrolls.
-        // With a header the name is already on top, so the stream starts empty instead of
-        // repeating it as a first line that would just scroll away.
-        var outStream = makeLineStreamer(outText, header ? null : 'AutoUse Code',
-                                         { multiline: true, maxLines: 5 });
+        // (synthesized narration, NOT the raw JSON), auto-scrolling once it overflows.
+        // Shell use: a 3-line window, run FAST — each packet wipes it (see reset() below),
+        // so a step of 6 lines has to show its first 3, scroll to the rest and be done
+        // before the next packet lands. The stream starts EMPTY in both variants: the name
+        // lives outside the conveyor now (header row / pinned .cc-out-name), so it can't be
+        // scrolled away by the output.
+        var outStream = makeLineStreamer(
+            outText,
+            null,
+            header ? { multiline: true, maxLines: 3, step: 12, lineHold: 45 }
+                   : { multiline: true, maxLines: 5 }
+        );
         // Shell use only: the agent's own words, ONE line at a time beside the head. A
         // single-line paginating ticker (same streamer the minion rows use), so a long
         // field flows left-to-right, holds, clears and continues instead of stacking up.
@@ -339,7 +406,9 @@
                 if (!a || typeof a !== 'object' || !a.type) return;
                 // coder -> stream a clean, terminal-style narration line on the `>` output
                 // (narrationFor returns '' for scratchpad/todo, so those are skipped here).
-                if (isCoder) { var n = narrationFor(a); if (n) outStream.push(n); }
+                // Shell use narrates EVERY action (all=true) — its terminal is the step's
+                // full record, so nothing may silently produce no line.
+                if (isCoder) { var n = narrationFor(a, !!header); if (n) outStream.push(n); }
                 // scratchpad -> the right "tracking progress" stream (coder only; not minions)
                 if (a.type === 'scratchpad') { if (isCoder && tracker) tracker.push(argOf(a)); return; }
                 // every other real tool -> the icon chain; count it on the UNIVERSAL counter
@@ -379,6 +448,10 @@
         var coderActionParser = makeActionParser(function (obj) {
             markReceived();                       // this JSON IS the packet -> tick "thinking"
             if (thinkStream) streamProse(thinkStream, obj);   // Shell use: words beside the head
+            // Shell use: each packet REPLACES the terminal. The `>` area shows the step that
+            // just arrived and nothing else — no scrollback from the previous step, and no
+            // backlog of its lines still trickling out of the char pump underneath it.
+            if (header) outStream.reset();
             pushActions(actionChain, obj, true);  // actions -> the `>` terminal (+ chain/count)
             // Anticipate the next step — but NOT after a dispatched minion: the coder is
             // blocked until that minion returns, so the chain would sit on "communicating
@@ -393,7 +466,11 @@
             coderActionParser(text);     // read `action` -> narration + opening phases + tools + scratchpad
         }
 
-        startOpening();                  // step 1 begins: "communicating with llm service…"
+        // Step 1 begins: "communicating with llm service…". Skipped for the Shell-use IDLE
+        // card, which may sit for minutes before a task is sent — it would spend that whole
+        // time accumulating chain steps for an LLM call that hasn't happened. cli_stage.js
+        // calls begin() when the idle card is promoted to a live run.
+        if (!opts.idle) startOpening();
 
         // Anchor the single trunk so it starts just below the `>` prompt (a tiny CONSTANT gap,
         // NOT the centre of the now-tall 5-line terminal) and runs down to the LAST minion's
@@ -454,19 +531,45 @@
             if (minionParsers[id]) minionParsers[id](line);   // read `action` -> this minion's chain
         }
 
-        // Todo updates — dropped everywhere else (the agent owns its list), but in Shell
-        // use the terminal is the full transcript, so the list streams there too.
+        // Todo updates — dropped everywhere else (the agent owns its list). In Shell use the
+        // moment the agent writes a list the terminal gives up its right quarter to show it,
+        // and every later update re-renders (todo.md is rewritten, not appended).
         // payload is the JSON string service.py sends: {objective, tasks:[{text, done}]}.
+        //
+        // Deliberately built with the MAIN agent's todo classes (.todo-list / .todo-item /
+        // .todo-check / .todo-spinner / .todo-text from container/bottom_right/). Those are
+        // unscoped and loaded globally, so this list is pixel-identical to the Computer-use
+        // card — same animated tick colour, same spinner on the current task — with no style
+        // duplicated here. Row states mirror bottom_right.js's renderTodo().
+        var todoEl = el.querySelector('.cc-todo');
         function setTodo(payload) {
-            if (!header) return;
+            if (!header || !todoEl) return;
             var data;
             try { data = (typeof payload === 'string') ? JSON.parse(payload) : payload; }
             catch (e) { return; }
-            if (!data) return;
-            if (data.objective) outStream.push('todo: ' + data.objective);
-            (data.tasks || []).forEach(function (t) {
-                if (t && t.text) outStream.push((t.done ? '[x] ' : '[ ] ') + t.text);
+            var tasks = (data && data.tasks) || [];
+            if (!tasks.length) return;                // nothing written yet — stay collapsed
+
+            var firstUndone = -1;
+            for (var k = 0; k < tasks.length; k++) { if (!tasks[k].done) { firstUndone = k; break; } }
+
+            var list = document.createElement('div');
+            list.className = 'todo-list';
+            tasks.forEach(function (t, i) {
+                var item = document.createElement('div');
+                item.className = 'todo-item';
+                var mark = document.createElement('span');
+                var label = document.createElement('span');
+                label.className = 'todo-text';
+                if (t.done) { mark.className = 'todo-check done'; label.classList.add('is-done'); }
+                else if (i === firstUndone) { mark.className = 'todo-spinner'; }   // in progress
+                else { mark.className = 'todo-check'; }                            // pending
+                label.textContent = t.text || ('task ' + (i + 1));   // textContent: never parse as HTML
+                item.appendChild(mark); item.appendChild(label);
+                list.appendChild(item);
             });
+            todoEl.replaceChildren(list);
+            el.classList.add('has-todo');             // opens the right column (CSS)
         }
 
         // The minion is done — DON'T wait for its streaming or show a mark. Immediately fade the
@@ -536,6 +639,9 @@
             chainEl: chainEl,
             trackEl: trackEl,
             setLine: setLine,
+            // Kick off the opening phase for a card created with {idle:true}. Called when
+            // cli_stage.js promotes the waiting terminal into a live run.
+            begin: startOpening,
             // raw text straight onto the terminal, bypassing the JSON parser — used for
             // stage-level messages (e.g. a run that failed before it produced any output)
             note: function (t) { outStream.push(t); },

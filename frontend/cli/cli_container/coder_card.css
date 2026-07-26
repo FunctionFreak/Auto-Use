@@ -50,7 +50,7 @@
     width: min(340px, 100%);
     /* no max-height/overflow cap: the card is content-height (top-aligned in .cc-card-wrap), so it
        grows with its minion tree and the agent's flex-basis:auto reads that full height. The
-       terminal stays 5 lines (.cc-out-text fixed height); only the minion tree drives growth. */
+       terminal stays 5 lines (.cc-out-view fixed height); only the minion tree drives growth. */
     box-sizing: border-box;
     border-radius: 12px;
     background: transparent;                                /* fully blended — no border box */
@@ -252,6 +252,27 @@
 }
 .coder-card.has-head .cc-p { font-size: 13px; line-height: 1.1; }
 
+/* ---- todo column (.has-todo — Shell use only) ----
+   The card's body is a ROW: .cc-main (head + brain + terminal + minions) with a
+   todo column to its RIGHT. The column is EMPTY and collapsed until the agent
+   actually writes a list — setTodo() adds .has-todo, which opens it to a quarter
+   of the width and leaves the terminal the other three quarters.
+   The rows inside are the MAIN agent's .todo-list markup (bottom_right.css), so
+   there is nothing to style here beyond the column itself — the tick, its colour
+   animation and the in-progress spinner all come from that shared stylesheet. */
+.coder-card.has-head .cc-body { display: flex; align-items: stretch; gap: 0; }
+.coder-card.has-head .cc-main { flex: 1 1 auto; min-width: 0; }
+.coder-card.has-head .cc-todo { display: none; }
+.coder-card.has-todo .cc-todo {
+    display: block;
+    flex: 0 0 25%;
+    min-width: 0;
+    margin-left: 14px;
+    padding-left: 14px;
+    border-left: 1px solid rgba(120, 124, 130, 0.28);
+    overflow: hidden;
+}
+
 /* the live `>` output — now a 5-LINE scrolling terminal of action narration. The `>` pill sits
    at the TOP of the block (align-items:flex-start), beside the fixed-height scrolling viewport. */
 .coder-card .cc-out { display: flex; align-items: flex-start; }
@@ -263,12 +284,19 @@
     animation: cc-blink 1.2s ease-in-out infinite;
 }
 @keyframes cc-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.12; } }
-/* Viewport: clamped to exactly 5 rows (1.38 line-height × 5) and clips overflow; the .cc-scroll
-   conveyor inside translates up as lines accumulate. font-size/line-height come from .cc-body. */
-.coder-card .cc-out-text { flex: 1 1 auto; min-width: 0; position: relative; overflow: hidden; height: calc(1.38em * var(--cc-max-lines, 5)); }
+/* .cc-out-text is just the column beside the `>`: an optional PINNED name row, then the
+   scrolling viewport. It has no height of its own — .cc-out-view carries that. */
+.coder-card .cc-out-text { flex: 1 1 auto; min-width: 0; }
+/* The pinned label (compact card only). Sits ABOVE the conveyor, so output scrolls
+   underneath it instead of pushing it off the top. */
+.coder-card .cc-out-name { line-height: 1.38; }
+/* Viewport: clamped to exactly N rows (1.38 line-height × N) and clips overflow; the
+   .cc-scroll conveyor inside translates up as lines accumulate. font-size/line-height
+   come from .cc-body. */
+.coder-card .cc-out-view { position: relative; overflow: hidden; height: calc(1.38em * var(--cc-max-lines, 5)); }
 /* fade the TOP edge only once the terminal actually scrolls (toggled by JS) — keeps few-line
    output crisp while giving scrollback a soft top once it overflows. */
-.coder-card .cc-out-text.cc-scrolled {
+.coder-card .cc-out-view.cc-scrolled {
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 16px);
             mask-image: linear-gradient(to bottom, transparent 0, #000 16px);
 }
@@ -355,6 +383,11 @@
    grid does the whole rearrangement — the DOM order (chain, terminal, track)
    is untouched, grid-area just places them. body.cli-shell is toggled by
    cli/cli_stage.js; every other mode keeps the left | center | right columns. */
+/* Hold the terminal's right edge clear of the memory bar, which is position:fixed
+   over the far right of the window (right: ≤16px, logo up to 40px wide) — without
+   this the card's faded outline runs underneath the memory logo. */
+body.cli-shell #cliContainer { padding-right: clamp(34px, 3.4vw, 50px); }
+
 body.cli-shell #cliContainer .cc-agent {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -382,19 +415,19 @@ body.cli-shell #cliContainer .cc-card-wrap {
 }
 body.cli-shell #cliContainer .cc-actions { grid-area: tools; }
 body.cli-shell #cliContainer .cc-track   { grid-area: track; }
-/* The terminal goes full-bleed (normally capped at 340px and centred) and picks up
-   the faintest grey wash — just enough to read as its own surface against the panel
-   without becoming a boxed-in card. */
-body.cli-shell #cliContainer .coder-card {
+/* Shell use only: the terminal goes full-bleed (normally capped at 340px + centred). */
+body.cli-shell #cliContainer .coder-card { width: 100%; }
+
+/* The faintest grey wash + a thin outline that's solid along the bottom and fades
+   out toward the top — same ::after + mask technique as .memory-bar-track, so the
+   two read as the same family. Just enough for the terminal to be its own surface
+   without becoming a boxed-in card. Applied to EVERY coder card: the compact ones
+   dispatched in Computer/Mobile use get the same treatment at their smaller size. */
+#cliContainer .coder-card {
     position: relative;
-    width: 100%;
     background: rgba(0, 0, 0, 0.025);
 }
-/* Thin outline in the memory bar's grey — solid along the bottom, fading out
-   toward the top. Same ::after + mask technique as .memory-bar-track, so the two
-   read as the same family: the terminal gets a defined base line without being
-   boxed in. */
-body.cli-shell #cliContainer .coder-card::after {
+#cliContainer .coder-card::after {
     content: "";
     position: absolute;
     inset: 0;
@@ -414,3 +447,13 @@ body.cli-shell #cliContainer .coder-card::after {
    The one style difference: nothing is running, so the progress bar's shimmer
    is parked. */
 #cliContainer .cc-idle .cc-fill { animation: none; opacity: 0; }
+
+/* Shell use: the tracking-progress bullets take the TODO tick's colour instead of
+   grey — memFillColor (memory_bar.css) is the same #9292d8 palette on the same 4s
+   loop as the tick's tw-tickColor, but animating background-color, which is what a
+   filled dot needs; tw-tickGlow (bottom_right.css) adds the tick's soft pulse. Both
+   stylesheets are global, so the hues stay defined in exactly one place. */
+body.cli-shell #cliContainer .cc-track-dot::after {
+    background: #9292d8;
+    animation: memFillColor 4s linear infinite, tw-tickGlow 3s ease-in-out infinite;
+}
