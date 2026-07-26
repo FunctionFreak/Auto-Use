@@ -35,6 +35,7 @@ import os
 import sys
 import json
 import logging
+import signal
 import platform
 import importlib
 import threading
@@ -1957,6 +1958,259 @@ def start_shell():
 
     except Exception as e:
         debug_exception("start_shell API")
+        return jsonify({'error': str(e)}), 500
+
+
+# One Sandbox for the hand-typed terminal, kept for the life of the app so its
+# working directory survives between commands (that's what makes `cd` stick).
+_manual_shell = None
+
+
+def _get_manual_shell():
+    global _manual_shell
+    if _manual_shell is None:
+        Sandbox = importlib.import_module(f"Auto_Use.{PLATFORM_PKG}.sandbox").Sandbox
+        _manual_shell = Sandbox()
+    return _manual_shell
+
+
+class _ManualTerminal:
+    """The live process behind Shell use's hand-typed `>` prompt.
+
+    Deliberately NOT Sandbox.run(): that blocks until the command exits and hands
+    back one blob, which is fine for an agent tool call but useless at a prompt —
+    `ping 8.8.8.8` would show nothing until it died. This spawns the command in its
+    OWN process group, streams stdout/stderr to the terminal as they arrive, and can
+    deliver a real SIGINT to that group, which is what Ctrl+C actually does.
+
+    One command at a time, because there is one prompt. Output is flushed in small
+    batches (~80ms) rather than per line, so a chatty command can't drown the UI
+    thread in evaluate_js calls.
+    """
+
+    FLUSH_MS = 0.08
+
+    def __init__(self):
+        self._proc = None
+        self._lock = threading.Lock()
+        self._buf = []
+        self._buf_lock = threading.Lock()
+
+    def is_running(self):
+        with self._lock:
+            return self._proc is not None and self._proc.poll() is None
+
+    # ---- output pump -------------------------------------------------------
+    def _emit(self, line):
+        with self._buf_lock:
+            self._buf.append(line)
+
+    def _flush(self):
+        with self._buf_lock:
+            if not self._buf:
+                return
+            lines, self._buf = self._buf, []
+        if not webview_window:
+            return
+        try:
+            payload = json.dumps(lines, ensure_ascii=False)
+            payload = _js_escape(payload)
+            webview_window.evaluate_js(
+                f"window.shellTermLines && window.shellTermLines('{payload}')"
+            )
+        except Exception:
+            debug_exception("shell term flush")
+
+    def _pump(self, proc):
+        while proc.poll() is None:
+            time.sleep(self.FLUSH_MS)
+            self._flush()
+        self._flush()   # drain whatever landed in the final moments
+
+    def _read(self, pipe):
+        try:
+            for raw in iter(pipe.readline, b""):
+                if not raw:
+                    break
+                self._emit(raw.decode("utf-8", errors="replace").rstrip("\r\n"))
+        except Exception:
+            pass
+        finally:
+            try:
+                pipe.close()
+            except Exception:
+                pass
+
+    # ---- lifecycle ---------------------------------------------------------
+    def start(self, command, cwd):
+        """Spawn `command`. Returns (started, error_message)."""
+        if self.is_running():
+            return False, "a command is already running — press Ctrl+C to stop it"
+
+        if IS_WINDOWS:
+            argv = ["powershell", "-NoProfile", "-Command", command]
+            # own group so CTRL_BREAK_EVENT reaches it and not us
+            kwargs = {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+        else:
+            argv = ["/bin/zsh", "-c", command]
+            kwargs = {"start_new_session": True}   # setsid -> killpg targets only the child
+
+        try:
+            proc = subprocess.Popen(
+                argv, cwd=cwd,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                bufsize=0, **kwargs
+            )
+        except Exception as e:
+            return False, str(e)
+
+        with self._lock:
+            self._proc = proc
+
+        threading.Thread(target=self._read, args=(proc.stdout,), daemon=True).start()
+        threading.Thread(target=self._pump, args=(proc,), daemon=True).start()
+
+        def _wait():
+            code = proc.wait()
+            self._flush()
+            with self._lock:
+                if self._proc is proc:
+                    self._proc = None
+            if webview_window:
+                try:
+                    webview_window.evaluate_js(
+                        f"window.shellTermEnd && window.shellTermEnd({int(code)})"
+                    )
+                except Exception:
+                    debug_exception("shell term end")
+
+        threading.Thread(target=_wait, daemon=True).start()
+        return True, ""
+
+    def interrupt(self):
+        """Ctrl+C: SIGINT the process GROUP (so pipelines and children go too),
+        then SIGKILL anything still alive a moment later."""
+        with self._lock:
+            proc = self._proc
+        if proc is None or proc.poll() is not None:
+            return False
+        try:
+            if IS_WINDOWS:
+                proc.send_signal(getattr(signal, "CTRL_BREAK_EVENT", signal.SIGTERM))
+            else:
+                os.killpg(os.getpgid(proc.pid), signal.SIGINT)
+        except Exception:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+        def _sigkill():
+            time.sleep(1.5)
+            if proc.poll() is None:
+                try:
+                    if IS_WINDOWS:
+                        proc.kill()
+                    else:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except Exception:
+                    pass
+
+        threading.Thread(target=_sigkill, daemon=True).start()
+        return True
+
+
+_manual_terminal = None
+
+
+def _manual_term():
+    global _manual_terminal
+    if _manual_terminal is None:
+        _manual_terminal = _ManualTerminal()
+    return _manual_terminal
+
+
+def _short_cwd(path):
+    """Prompt-friendly cwd: the home prefix collapsed to ~ (…/a/b/c stays as-is)."""
+    try:
+        home = str(Path.home())
+        p = str(path or "")
+        return "~" + p[len(home):] if p.startswith(home) else p
+    except Exception:
+        return str(path or "")
+
+
+@app.route('/api/shell-cwd', methods=['GET'])
+def shell_cwd():
+    """Where the hand-typed terminal currently is — the frontend shows this in the
+    prompt while it's focused, so `cd` is obvious."""
+    try:
+        cwd = _get_manual_shell().get_cwd()
+        return jsonify({'cwd': cwd, 'short': _short_cwd(cwd)})
+    except Exception as e:
+        debug_exception('shell_cwd API')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/shell-exec', methods=['POST'])
+def shell_exec():
+    """Shell use → a command the USER typed at the `>` prompt. No agent, no LLM.
+
+    Runs through the same Sandbox the coder's shell tool uses, so it's zsh on
+    macOS / PowerShell on Windows, the cwd persists between commands, and the
+    macOS TCC-popup watcher still applies. trusted=True skips the agent-oriented
+    blocked-path guard: the person typing is the one running it.
+    """
+    from flask import request
+    try:
+        data = request.get_json() or {}
+        command = (data.get('command') or '').strip()
+        if not command:
+            return jsonify({'error': 'Missing command'}), 400
+
+        sh = _get_manual_shell()
+
+        # `cd` has to move the Sandbox's own working dir — run as a subprocess it
+        # would change directory, exit, and leave nothing behind.
+        if command == 'cd' or command.startswith('cd '):
+            # Sandbox._validate_path resolves relative to the cwd and does NOT expand `~`,
+            # so `cd ~/Desktop` would look for "<cwd>/~/Desktop". Expand it here, and drop
+            # any quotes the user wrapped a spaced path in.
+            target = command[2:].strip().strip('"\'') or '~'
+            res = sh.cd(os.path.expanduser(target))
+            ok = bool(res.get('success'))
+            return jsonify({
+                'output': '' if ok else (res.get('error') or 'Directory not found'),
+                'status': 'success' if ok else 'error',
+                'cwd': sh.get_cwd(),
+                'short': _short_cwd(sh.get_cwd()),
+            })
+
+        # Everything else runs LIVE: the route returns as soon as the process is
+        # spawned and its output is pushed to the terminal line by line, so `ping`
+        # scrolls as it happens instead of appearing only once it dies.
+        started, err = _manual_term().start(command, sh.get_cwd())
+        if not started:
+            return jsonify({'output': err, 'status': 'error',
+                            'cwd': sh.get_cwd(), 'short': _short_cwd(sh.get_cwd())}), 200
+        return jsonify({'status': 'started',
+                        'cwd': sh.get_cwd(), 'short': _short_cwd(sh.get_cwd())})
+
+    except Exception as e:
+        debug_exception('shell_exec API')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/shell-kill', methods=['POST'])
+def shell_kill():
+    """Ctrl+C at the `>` prompt — interrupt whatever is running, exactly as a
+    terminal would: SIGINT to the whole process group first, SIGKILL only if it
+    refuses to die."""
+    try:
+        killed = _manual_term().interrupt()
+        return jsonify({'status': 'killed' if killed else 'idle'})
+    except Exception as e:
+        debug_exception('shell_kill API')
         return jsonify({'error': str(e)}), 500
 
 

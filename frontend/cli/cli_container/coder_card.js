@@ -71,8 +71,19 @@
             target.style.setProperty('--cc-max-lines', String(opts.maxLines || 5));
             target.replaceChildren(scroll);
         }
+        // Two scroll modes. Default: the conveyor is translateY'd so old lines slide up
+        // out of a fixed window — smooth, but the user can't go back. Native mode (the
+        // hand-typed terminal): real scrollTop, so old output stays reachable.
+        var nativeScroll = false;
         function scrollToEnd() {
             if (!scroll) return;
+            if (nativeScroll) {
+                // Follow the tail ONLY if the user is already at the bottom. If they've
+                // scrolled up to read something, yanking them back down would be hostile.
+                var slack = target.scrollHeight - target.scrollTop - target.clientHeight;
+                if (slack <= 24) target.scrollTop = target.scrollHeight;
+                return;
+            }
             var over = Math.max(0, scroll.scrollHeight - target.clientHeight);
             scroll.style.transform = over ? ('translateY(' + (-over) + 'px)') : 'translateY(0)';
             target.classList.toggle('cc-scrolled', over > 0);   // fade the top edge ONLY once it scrolls
@@ -93,10 +104,15 @@
         function pump() {
             if (running || !queue.length) return;
             running = true;
-            var text = queue.shift();
+            var item = queue.shift();
             // Step boundary reached: the previous step has finished drawing, so wipe now
             // and carry straight on with the next step's first line.
-            if (text === CLEAR) { hardClear(); running = false; pump(); return; }
+            if (item === CLEAR) { hardClear(); running = false; pump(); return; }
+            // A queue entry is a bare string, or {text, cls} when the caller wants the
+            // rendered line tagged (the terminal marks its prompt echoes this way).
+            var plain = (typeof item === 'string');
+            var text = plain ? item : item.text;
+            var lineCls = plain ? '' : (' ' + item.cls);
             // Array.from splits by code point so emoji/surrogate pairs stay intact.
             var chars = Array.from(text);
             if (!chars.length) { running = false; pump(); return; }
@@ -106,7 +122,7 @@
                 // line begins (matches the single-line path: dark text streams, THEN shimmers).
                 if (activeLine) activeLine.classList.remove('cc-shimmer');
                 var mline = document.createElement('div');
-                mline.className = 'cc-line';   // pre-wrap (CSS) -> real multi-row wrapping
+                mline.className = 'cc-line' + lineCls;   // pre-wrap (CSS) -> real multi-row wrapping
                 scroll.appendChild(mline);
                 activeLine = mline;
                 while (scroll.children.length > 120) scroll.removeChild(scroll.firstChild);   // memory cap (off-screen rows)
@@ -145,7 +161,7 @@
             var page = null;
             function startPage() {
                 page = document.createElement('div');
-                page.className = 'cc-line';
+                page.className = 'cc-line' + lineCls;
                 target.replaceChildren(page);
             }
             startPage();
@@ -191,9 +207,11 @@
         }
 
         return {
-            push: function (text) {
+            // push(text) — a plain line. push(text, cls) — the rendered .cc-line also gets
+            // `cls`, so callers can mark specific lines (the terminal tags prompt echoes).
+            push: function (text, cls) {
                 if (text == null || !String(text).trim()) return;
-                queue.push(String(text));
+                queue.push(cls ? { text: String(text), cls: String(cls) } : String(text));
                 if (queue.length > 600) queue.splice(0, queue.length - 600);   // memory safety only
                 if (!running) pump();
             },
@@ -207,6 +225,24 @@
             reset: function () {
                 if (!running && !queue.length) { hardClear(); return; }
                 queue.push(CLEAR);
+            },
+            // Swap the conveyor for real scrolling (and back). Native mode drops the
+            // translateY so scrollTop is free to move, and the top-fade mask goes with
+            // it — a mask over scrollback just hides the line you scrolled up to read.
+            setNativeScroll: function (on) {
+                nativeScroll = !!on;
+                if (!scroll) return;
+                if (nativeScroll) {
+                    scroll.style.position = 'static';
+                    scroll.style.transform = 'none';
+                    target.classList.remove('cc-scrolled');
+                    target.scrollTop = target.scrollHeight;
+                } else {
+                    scroll.style.position = '';
+                    scroll.style.transform = 'translateY(0)';
+                    target.scrollTop = 0;
+                    scrollToEnd();
+                }
             },
             dispose: function () { if (timer) { clearTimeout(timer); timer = null; } queue.length = 0; running = false; }
         };
@@ -318,14 +354,29 @@
                 ? '<div class="cc-head"><span class="cc-hdot"></span><span class="cc-hname"></span></div>' +
                   '<div class="cc-brain"><canvas class="cc-mascot"></canvas><span class="cc-think"></span></div>'
                 : '') +
-            // .cc-out-name is a PINNED row: the compact card's "AutoUse Code" label used to be
-            // the first line inside the scrolling conveyor, so it scrolled away as soon as the
-            // output overflowed. It now sits ABOVE the scroll view and stays put. The Shell-use
-            // card has no name here — its header already carries it.
-            '<div class="cc-out"><span class="cc-p">&gt;</span> <span class="cc-out-text">' +
-                (header ? '' : '<div class="cc-out-name">AutoUse Code</div>') +
-                '<div class="cc-out-view"></div>' +
-            '</span></div>' +
+            // Shell use: the `>` prompt is a REAL input you can click and type into, with the
+            // output view stacked below it — a plain terminal. Compact card: no input, and
+            // .cc-out-name is a PINNED row (its "AutoUse Code" label used to live inside the
+            // scrolling conveyor, so it scrolled away once the output overflowed).
+            (header
+                  // .cc-term wraps the prompt and the output so the two modes differ by
+                  // flex-direction alone: ROW in AI mode (output beside the `>`, wrapped
+                  // lines staying in that column and clear of the minion trunk below it),
+                  // COLUMN while typing (your input on the `>` line, output underneath).
+                ? '<div class="cc-term">' +
+                      '<div class="cc-out"><span class="cc-p">&gt;</span>' +
+                          // contenteditable, not <input>: the blinking `_` is a ::after on
+                          // this element, so it lands immediately after the typed text with
+                          // nothing to measure.
+                          '<span class="cc-cmd" contenteditable="plaintext-only" role="textbox" ' +
+                                'spellcheck="false" aria-label="terminal command"></span>' +
+                      '</div>' +
+                      '<div class="cc-out-text"><div class="cc-out-view"></div></div>' +
+                  '</div>'
+                : '<div class="cc-out"><span class="cc-p">&gt;</span> <span class="cc-out-text">' +
+                      '<div class="cc-out-name">AutoUse Code</div>' +
+                      '<div class="cc-out-view"></div>' +
+                  '</span></div>') +
             '<div class="cc-minions"><span class="cc-trunk"></span></div>';
         el.innerHTML =
             '<div class="cc-body">' +
@@ -439,6 +490,118 @@
         }
         function hasExit(obj) { return actionList(obj).some(function (a) { return a && a.type === 'exit'; }); }
         function hasMinion(obj) { return actionList(obj).some(function (a) { return a && a.type === 'minion'; }); }
+
+        // ---- hand-typed terminal (Shell use) ----------------------------------------
+        // The `>` prompt is a real input: Enter runs the command through /api/shell-exec
+        // (zsh on macOS, PowerShell on Windows) and its output lands in the same stream the
+        // agent writes to. No LLM involved — this is the user driving the shell directly.
+        // A hand-typed command is LIVE: the route returns as soon as it spawns and the
+        // output arrives afterwards through window.shellTermLines. termBusy marks that
+        // window — Enter is ignored (one prompt, one command) and .cc-busy dims the
+        // prompt — until window.shellTermEnd reports the exit code.
+        var termBusy = false;
+        function setBusy(on) {
+            termBusy = !!on;
+            el.classList.toggle('cc-busy', termBusy);
+        }
+
+        var cmdEl = el.querySelector('.cc-cmd');
+
+        // Prompt label. Card-scope (not inside the block below) so begin() can clear it
+        // too — under 'use strict' a function declared in a block isn't visible outside.
+        // The location stays up for the WHOLE of user mode, not just while focused: it's
+        // the terminal's identity, and it stamps every executed line.
+        var curPath = '';
+        function showPath(short) { if (short) { curPath = short; pEl.textContent = short + ' >'; } }
+        function clearPrompt() { curPath = ''; pEl.textContent = '>'; }
+        function loadPath() {
+            fetch('/api/shell-cwd')
+                .then(function (r) { return r.json(); })
+                .then(function (d) { if (!el.classList.contains('cc-running')) showPath(d.short); })
+                .catch(function () { /* leave the plain `>` */ });
+        }
+
+        // Output exists → the prompt belongs on the LAST line (CSS flips the order).
+        // Until then it stays on top, so clicking an empty terminal doesn't fling the
+        // prompt to the bottom of a tall empty box.
+        function markOut() { el.classList.add('cc-has-out'); }
+
+        if (cmdEl) {
+            // NOTE: the path is NOT loaded here. An untouched terminal shows a bare `>_`,
+            // exactly like AI mode; the location appears when you click into it.
+            // While the prompt is focused the `>` is replaced by the shell's actual
+            // location, so `cd` is obvious; it goes back to `>` on blur to keep the
+            // agent view clean.
+            // WKWebView refuses to wheel-scroll an overflow area inside a transformed
+            // subtree, and #cliContainer carries a transform — so the view would look
+            // scrollable and simply not move. scrollTop DOES work, so drive it from the
+            // wheel event ourselves (same fix as the model dropdown in script.js).
+            if (outText) outText.addEventListener('wheel', function (e) {
+                if (outText.scrollHeight <= outText.clientHeight) return;
+                outText.scrollTop += (e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY);
+                e.preventDefault();
+            }, { passive: false });
+
+            cmdEl.addEventListener('focus', function () {
+                // typing gets the full height down to the bar; a sent task puts it back
+                // body-level, not card-level: the hard cap is enforced on the grid row
+                // that holds the card, which a class on the card itself can't reach.
+                document.body.classList.add('cli-typing');
+                outStream.setNativeScroll(true);   // old output stays reachable
+                loadPath();
+            });
+            // NOTE: no blur handler — the path is not a focus affordance, it belongs to
+            // user mode as a whole. Only begin() takes it away.
+
+            // Click anywhere on the card and you're at the prompt, like a real terminal —
+            // except over the todo column, where text should stay selectable, and except
+            // while the agent owns the terminal.
+            el.addEventListener('mousedown', function (e) {
+                if (el.classList.contains('cc-running')) return;
+                if (e.target === cmdEl || (e.target.closest && e.target.closest('.cc-todo'))) return;
+                setTimeout(function () { cmdEl.focus(); }, 0);
+            });
+
+            cmdEl.addEventListener('keydown', function (e) {
+                // Ctrl+C — interrupt whatever is running, exactly like a terminal. Works
+                // whether or not something IS running, so it's never a dead key.
+                if (e.key === 'c' && (e.ctrlKey || e.metaKey) && !window.getSelection().toString()) {
+                    e.preventDefault();
+                    outStream.push('^C');
+                    fetch('/api/shell-kill', { method: 'POST' }).catch(function () {});
+                    return;
+                }
+                if (e.key !== 'Enter') return;
+                e.preventDefault();                  // never insert a newline
+                if (termBusy) return;                // a command owns the prompt right now
+                var cmd = (cmdEl.textContent || '').trim();
+                if (!cmd) return;
+                cmdEl.textContent = '';
+                // Echo the command stamped with WHERE it ran, so the scrollback reads like
+                // a terminal's — the executed line scrolls up, the live prompt stays last.
+                // tagged so it stands out from output in the scrollback (cc-prompt-line)
+                outStream.push((curPath ? curPath + ' > ' : '$ ') + cmd, 'cc-prompt-line');
+                markOut();                           // prompt drops to the last line now
+                setBusy(true);
+                fetch('/api/shell-exec', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command: cmd })
+                })
+                .then(function (r) { return r.json(); })
+                .then(function (d) {
+                    if (document.activeElement === cmdEl) showPath(d.short);   // cd moved us
+                    // `cd` and failures answer inline and are already finished; a live
+                    // command answers 'started' and ends via window.shellTermEnd.
+                    if (d.status === 'started') return;
+                    var text = String(d.output || '').replace(/\s+$/, '');
+                    if (text) text.split('\n').forEach(function (l) { outStream.push(l); });
+                    else if (d.error) outStream.push(d.error);
+                    setBusy(false);
+                })
+                .catch(function () { outStream.push('failed to reach the shell'); setBusy(false); });
+            });
+        }
 
         // Stream one reply's prose into a streamer, a field per line (Shell use only).
         function streamProse(stream, obj) {
@@ -640,11 +803,32 @@
             trackEl: trackEl,
             setLine: setLine,
             // Kick off the opening phase for a card created with {idle:true}. Called when
-            // cli_stage.js promotes the waiting terminal into a live run.
-            begin: startOpening,
+            // cli_stage.js promotes the waiting terminal into a live run: the terminal
+            // becomes the AGENT's, so the hand-typing layout drops (back to the 3-line
+            // window) and the prompt goes read-only — the cursor moves to the agent's
+            // output line, which is where text is actually appearing.
+            begin: function () {
+                document.body.classList.remove('cli-typing');
+                el.classList.add('cc-running');
+                outStream.setNativeScroll(false);   // back to the agent's sliding window
+                if (cmdEl) {
+                    cmdEl.setAttribute('contenteditable', 'false');
+                    cmdEl.textContent = '';                 // drop anything half-typed
+                    if (document.activeElement === cmdEl) cmdEl.blur();
+                }
+                clearPrompt();               // bare `>`, and no stale path on echoed lines
+                el.classList.remove('cc-has-out');
+                startOpening();
+            },
             // raw text straight onto the terminal, bypassing the JSON parser — used for
             // stage-level messages (e.g. a run that failed before it produced any output)
-            note: function (t) { outStream.push(t); },
+            // and for the live output of a hand-typed command.
+            note: function (t) { outStream.push(t); markOut(); },
+            // a hand-typed command exited — hand the prompt back
+            termEnd: function (code) {
+                if (code) outStream.push('[exit ' + code + ']');
+                setBusy(false);
+            },
             setTodo: setTodo,
             addMinion: addMinion,
             setMinionLine: setMinionLine,

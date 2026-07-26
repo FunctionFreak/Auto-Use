@@ -124,8 +124,9 @@
     // ends (empty, waiting for the next task) instead of sliding away. Every
     // other mode keeps the original behaviour — the stage exists only for the
     // duration of a cli_await.
-    var shellPinned = false;    // Shell use selected?
-    var awaitActive = false;    // a cli_await is in flight?
+    var shellPinned = false;      // Shell use selected?
+    var awaitActive = false;      // a cli_await is in flight?
+    var heroWasVisible = false;   // was the "Made to do…" hero up before Shell use hid it?
 
     // The waiting terminal: a normal coder card that's simply never fed any
     // events, so it sits there as an empty `>` prompt with its blinking cursor.
@@ -168,10 +169,24 @@
             injectPanel();
             document.body.classList.add('cli-stage');
             mountIdle();
+            // The terminal IS this mode's empty state, so the "Made to do…" hero has
+            // nothing to say and would just sit behind it. Remember whether it was up,
+            // so leaving the mode restores exactly what was there — a hero already
+            // hidden by a sent task or a reopened chat must STAY hidden.
+            var hero = document.getElementById('welcomeHero');
+            heroWasVisible = !!hero && !hero.classList.contains('hidden');
+            if (window.hideWelcomeHero) window.hideWelcomeHero();
         } else {
             unmountIdle();
+            document.body.classList.remove('cli-typing');   // no prompt outside Shell use
             // left Shell use — but never yank the stage out from under a live run
-            if (!awaitActive) document.body.classList.remove('cli-stage');
+            if (!awaitActive) {
+                document.body.classList.remove('cli-stage');
+                // no terminal in this mode: the hero is the empty state again. Skipped
+                // mid-run (guarded above), since a running agent already hid it.
+                if (heroWasVisible && window.showWelcomeHero) window.showWelcomeHero();
+                heroWasVisible = false;
+            }
         }
     }
 
@@ -242,10 +257,30 @@
         // Stage-level message straight onto the terminal. In Shell use the four zones
         // that normally carry errors (milestone stream et al.) are hidden, so a run that
         // fails before producing any output would otherwise read as "nothing happened".
+        function currentCard() {
+            if (idleCard) return idleCard;
+            var first = cards.values().next();
+            return first && first.value;
+        }
+
         window.cliShellNote = function (text) {
-            var card = idleCard;
-            if (!card) { var first = cards.values().next(); card = first && first.value; }
+            var card = currentCard();
             if (card && card.note) card.note(text);
+        };
+
+        // Live output from a HAND-TYPED command (service.py's _ManualTerminal). Lines
+        // arrive in small batches while the process runs — that's what makes `ping`
+        // scroll live instead of appearing only once it dies.
+        window.shellTermLines = function (payload) {
+            var lines;
+            try { lines = JSON.parse(payload); } catch (e) { return; }
+            var card = currentCard();
+            if (!card || !card.note || !lines) return;
+            lines.forEach(function (l) { card.note(l); });
+        };
+        window.shellTermEnd = function (code) {
+            var card = currentCard();
+            if (card && card.termEnd) card.termEnd(code);
         };
 
         window.cliPillWebLoadingStart = function (taskId) { var c = cards.get(taskId); if (c) c.setWeb(true); };
