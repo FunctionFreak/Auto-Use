@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="Auto_Use/logo/auto_use.png" alt="Auto Use Logo" width="120"/>
+  <img src="Auto_Use/logo/logo_rounded.png" alt="Auto Use Logo" width="120"/>
 
   # Auto Use
 
@@ -11,7 +11,7 @@
 
   Let AI drive your computer — **Autouse AI — Computer Use**, now with both the macOS and Windows builds combined in a single repository. Control your entire OS with natural language. Browser automation, coding tasks, file management — all powered by vision-language models.
 
-  [Features](#-features) • [Architecture](#-multi-agent-architecture) • [GUI Engine](#-how-gui-control-works) • [Example Tasks](#-example-tasks) • [Providers](#-supported-providers) • [Setup](#-setup) • [Author](#-author)
+  [Features](#-features) • [Architecture](#-multi-agent-architecture) • [GUI Engine](#-how-gui-control-works) • [Example Tasks](#-example-tasks) • [Providers](#-supported-providers) • [Setup](#-setup) • [Maintainer](#-maintainer)
 </div>
 
 ---
@@ -20,11 +20,11 @@
 
   ## ⭐ Star History
 
-  <a href="https://star-history.com/#auto-use/Auto-Use&Date">
+  <a href="https://star-history.com/#FunctionFreak/Auto-Use&Date">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=auto-use/Auto-Use&type=Date&theme=dark&v=2" />
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=auto-use/Auto-Use&type=Date&v=2" />
-      <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=auto-use/Auto-Use&type=Date&v=2" width="720" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=FunctionFreak/Auto-Use&type=Date&theme=dark&v=2" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=FunctionFreak/Auto-Use&type=Date&v=2" />
+      <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=FunctionFreak/Auto-Use&type=Date&v=2" width="720" />
     </picture>
   </a>
 
@@ -77,14 +77,14 @@ Each Minion runs in its own session-isolated scratchpad at `cli_minion/{session_
 **Invocation examples:**
 
 ```bash
-# Direct CLI Agent
-python cli.py
+# Direct CLI Agent — main.py with MODE = "shell use"
+python main.py
 
 # CLI Agent with a specific task
-python -m Auto_Use.macOS_use.agent.coder --task "refactor the auth module"
+python -m Auto_Use.mac.agent.coder --task "refactor the auth module"
 
 # Single Minion for a quick read-only question
-python -m Auto_Use.macOS_use.agent.minions --task "where is _validate_token defined and who calls it?"
+python -m Auto_Use.mac.agent.minions --task "where is _validate_token defined and who calls it?"
 ```
 
 <div align="center">
@@ -238,6 +238,29 @@ Auto Use supports **6 LLM providers**:
    python main.py   # 💻  Terminal-only experience — same agents, no GUI, fully usable over SSH
    ```
 
+4. **Optional — iPhone / iPad support**
+
+   Skip this unless you want Auto Use to drive an iOS device. It needs **full
+   Xcode** (not just the Command Line Tools) and an Apple ID added under
+   Xcode → Settings → Accounts.
+
+   ```bash
+   bash ios_setup.sh
+   ```
+
+   This clones **[WebDriverAgent](https://github.com/appium/WebDriverAgent)**
+   (Appium/Facebook, BSD 3-Clause) at pinned tag `v15.1.1` into
+   `Auto_Use/ios_connector/`, then verifies the signing toolchain. It is not
+   bundled in this repo — you get it from the Appium project directly. Re-run it
+   any time; it reuses an existing clone, or pass `--force` to re-fetch.
+
+   Signing happens afterwards in the connector UI — either **Settings → Connect
+   Device → iPhone** in the desktop app, or standalone via
+   `python Auto_Use/ios_connector/setup.py`.
+
+   > A free Apple ID works, but its provisioning profiles expire after 7 days, so
+   > you'll re-sign weekly. A paid developer account lasts a year.
+
 ### 🪟 Windows
 
 1. **Run the setup script**
@@ -298,27 +321,61 @@ Auto Use supports **6 LLM providers**:
 
 This repository supports **both macOS and Windows** — the two platform builds live side-by-side in the same repo:
 
-- **macOS** — `Auto_Use/macOS_use`
-- **Windows** — `Auto_Use/windows_use`
+- **macOS** — `Auto_Use/mac`
+- **Windows** — `Auto_Use/windows`
 
 ---
 
-## 👤 Author
+## 👤 Maintainer
 
-**Ashish Yadav** — founder of [Autouse AI](https://github.com/auto-use)
+Built and maintained by **[Ashish Yadav](https://github.com/FunctionFreak)**.
+
+Issues and pull requests are welcome at
+[FunctionFreak/Auto-Use](https://github.com/FunctionFreak/Auto-Use).
 
 ---
 
 ## 📄 License & Attribution
 
-Licensed under the **Apache License 2.0** — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Licensed under the **MIT License** — see [LICENSE](LICENSE).
 
-If you use, fork, reference, or derive from this project, you must:
+You are free to use, copy, modify, merge, publish, distribute, sublicense, and sell
+this software, including commercially. The only condition is:
 
-1. Preserve the copyright notice and the `NOTICE` file.
-2. Credit **Ashish Yadav (Autouse AI)** as the original author.
-3. Link back to the project: https://github.com/auto-use
+1. Retain the copyright notice and the MIT permission notice in all copies or
+   substantial portions of the software.
+
+Not required, but genuinely appreciated:
+
+2. Credit **Ashish Yadav** as the original author.
+3. Link back to the project: https://github.com/FunctionFreak/Auto-Use
+
+### Third-party components
+
+Some directories in this repository contain **vendored third-party code that is not
+covered by the MIT license above**. The MIT grant — including the permission to sell
+and sublicense — applies only to Auto Use's own code. Full details in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+| Component | How it's included | License |
+|---|---|---|
+| **WebDriverAgent** — by Facebook, Inc. and the [Appium](https://github.com/appium/WebDriverAgent) project | **Not redistributed.** [`ios_setup.sh`](ios_setup.sh) clones it at pinned tag `v15.1.1` | BSD 3-Clause, with some Apache 2.0 files |
+| **Interception** — Windows kernel input driver, by Francisco Lopes da Silva ([oblitum](https://github.com/oblitum/Interception)) | **Not redistributed.** `windows_setup.bat` downloads the author's own signed release (`v1.0.1`, SHA-256 verified) at setup time | **Dual-licensed:** LGPL v3.0 non-commercial; **commercial use requires a separate paid license from the author** |
+
+> ⚠️ **If you plan to ship or sell anything built on Auto Use that bundles or installs
+> the Interception driver, you must obtain a commercial Interception license from its
+> author yourself.** Auto Use's MIT license does not — and cannot — grant it to you.
 
 ### How to cite
 
-> Yadav, Ashish. *Autouse AI — Computer Use.* Autouse AI, 2026. https://github.com/auto-use
+> Ashish Yadav. *Auto Use — Computer Use Framework for macOS & Windows.* 2026.
+> https://github.com/FunctionFreak/Auto-Use
+
+```bibtex
+@software{autouse2026,
+  author  = {Ashish Yadav},
+  title   = {Auto Use --- Computer Use Framework for macOS \& Windows},
+  year    = {2026},
+  url     = {https://github.com/FunctionFreak/Auto-Use}
+}
+```

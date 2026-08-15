@@ -1,23 +1,6 @@
 #!/usr/bin/env python3
-# Copyright 2026 Autouse AI — https://github.com/auto-use/Auto-Use
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-# If you build on this project, please keep this header and credit
-# Autouse AI (https://github.com/auto-use/Auto-Use) in forks and derivative works.
-# A small attribution goes a long way toward a healthy open-source
-# community — thank you for contributing.
-"""Add the Apache 2.0 header to every .py file that is missing it."""
+# Copyright 2026 Ashish Yadav — Auto-Use
+"""Add or replace the copyright header on every .py file."""
 
 from __future__ import annotations
 
@@ -26,33 +9,22 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-_COPYRIGHT_OWNER = "Autouse AI"
-_COPYRIGHT_URL = "https://github.com/auto-use/Auto-Use"
+_COPYRIGHT_OWNER = "Ashish Yadav"
+_COPYRIGHT_PROJECT = "Auto-Use"
 _COPYRIGHT_YEAR = "2026"
 
 HEADER_LINES = [
-    f"# Copyright {_COPYRIGHT_YEAR} {_COPYRIGHT_OWNER} — {_COPYRIGHT_URL}",
-    "#",
-    '# Licensed under the Apache License, Version 2.0 (the "License");',
-    "# you may not use this file except in compliance with the License.",
-    "# You may obtain a copy of the License at",
-    "#",
-    "#     http://www.apache.org/licenses/LICENSE-2.0",
-    "#",
-    "# Unless required by applicable law or agreed to in writing, software",
-    '# distributed under the License is distributed on an "AS IS" BASIS,',
-    "# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.",
-    "# See the License for the specific language governing permissions and",
-    "# limitations under the License.",
-    "#",
-    f"# If you build on this project, please keep this header and credit",
-    f"# {_COPYRIGHT_OWNER} ({_COPYRIGHT_URL}) in forks and derivative works.",
-    "# A small attribution goes a long way toward a healthy open-source",
-    "# community — thank you for contributing.",
+    f"# Copyright {_COPYRIGHT_YEAR} {_COPYRIGHT_OWNER} — {_COPYRIGHT_PROJECT}",
 ]
 
 HEADER_TEXT = "\n".join(HEADER_LINES)
 DUPLICATE_MARKER = f"Copyright {_COPYRIGHT_YEAR} {_COPYRIGHT_OWNER}"
+
+# Recognise both the new header and legacy Autouse AI blocks for replacement.
+_OLD_COPYRIGHT_PREFIXES = (
+    f"# Copyright {_COPYRIGHT_YEAR} {_COPYRIGHT_OWNER}",
+    f"# Copyright {_COPYRIGHT_YEAR} Autouse AI",
+)
 
 # Directories to skip entirely.
 EXCLUDE_DIR_NAMES = {
@@ -92,6 +64,30 @@ def already_has_correct_header(text: str) -> bool:
     return lines[start : start + len(HEADER_LINES)] == HEADER_LINES
 
 
+def _is_copyright_start(line: str) -> bool:
+    return any(line.startswith(prefix) for prefix in _OLD_COPYRIGHT_PREFIXES)
+
+
+def strip_existing_copyright_block(lines: list[str], start: int) -> int:
+    """Return index after an existing copyright comment block, if any."""
+    if start >= len(lines) or not _is_copyright_start(lines[start]):
+        return start
+
+    i = start + 1
+    while i < len(lines):
+        line = lines[i]
+        # Keep consuming license/attribution comment lines (including bare "#").
+        if line == "#" or (line.startswith("#") and not line.startswith("#!")):
+            i += 1
+            continue
+        break
+
+    # Drop one blank line that commonly sits between header and body.
+    if i < len(lines) and lines[i] == "":
+        i += 1
+    return i
+
+
 def add_header(path: Path) -> bool:
     """Return True if the file was modified, False if it already had the header."""
     text = path.read_text(encoding="utf-8")
@@ -99,28 +95,24 @@ def add_header(path: Path) -> bool:
     if already_has_correct_header(text):
         return False
 
-    if DUPLICATE_MARKER in text:
-        # File has some form of the header already but it doesn't match
-        # (maybe wrong position or surrounded by other content). Skip and
-        # let the CI checker flag it so a human decides.
-        print(f"  SKIP (needs manual fix): {path.relative_to(REPO_ROOT)}")
-        return False
-
     lines = text.splitlines(keepends=False)
     ends_with_newline = text.endswith("\n")
 
     if lines and lines[0].startswith("#!"):
         shebang = lines[0]
-        rest = lines[1:]
+        body_start = strip_existing_copyright_block(lines, 1)
+        rest = lines[body_start:]
         new_lines = [shebang, *HEADER_LINES]
         if rest:
             new_lines.append("")
             new_lines.extend(rest)
     else:
+        body_start = strip_existing_copyright_block(lines, 0)
+        rest = lines[body_start:]
         new_lines = list(HEADER_LINES)
-        if lines:
+        if rest:
             new_lines.append("")
-            new_lines.extend(lines)
+            new_lines.extend(rest)
 
     new_text = "\n".join(new_lines)
     if ends_with_newline or not text:
@@ -145,6 +137,7 @@ def main() -> int:
 
         if result:
             modified += 1
+            print(f"  UPDATED: {path.relative_to(REPO_ROOT)}")
         else:
             already_ok += 1
 

@@ -19,6 +19,9 @@ todo/
 # Debug folder
 debug/
 
+# Parallel folder
+parallel/
+
 # Browser automation data
 agent_data/
 conversations/

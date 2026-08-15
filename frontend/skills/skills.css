@@ -55,7 +55,7 @@
    Skills STAGE — mounted inside #zoneBigCenter (the full-grid container that
    shows one thing at a time). Fills the zone like Agent Notes does; skills.js
    reveals it (and hides the notes) on the Skills icon click. Default hidden;
-   .active shows it. Light greige + grey text to match the app; Save uses the
+   .active shows it. Light cream + grey text to match the app; Save uses the
    app's blue "Save" tone.
    ===================================================================== */
 .skills-stage {
@@ -71,7 +71,59 @@
     flex-direction: column;            /* single centred column, fills the height */
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
 }
-.skills-stage.active { display: flex; }
+.skills-stage.active {
+    display: flex;
+    /* OPAQUE. The host zone is transparent, so without this the four zones
+       behind it (and the shell terminal) show straight through the skills
+       list. Same cream as <body> so the stage reads as the app surface. */
+    background: #F9F1EC;
+}
+
+/* ── Skills owns the screen while it's open ───────────────────────────────
+   The host (.big-center-zone) sits at z-index 5 and the pinned shell panel
+   (#cliContainer) at 6, so in Shell use the terminal — its "AutoUse Code"
+   header, its Agent Notes — rendered straight OVER the skills list. While
+   `skills-open` is on the body, Skills wins the stack and everything else in
+   the grid stands down. Driven by one body class rather than per-surface JS,
+   so any stage added later is covered by adding a selector here, and the
+   restore is automatic the moment the class comes off. */
+body.skills-open .big-center-zone { z-index: 7; }
+/* Compound `.skills-open.cli-stage` on purpose: cli_stage.css is linked AFTER
+   this file, so an equal-specificity `body.skills-open #cliContainer` would
+   lose to `body.cli-stage #cliContainer` on source order. Two classes beats
+   one, whatever the link order becomes later. */
+body.skills-open #cliContainer,
+body.skills-open.cli-stage #cliContainer {
+    transform: translateY(110%);       /* park it back below, as before cli_await */
+    opacity: 0;
+    pointer-events: none;
+}
+
+.skills-close {
+    margin-left: auto;                 /* pushes it to the row's right edge */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: clamp(26px, 2.6vw, 30px);
+    height: clamp(26px, 2.6vw, 30px);
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.05);
+    color: rgba(110, 110, 110, 0.9);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.25s ease, color 0.25s ease;
+}
+.skills-close svg { width: 62%; height: 62%; display: block; }
+.skills-close:hover {
+    background: rgba(0, 0, 0, 0.09);
+    color: rgba(60, 60, 60, 0.95);
+}
+.skills-close:focus-visible {
+    outline: 2px solid #9aa0ab;
+    outline-offset: 2px;
+}
 
 /* The form lives in a centred, capped-width column that fills the stage height,
    so the write area flex-grows and the buttons stay pinned at the bottom. */

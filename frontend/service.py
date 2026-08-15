@@ -1,21 +1,4 @@
-# Copyright 2026 Autouse AI — https://github.com/auto-use/Auto-Use
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-# If you build on this project, please keep this header and credit
-# Autouse AI (https://github.com/auto-use/Auto-Use) in forks and derivative works.
-# A small attribution goes a long way toward a healthy open-source
-# community — thank you for contributing.
+# Copyright 2026 Ashish Yadav — Auto-Use
 
 """Backend service for the desktop app — the Flask server, every HTTP route, the
 agent run, the window.* push callbacks, and the provider/api-key/settings/path
@@ -32,8 +15,11 @@ handed over via set_window(); the callbacks read it back via the module global.
 
 import io
 import os
+import re
 import sys
 import json
+import uuid
+import atexit
 import logging
 import signal
 import platform
@@ -49,11 +35,15 @@ from pathlib import Path
 from flask import Flask, jsonify, send_from_directory
 
 # Where the user's data lives (autouse_data/, outside the install folder).
-from Auto_Use import api_key_file, skills_dir
+from Auto_Use import api_key_file, skills_dir, data_root
 
 # Resumable chat memory + per-chat token tracker. Platform-agnostic, pure-stdlib.
 from Auto_Use.agent_conversation.service import conversation
 from Auto_Use.memory_compression.memory_tracker import MemoryTracker
+
+# Markdown -> HTML for everything the agent writes to the user (scratchpad
+# notes, done/exit summaries). The single place that formatting happens.
+from frontend.markdown import render as md_render, render_notes as md_render_notes
 
 # This file lives at <repo>/frontend/service.py, so __file__-relative paths are
 # one directory deeper than app.py. Anchor everything off these.
@@ -68,9 +58,9 @@ IS_MAC = platform.system() == "Darwin"
 IS_WINDOWS = platform.system() == "Windows"
 
 if IS_MAC:
-    PLATFORM_PKG = "macOS_use"
+    PLATFORM_PKG = "mac"
 elif IS_WINDOWS:
-    PLATFORM_PKG = "windows_use"
+    PLATFORM_PKG = "windows"
 else:
     raise RuntimeError(f"Unsupported OS: {platform.system()}")
 
@@ -94,6 +84,7 @@ except Exception:
     BUILD_STAMP = "unknown"
 
 # Bundle id of the packaged macOS app — used to target `tccutil reset`.
+# Must match the bundle id stamped by the packaging step.
 MACOS_BUNDLE_ID = "com.ashishyadav.autouse"
 
 
@@ -248,7 +239,7 @@ def get_auto_use_path():
 
 def get_platform_use_path(pkg=None):
     """Get path to the active Auto_Use/<platform>_use/ directory.
-    pkg overrides the host default for mode-routed runs (e.g. "ios_use")."""
+    pkg overrides the host default for mode-routed runs (e.g. "ios")."""
     return get_auto_use_path() / (pkg or PLATFORM_PKG)
 
 
@@ -273,6 +264,13 @@ def clean_scratchpad():
                     shutil.rmtree(item)
                 else:
                     item.unlink()
+
+        # Shell-use conversation channel files leak only on an app crash (the
+        # run's finally deletes them); durable memory lives in agent_conversation,
+        # so sweeping the whole folder at startup is always safe.
+        shell_hist = app_data_dir() / "cli_shell_history"
+        if shell_hist.exists():
+            shutil.rmtree(shell_hist, ignore_errors=True)
     except Exception:
         debug_exception("clean_scratchpad")
 
@@ -393,13 +391,29 @@ PERMISSION_CATALOG = [
 _AUTOMATION_CACHE = "automation_grant.json"
 
 
+def _automation_marker() -> Path:
+    """autouse_data/automation_grant.json — the probe cache lives with the rest
+    of the user's data, not loose in the install folder / repo root. Moves a copy
+    left at the old app_data_dir() location by an earlier build, so an already
+    granted user isn't walked through the Automation step again. Best effort: a
+    failed move only costs one extra probe."""
+    dest = data_root() / _AUTOMATION_CACHE
+    try:
+        legacy = app_data_dir() / _AUTOMATION_CACHE
+        if not dest.exists() and legacy.is_file() and legacy.resolve() != dest.resolve():
+            os.replace(str(legacy), str(dest))
+    except Exception:
+        debug_exception("automation cache migrate")
+    return dest
+
+
 def _automation_granted():
     """Best-effort Automation (System Events) check. There is no reliable
     no-prompt API, so we read the cached result of the last probe (written by
     _request_automation when it runs). Defaults to False so the wizard shows the
     step rather than silently passing it."""
     try:
-        marker = app_data_dir() / _AUTOMATION_CACHE
+        marker = _automation_marker()
         if marker.exists():
             return bool(json.loads(marker.read_text()).get("granted"))
     except Exception:
@@ -573,7 +587,7 @@ def _request_automation():
     except Exception:
         granted = False
     try:
-        (app_data_dir() / _AUTOMATION_CACHE).write_text(json.dumps({
+        _automation_marker().write_text(json.dumps({
             "granted": granted, "checked_at": datetime.now().isoformat(),
         }))
     except Exception:
@@ -658,7 +672,7 @@ def reset_all_permissions():
         except Exception:
             debug_exception("tccutil reset All")
     try:
-        (app_data_dir() / _AUTOMATION_CACHE).unlink(missing_ok=True)
+        _automation_marker().unlink(missing_ok=True)
     except Exception:
         pass
     request_relaunch()
@@ -740,8 +754,7 @@ def get_llm_providers():
         def format_models(mappings):
             return [{
                 'id': model_id,
-                'display_name': info.get('display_name', model_id),
-                'reasoning_support': info.get('reasoning_support', False)
+                'display_name': info.get('display_name', model_id)
             } for model_id, info in mappings.items() if not info.get('hidden', False)]
 
         return [
@@ -999,6 +1012,17 @@ def serve_logo():
             return response
         return "Logo not found", 404
     return send_from_directory(str(get_auto_use_path() / 'logo'), 'auto_use.png')
+
+
+@app.route('/logo_rounded.png')
+def serve_logo_rounded():
+    """Serve the rounded app-icon logo used as the left bar's brand mark"""
+    if IS_COMPILED:
+        response = serve_embedded_file('Auto_Use/logo/logo_rounded.png')
+        if response:
+            return response
+        return "Logo not found", 404
+    return send_from_directory(str(get_auto_use_path() / 'logo'), 'logo_rounded.png')
 
 
 @app.route('/cursor.png')
@@ -1341,10 +1365,19 @@ def send_text_to_frontend(text):
 
 
 def send_milestone_to_frontend(text):
+    """Push ONE scratchpad line to the live 'tracking progress' stream.
+
+    Rendered through frontend/markdown.py, exactly like the run-end notes, so
+    the same entry looks the same while it streams and after it lands on the
+    notes stage. render_notes() also strips the leading 'N. ' — the stream
+    draws its own circle bullet."""
     global webview_window
     if webview_window:
         try:
-            escaped_text = text.replace('\\', '\\\\').replace("'", "\\'").replace('\n', '\\n').replace('\r', '\\r')
+            entries = md_render_notes(text)
+            if not entries:
+                return
+            escaped_text = _js_escape(entries[0])
             js_code = f"window.streamMilestone('{escaped_text}')"
             webview_window.evaluate_js(js_code)
         except Exception:
@@ -1396,33 +1429,60 @@ def send_todo_to_frontend(payload):
         debug_exception("send_todo_to_frontend")
 
 
-def _parse_scratchpad_md(content):
-    """Parse milestone.md ('1. note\\n2. note\\n…') into a list of entry strings,
-    with the leading 'N.' numbering stripped (the frontend re-numbers them)."""
-    entries = []
-    for raw in (content or "").split('\n'):
-        line = raw.strip()
-        if not line:
-            continue
-        dot = line.find('. ')
-        if dot != -1 and line[:dot].isdigit():
-            line = line[dot + 2:].strip()
-        if line:
-            entries.append(line)
-    return entries
+def _render_exchange_html(exchanges):
+    """Add task_html/done_html (rendered Markdown) to each exchange row, in
+    place. The shape showAgentHistory / cliShellHistory consume."""
+    for x in (exchanges or []):
+        if isinstance(x, dict):
+            x['task_html'] = md_render(x.get('task', ''))
+            x['done_html'] = md_render(x.get('done_message', ''))
+    return exchanges or []
 
 
-def send_agent_notes(content):
-    """Show the agent's scratchpad as 'Agent Notes' in the top-left container
-    (called when a run ends — completed or stopped)."""
+def send_agent_notes(content, session_id=None):
+    """Show the agent's scratchpad as 'Agent Notes' on the notes stage (called
+    when a run ends — completed or stopped).
+
+    Entries arrive as rendered HTML — frontend/markdown.py turns each note's
+    Markdown into real bold/code/links/line breaks and escapes everything else,
+    so showAgentNotes can assign it with innerHTML.
+
+    Empty-scratchpad fallback: a run that never wrote a note would leave the
+    stage on a bare "No notes". Instead we push the chat's full request/outcome
+    transcript — the SAME view reopening the chat gives, and it already
+    includes the run that just ended, because save_run() appends this run's
+    exchange before we get here. Platform-agnostic: every agent (macOS /
+    Windows / iOS) ends through this one call."""
     global webview_window
     if not webview_window:
         return
     try:
-        entries = _parse_scratchpad_md(content)
-        escaped = _js_escape(json.dumps(entries))
+        entries = md_render_notes(content)
+        if entries:
+            escaped = _js_escape(json.dumps(entries))
+            webview_window.evaluate_js(
+                f"window.showAgentNotes && window.showAgentNotes('{escaped}')"
+            )
+            return
+
+        rows = []
+        if session_id:
+            try:
+                data = conversation.get_session(session_id) or {}
+                rows = _render_exchange_html(data.get('exchanges'))
+            except Exception:
+                debug_exception("send_agent_notes exchanges")
+        if rows:
+            escaped = _js_escape(json.dumps(rows))
+            webview_window.evaluate_js(
+                f"window.showAgentHistory && window.showAgentHistory('{escaped}')"
+            )
+            return
+
+        # Nothing written AND no transcript yet — still swap the stage on so it
+        # replaces the screenshot; the empty state is correct here.
         webview_window.evaluate_js(
-            f"window.showAgentNotes && window.showAgentNotes('{escaped}')"
+            "window.showAgentNotes && window.showAgentNotes('[]')"
         )
     except Exception:
         debug_exception("send_agent_notes")
@@ -1584,7 +1644,7 @@ def start_agent():
         agent_mode = (data.get('mode') or 'computer').strip().lower()
         device_os = (data.get('os') or '').strip().lower()
         speed = (data.get('speed') or 'quality').strip().lower()   # ⚡/✨ toggle
-        run_pkg = 'ios_use' if (agent_mode == 'mobile' and device_os == 'ios') else PLATFORM_PKG
+        run_pkg = 'ios' if (agent_mode == 'mobile' and device_os == 'ios') else PLATFORM_PKG
         # The run's package folder — the todo/milestone watchers and resets below
         # must follow the agent that actually runs, not the host desktop package.
         run_use_path = get_platform_use_path(run_pkg)
@@ -1592,7 +1652,11 @@ def start_agent():
         api_key = get_provider_api_key(provider)
 
         # ── Resolve the CHAT session via the conversation service ────────────
-        chat_session_id, prior_history = conversation.start_or_resume(req_session_id, task)
+        # A freshly minted chat is stamped with its mode right away, so the
+        # per-chat lock is correct even if this run never reaches save_run.
+        chat_session_id, prior_history = conversation.start_or_resume(
+            req_session_id, task,
+            agent_mode=('mobile' if run_pkg == 'ios' else 'computer'))
 
         # ── Memory bar: current memory fullness for the MAIN agent, shown against
         # the fixed 300k budget (MemoryTracker.MEMORY_CAP — headroom for the future
@@ -1600,11 +1664,17 @@ def start_agent():
         # so a reopened chat restores where memory was.
         _sess = conversation.get_session(chat_session_id) or {}
 
+        # Per-chat mode lock, shell axis FIRST: a chat owned by Shell use never
+        # runs the main agent. run_pkg alone can't catch this — shell chats
+        # share the desktop PLATFORM_PKG — hence the dedicated agent_mode marker.
+        if (_sess.get("agent_mode") or "") == "shell":
+            return jsonify({'error': 'This chat is locked to Shell use — open a new chat to switch mode'}), 400
+
         # Per-chat mode lock: a chat that already ran in one mode only accepts
         # that mode (the UI greys the other option; this is the backstop).
         locked_pkg = _sess.get("run_pkg") or ""
         if locked_pkg and locked_pkg != run_pkg:
-            locked_label = 'Mobile use' if locked_pkg == 'ios_use' else 'Computer use'
+            locked_label = 'Mobile use' if locked_pkg == 'ios' else 'Computer use'
             return jsonify({'error': f'This chat is locked to {locked_label} — open a new chat to switch mode'}), 400
 
         # Backstop for legacy UNTAGGED sessions (saved before run_pkg existed —
@@ -1616,28 +1686,9 @@ def start_agent():
 
         token_tracker = MemoryTracker(initial_context=_sess.get("context_tokens", 0))
 
-        def send_token_to_frontend(usage):
-            # Cosmetic gauge ONLY — updates the visual memory bar each LLM call.
-            # It never gates the agent: the run does not stop when the bar fills
-            # (the agent keeps working past 300k / 1M); the bar just reads full.
-            global webview_window
-            if not webview_window:
-                return
-            try:
-                # Memory-compression indicator events ride the same pipe as the
-                # token usage: {"memory_compression": "start"|"end"} blinks the
-                # Memory logo red while the background handoff compression runs.
-                mc = (usage or {}).get("memory_compression")
-                if mc:
-                    fn = "memoryCompressionStart" if mc == "start" else "memoryCompressionEnd"
-                    webview_window.evaluate_js(f"window.{fn} && window.{fn}()")
-                    return
-                p = token_tracker.record(usage)
-                webview_window.evaluate_js(
-                    f"window.updateMemoryBar && window.updateMemoryBar({p['used']}, {p['cap']})"
-                )
-            except Exception:
-                debug_exception("send_token_to_frontend")
+        # Memory-bar push — shared factory (Shell use builds the identical
+        # sender around its own tracker).
+        send_token_to_frontend = _make_token_sender(token_tracker)
 
         active_agent_stop_event = threading.Event()
         active_agent_session_id = str(time.time())   # per-RUN guard
@@ -1657,6 +1708,28 @@ def start_agent():
                 # (/api/new-chat nulls active_agent_session_id) — a stale run's
                 # watcher/final pushes must not repaint the freshly reset UI.
                 return current_session_id == active_agent_session_id
+
+            def only_if_current(push):
+                # EVERY push this run makes to the UI goes through here. The
+                # instant Stop (or New chat) is pressed the run id is cleared,
+                # but the run itself may be parked in an LLM call and keep
+                # emitting for seconds afterwards — screenshots, agent text,
+                # tool-chain steps, the memory bar. Once retired, none of it
+                # reaches the screen: the user sees nothing more from a session
+                # they already ended, and nothing lands on the run they start
+                # next.
+                def guarded(*args, **kwargs):
+                    if run_is_current():
+                        push(*args, **kwargs)
+                return guarded
+
+            def cli_push(event_type, *args):
+                # CLI events need one exception to that rule: the teardown
+                # events CLOSE the coder card and unpin the stage, so they must
+                # land even for a retired run - otherwise the terminal is stuck
+                # mid-run forever. Keyed by task_id, so a stale one is a no-op.
+                if event_type in ("task_end", "await_end", "minion_end") or run_is_current():
+                    send_cli_event_to_frontend(event_type, *args)
 
             def monitor_milestones():
                 milestone_path = run_use_path / "scratchpad" / "milestone" / "milestone.md"
@@ -1730,14 +1803,13 @@ def start_agent():
                 agent = AgentService(
                     provider=provider,
                     model=model,
-                    thinking=True,
-                    frontend_callback=send_image_to_frontend,
-                    text_callback=send_text_to_frontend,
-                    web_callback=send_web_status_to_frontend,
-                    shell_callback=send_shell_status_to_frontend,
-                    cli_callback=send_cli_event_to_frontend,
-                    tool_callback=send_flow_to_frontend,
-                    token_callback=send_token_to_frontend,
+                    frontend_callback=only_if_current(send_image_to_frontend),
+                    text_callback=only_if_current(send_text_to_frontend),
+                    web_callback=only_if_current(send_web_status_to_frontend),
+                    shell_callback=only_if_current(send_shell_status_to_frontend),
+                    cli_callback=cli_push,
+                    tool_callback=only_if_current(send_flow_to_frontend),
+                    token_callback=only_if_current(send_token_to_frontend),
                     api_key=api_key,
                     stop_event=stop_event,
                     prior_history=prior_history,   # None for a fresh chat
@@ -1778,6 +1850,7 @@ def start_agent():
                         context_tokens=token_tracker.current,   # latest context size for the bar
                         context_cap=token_tracker.cap,          # fixed 300k memory budget
                         run_pkg=run_pkg,                        # which agent produced this memory
+                        agent_mode=('mobile' if run_pkg == 'ios' else 'computer'),  # per-chat lock
                     )
                 except Exception:
                     debug_exception("persist chat session on finish")
@@ -1803,7 +1876,9 @@ def start_agent():
                     try:
                         notes_path = run_use_path / "scratchpad" / "milestone" / "milestone.md"
                         content = notes_path.read_text(encoding='utf-8') if notes_path.exists() else ""
-                        send_agent_notes(content)
+                        # session id: lets an empty scratchpad fall back to this
+                        # chat's done-message transcript instead of "No notes".
+                        send_agent_notes(content, chat_session_id)
                     except Exception:
                         debug_exception("send agent notes on finish")
 
@@ -1819,8 +1894,190 @@ def start_agent():
         return jsonify({'error': str(e)}), 500
 
 
+def _make_token_sender(token_tracker):
+    """Build the per-run memory-bar push around one MemoryTracker — the closure
+    moved verbatim from /api/start-agent so Shell use drives the EXACT same
+    updateMemoryBar pipe with its own tracker."""
+    def send_token_to_frontend(usage):
+        # Cosmetic gauge ONLY — updates the visual memory bar each LLM call.
+        # It never gates the agent: the run does not stop when the bar fills
+        # (the agent keeps working past 300k / 1M); the bar just reads full.
+        global webview_window
+        if not webview_window:
+            return
+        try:
+            # Memory-compression indicator events ride the same pipe as the
+            # token usage: {"memory_compression": "start"|"end"} blinks the
+            # Memory logo red while the background handoff compression runs.
+            mc = (usage or {}).get("memory_compression")
+            if mc:
+                fn = "memoryCompressionStart" if mc == "start" else "memoryCompressionEnd"
+                webview_window.evaluate_js(f"window.{fn} && window.{fn}()")
+                return
+            p = token_tracker.record(usage)
+            webview_window.evaluate_js(
+                f"window.updateMemoryBar && window.updateMemoryBar({p['used']}, {p['cap']})"
+            )
+        except Exception:
+            debug_exception("send_token_to_frontend")
+    return send_token_to_frontend
+
+
+# ── Shell-use conversation channel ───────────────────────────────────────────
+# The coder runs as a SUBPROCESS (argv-only), so a shell chat's conversation
+# crosses the process boundary through ONE JSON file: the seed is written here
+# before the spawn, the coder rewrites the file atomically after every step,
+# and run_shell reads it back for conversation.save_run. It lives OUTSIDE any
+# scratchpad/ folder — those are wiped on app start AND on every main-agent
+# construction, and this must survive both for the life of the run.
+def _shell_history_dir() -> Path:
+    return app_data_dir() / "cli_shell_history"
+
+
+def _new_shell_history_file() -> Path:
+    d = _shell_history_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    # uuid suffix: a double-send landing in the same millisecond must never
+    # share (and cross-clobber) one channel file.
+    return d / f"history_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}.json"
+
+
+def _write_shell_seed(path: Path, task: str, prior_history, manual_block: str = "") -> dict:
+    """Write the coder's seed (the chat's saved history, or empty lists for a
+    fresh chat). Returns the seed dict — run_shell's fallback if the file can't
+    be read back (e.g. the run died before its first snapshot)."""
+    seed = {
+        "task": (prior_history or {}).get("task") or task,
+        "assistant_messages": list((prior_history or {}).get("assistant_messages") or []),
+        "tool_responses": list((prior_history or {}).get("tool_responses") or []),
+        "last_messages": None,
+    }
+    if manual_block:
+        # consumed once by the coder's _load_seed; its snapshots never echo the
+        # key back, so a record can't be delivered twice
+        seed["manual_mode"] = manual_block
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(seed, fh, ensure_ascii=False)
+    except Exception:
+        debug_exception("write shell history seed")
+    return seed
+
+
+def _read_shell_history(path: Path):
+    """The coder's latest snapshot, or None. The coder rewrites via tmp +
+    os.replace, so a torn read can't happen — None means no snapshot landed."""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+# PID of the coder subprocess driving the LIVE Shell-use run. /api/stop-agent
+# kills this tree the instant Stop is pressed - it has to happen while the coder
+# is still alive, because a process tree is resolved THROUGH the parent.
+_active_shell_pids = []
+
+
+def _live_cli_pids(controller) -> list:
+    """PIDs of the coder subprocesses the controller is tracking right now."""
+    pids = []
+    try:
+        for entry in list(getattr(controller, "_cli_tasks", None) or []):
+            proc = entry.get("subprocess")
+            if proc is not None and proc.poll() is None:
+                pids.append(proc.pid)
+    except Exception:
+        debug_exception("read cli pids")
+    return pids
+
+
+def _kill_process_trees(pids) -> None:
+    """Kill each pid AND everything it spawned.
+
+    The coder runs minions as its OWN child processes, so terminating the coder
+    leaves them orphaned and still working. taskkill /T walks the tree on
+    Windows; killpg does the same on POSIX (the coder is started in its own
+    process group - mac/controller/view.py passes start_new_session=True).
+    Best-effort and idempotent: on a normal finish the tree is already gone and
+    every call below is a no-op.
+
+    NEVER signals our own process group. That is not paranoia: the coder used to
+    be spawned WITHOUT start_new_session, so it inherited our group, getpgid()
+    resolved to the app's own pgid, and pressing Stop SIGKILLed the entire
+    application instead of the agent. The spawn is fixed, but a SIGKILL aimed at
+    ourselves is unrecoverable and untraceable - so it is refused here too, and
+    the caller is left with a dead-obvious log line rather than a dead app.
+    """
+    own_pgid = None if IS_WINDOWS else os.getpgrp()
+    own_pid = os.getpid()
+    for pid in pids or []:
+        try:
+            if not pid or int(pid) <= 0 or int(pid) == own_pid:
+                debug_log(f"refusing to kill pid {pid!r} - not a child", "ERROR")
+                continue
+            if IS_WINDOWS:
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                               capture_output=True, timeout=10)
+            else:
+                pgid = os.getpgid(pid)
+                if pgid == own_pgid:
+                    # Shares OUR group -> killpg would take the app with it. Fall
+                    # back to killing just this process; any children it spawned
+                    # are in the same group and cannot be reached safely.
+                    debug_log(f"pid {pid} shares our process group ({pgid}) - "
+                              f"killing it alone, NOT the group", "ERROR")
+                    os.kill(pid, signal.SIGKILL)
+                    continue
+                os.killpg(pgid, signal.SIGKILL)
+        except Exception:
+            pass
+
+
+@atexit.register
+def _kill_shell_trees_on_exit() -> None:
+    """Quitting the app mid-run must not leave the coder running.
+
+    The coder is spawned into its OWN session so Stop can killpg it without
+    taking us down - which also means it no longer dies incidentally with us
+    (a terminal-launched app used to SIGHUP its whole group on quit). Nothing
+    else covers this: run_shell_task's finally only fires if the run unwinds,
+    and app.py's closing hook is Windows-only and just shuts banners.
+
+    Covers a clean quit and Ctrl+C; a SIGKILL of the app skips atexit entirely,
+    same as any other cleanup.
+    """
+    try:
+        pids = list(_active_shell_pids)
+        if pids:
+            debug_log(f"app exiting - killing {len(pids)} live coder tree(s)")
+            _kill_process_trees(pids)
+            _active_shell_pids.clear()
+    except Exception:
+        pass
+
+
+def _shell_outcome(result) -> dict:
+    """Map run_shell_task's cli_await result onto the {status, message} shape
+    run_agent persists — so shell exchanges read identically across modes."""
+    if not isinstance(result, dict) or result.get("status") == "stopped":
+        return {"status": "incomplete", "message": "Stopped by user"}
+    if result.get("status") == "error":
+        # route_action's catch-all: surface the real reason, don't swallow it
+        return {"status": "error", "message": str(result.get("message", "") or "Shell run failed")}
+    completed = result.get("completed") or []
+    if not completed:
+        return {"status": "incomplete", "message": "Shell run ended without a result"}
+    last = completed[-1]
+    status = "success" if last.get("status") == "complete" else "incomplete"
+    return {"status": status, "message": last.get("summary", "") or ""}
+
+
 def run_shell_task(task, provider, model, api_key, run_pkg,
-                   cli_callback=None, stop_event=None):
+                   cli_callback=None, stop_event=None,
+                   history_file=None, request_no=None):
     """Shell use — a DIRECT line from the composer to the coder (CLI) agent.
 
     Runs ONE task on the coder and BLOCKS until it finishes; call from a
@@ -1840,7 +2097,7 @@ def run_shell_task(task, provider, model, api_key, run_pkg,
     Args:
         task: the user's typed request, handed to the coder verbatim.
         provider/model/api_key: same LLM selection the main agent would use.
-        run_pkg: 'macOS_use' | 'windows_use' (PLATFORM_PKG).
+        run_pkg: 'mac' | 'windows' (PLATFORM_PKG).
         cli_callback: send_cli_event_to_frontend — drives the CLI stage.
         stop_event: threading.Event shared with /api/stop-agent, so the
             composer's stop orb kills the coder subprocess mid-run.
@@ -1856,6 +2113,11 @@ def run_shell_task(task, provider, model, api_key, run_pkg,
     # cli_mode=True with NO session_id: keeps this run off the MAIN agent's
     # scratchpad/todo files (it writes to the shared cli_milestone/ folder
     # instead) without minting a per-run sandbox folder on the Desktop.
+    # cli_report_usage: the coder emits per-LLM-call token usage markers, so
+    # the memory bar tracks a Shell-use run the way it tracks Computer use.
+    # cli_history_file / cli_request_no: the chat's conversation channel — the
+    # coder seeds from the file, snapshots back into it, and tags its task
+    # <user_request=N>.
     controller = ControllerView(
         provider=provider,
         model=model,
@@ -1863,17 +2125,40 @@ def run_shell_task(task, provider, model, api_key, run_pkg,
         cli_callback=cli_callback,
         api_key=api_key,
         stop_event=stop_event,
+        cli_report_usage=True,
+        cli_history_file=history_file,
+        cli_request_no=request_no,
     )
 
     logging.getLogger(__name__).info(f"Shell use — dispatching coder agent for: {task[:120]}")
+    coder_pids = []   # bound before the try: the finally below always reads it
     try:
         # 1. Dispatch: spawns the coder subprocess, emits task_start and starts
         #    streaming its stdout/stderr into the card.
         controller.route_action([{"type": "cli_agent", "value": task}])
+        # Remember the coder's pid NOW, while the controller still tracks it:
+        # stop_cli_agent() clears its task list, so after the await there is
+        # nothing left to read it from.
+        coder_pids = _live_cli_pids(controller)
+        # Publish it so /api/stop-agent can kill the tree IMMEDIATELY, while the
+        # coder is still alive. cli_await terminates the coder itself the moment
+        # it sees the stop event, and once the parent is dead its children can no
+        # longer be resolved from its pid - they would survive as orphans.
+        _active_shell_pids[:] = coder_pids
         # 2. Await: emits await_start (stage slides up), blocks until the coder
         #    writes its result file, then emits task_end + await_end.
         return controller.route_action([{"type": "cli_await", "value": "Shell use"}])
     finally:
+        # Tree FIRST, while the coder is still alive: stop_cli_agent() terminates
+        # only the coder process, and the minions it spawned are its own
+        # children - neither TerminateProcess nor SIGTERM walks a tree, so
+        # killing the parent first would strand them (still running, still
+        # calling the API). Harmless no-op on a normal finish.
+        try:
+            _kill_process_trees(coder_pids)
+        except Exception:
+            debug_exception("shell run tree kill")
+        _active_shell_pids.clear()
         # Safety net for an early exception — a no-op on the normal path, where
         # cli_await already drained the task list.
         try:
@@ -1886,10 +2171,13 @@ def run_shell_task(task, provider, model, api_key, run_pkg,
 def start_shell():
     """Agent mode → Shell use: send the task STRAIGHT to the coder agent.
 
-    Deliberately tiny next to /api/start-agent — no chat session, no memory,
-    no todo/milestone watchers, no Agent Notes. The CLI stage is the whole UI.
-    All of the actual work lives in run_shell_task() above; this route only owns
-    the thread + the run-end signal back to the composer.
+    Slim next to /api/start-agent — no main agent, no todo/milestone watchers,
+    no Agent Notes overlay (the CLI stage is the whole UI) — but a shell run IS
+    a chat: the session is resolved/minted via the conversation service, the
+    coder is seeded with the chat's saved history (--history file channel) and
+    tags its task <user_request=N>, its token usage drives the memory bar, and
+    every ending is persisted with save_run. The chat locks to Shell use the
+    same way Computer/Mobile chats lock to theirs.
 
     Shares active_agent_stop_event / active_agent_session_id with the normal
     run so the stop orb (/api/stop-agent) and New chat work unchanged.
@@ -1902,11 +2190,77 @@ def start_shell():
         provider = data.get('provider')
         model = data.get('model')
         task = data.get('task')
+        req_session_id = data.get('session_id')   # None / "new" / existing chat id
 
         if not all([provider, model, task]):
             return jsonify({'error': 'Missing provider, model, or task'}), 400
 
         api_key = get_provider_api_key(provider)
+
+        # ── Resolve the CHAT session (same service as /api/start-agent). A
+        # freshly minted chat is stamped agent_mode='shell' at mint time, so the
+        # per-chat lock is right even if this run never reaches save_run.
+        chat_session_id, prior_history = conversation.start_or_resume(
+            req_session_id, task, agent_mode='shell')
+        _sess = conversation.get_session(chat_session_id) or {}
+
+        # ── Per-chat mode lock backstop (mirror of start_agent's) ───────────
+        locked_pkg = _sess.get("run_pkg") or ""
+        locked_mode = _sess.get("agent_mode") or ""
+        if not locked_mode and (locked_pkg or prior_history is not None
+                                or (_sess.get("exchanges") or [])):
+            # Legacy chats (saved before agent_mode existed) are computer/mobile
+            # by construction — shell chats didn't exist yet. The exchanges
+            # signal also catches a legacy chat whose conversation.json was
+            # truncated by a crash (prior_history None, pkg untagged): its
+            # transcript still proves it ran, so it must not convert to shell.
+            locked_mode = 'mobile' if locked_pkg == 'ios' else 'computer'
+        if locked_mode and locked_mode != 'shell':
+            label = 'Mobile use' if locked_mode == 'mobile' else 'Computer use'
+            return jsonify({'error': f'This chat is locked to {label} — open a new chat to switch mode'}), 400
+        # Cross-OS: a shell chat's memory never seeds the other platform's coder.
+        if locked_pkg and locked_pkg != PLATFORM_PKG:
+            return jsonify({'error': 'This chat was created on a different OS — open a new chat'}), 400
+
+        # Which request of the conversation this is — numbers the coder's
+        # <user_request=N> tag. Exchanges append one entry per finished run.
+        request_no = len(_sess.get("exchanges") or []) + 1
+
+        # ── Memory bar: same tracker + push pipe as Computer use, seeded from
+        # the chat's last saved context size so a resumed chat restores its bar.
+        token_tracker = MemoryTracker(initial_context=_sess.get("context_tokens", 0))
+        send_token_to_frontend = _make_token_sender(token_tracker)
+
+        # Teardown events are ALWAYS delivered, even for a retired run: they are
+        # what CLOSES this run's card and unpins the stage. Swallowing them
+        # (Stop retires the run, then stop_cli_agent immediately emits task_end)
+        # freezes the terminal mid-run forever. They are keyed by task_id, so a
+        # stale one is a no-op for whatever run is on screen now.
+        _CLI_TEARDOWN_EVENTS = ("task_end", "await_end", "minion_end")
+
+        def shell_cli_callback(event_type, *args):
+            # Everything else follows the main agent's rule: once the run is
+            # retired (Stop / New chat clears the id) its output does not reach
+            # the screen. The coder keeps streaming until it actually dies, so
+            # without this its lines would land on whatever the user started
+            # next. Read at call time - the thread only runs after the id below
+            # is assigned.
+            if (event_type not in _CLI_TEARDOWN_EVENTS
+                    and current_session_id != active_agent_session_id):
+                return
+            if event_type == "token_usage":
+                send_token_to_frontend(args[0] if args and isinstance(args[0], dict) else {})
+                return
+            send_cli_event_to_frontend(event_type, *args)
+
+        # ── Conversation file channel to/from the coder subprocess ──────────
+        history_file = _new_shell_history_file()
+        # Hand-typed terminal commands since the last run ride the seed as a
+        # <manual_mode> block — the coder replays it as conversation, so the
+        # agent resumes knowing what the user tried by hand.
+        manual_records = _drain_manual_records(chat_session_id, request_no == 1)
+        manual_block = _render_manual_block(manual_records)
+        seed = _write_shell_seed(history_file, task, prior_history, manual_block)
 
         active_agent_stop_event = threading.Event()
         active_agent_session_id = str(time.time())   # per-RUN guard
@@ -1914,35 +2268,83 @@ def start_shell():
         stop_event = active_agent_stop_event
 
         def run_shell():
-            outcome = {"status": "success", "message": ""}
+            outcome = {"status": "incomplete", "message": ""}
             try:
-                run_shell_task(
+                result = run_shell_task(
                     task=task,
                     provider=provider,
                     model=model,
                     api_key=api_key,
                     run_pkg=PLATFORM_PKG,
-                    cli_callback=send_cli_event_to_frontend,
+                    cli_callback=shell_cli_callback,
                     stop_event=stop_event,
+                    history_file=history_file,
+                    request_no=request_no,
                 )
+                outcome = _shell_outcome(result)
             except Exception as shell_exc:
                 debug_exception("run_shell")
                 outcome = {"status": "error", "message": str(shell_exc)}
             finally:
                 stop_event.set()
+
+                # ── Persist this run via the conversation service — BEFORE the
+                # window guard, same as run_agent, so memory survives a mid-run
+                # New chat / closed window. The coder snapshots per step, so a
+                # hard-killed run still reads back to its last finished step.
+                hist = _read_shell_history(history_file) or seed
+
+                # <manual_mode> delivery ack: the coder stamps every snapshot
+                # with manual_delivered once its seed carried the block — so a
+                # snapshot proves the model's transcript contained it (length /
+                # substring heuristics break under mid-run compression). No
+                # snapshot (died before step 1) or an unreadable seed leaves
+                # the stamp absent — put the records back so the chat's next
+                # run delivers them instead of dropping them.
+                if manual_records and not hist.get("manual_delivered"):
+                    _requeue_manual_records(manual_records)
+
+                try:
+                    conversation.save_run(
+                        chat_session_id,
+                        hist.get("assistant_messages"),
+                        hist.get("tool_responses"),
+                        outcome.get("status", "incomplete"),
+                        outcome.get("message", "") or "",
+                        task,
+                        hist.get("last_messages"),      # exact payload -> true memory log
+                        context_tokens=token_tracker.current,
+                        context_cap=token_tracker.cap,
+                        run_pkg=PLATFORM_PKG,
+                        agent_mode="shell",             # keeps the chat locked to Shell use
+                        request_no=request_no,          # zero-step runs still record their request
+                    )
+                except Exception:
+                    debug_exception("persist shell chat on finish")
+                try:
+                    history_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
                 # Same completion signal as a normal run: rolls the composer's
                 # orb, placeholder and input box back to idle.
                 if webview_window and current_session_id == active_agent_session_id:
                     try:
-                        if outcome["status"] == "success":
+                        status = outcome.get("status", "incomplete")
+                        if status == "success":
                             webview_window.evaluate_js("window.agentComplete()")
                         else:
-                            reason = "❌ Error: " + (outcome["message"] or "")
+                            prefix = "❌ Error: " if status == "error" else "⚠️ Stopped without completing: "
+                            message = outcome.get("message", "") or ""
+                            reason = prefix + message if message else prefix.strip()
                             # agentError writes to the milestone stream, which lives in a
                             # zone body.cli-stage hides — so ALSO put it on the terminal,
-                            # the only surface visible in Shell use.
+                            # the only surface visible in Shell use. The chat id rides
+                            # along: if the user has since opened a DIFFERENT chat, the
+                            # frontend drops the note instead of writing this run's
+                            # outcome onto that chat's terminal.
                             webview_window.evaluate_js(
-                                f"window.cliShellNote && window.cliShellNote('{_js_escape(reason)}')"
+                                f"window.cliShellNote && window.cliShellNote('{_js_escape(reason)}', '{_js_escape(chat_session_id)}')"
                             )
                             webview_window.evaluate_js(
                                 f"window.agentError('{_js_escape(reason)}')"
@@ -1954,7 +2356,8 @@ def start_shell():
         thread.daemon = True
         thread.start()
 
-        return jsonify({'status': 'started'})
+        # Return the chat session id so a brand-new chat's id reaches the frontend.
+        return jsonify({'status': 'started', 'session_id': chat_session_id})
 
     except Exception as e:
         debug_exception("start_shell API")
@@ -1972,6 +2375,106 @@ def _get_manual_shell():
         Sandbox = importlib.import_module(f"Auto_Use.{PLATFORM_PKG}.sandbox").Sandbox
         _manual_shell = Sandbox()
     return _manual_shell
+
+
+# ── Manual-mode record: what the user typed, shown to the coder ──────────────
+# Every hand-typed command is captured as {cmd, cwd, status, exit_code, output}
+# and buffered here until the chat's NEXT shell run drains it into the coder's
+# seed as a <manual_mode> block — so the agent resumes knowing what the user
+# tried by hand and what it produced. Records are tagged with the chat's
+# session id (None = typed before any chat existed) so one chat's commands
+# never surface in another chat's run.
+_manual_records = []
+_manual_records_lock = threading.Lock()
+_MANUAL_KEEP = 50           # records buffered between runs
+_MANUAL_HEAD_TAIL = 150     # live-capture lines kept per side of a long output
+_MANUAL_BLOCK_CMDS = 12     # newest commands shown per injection
+_MANUAL_BLOCK_LINES = 60    # output lines per record in the rendered block
+_MANUAL_BLOCK_CHARS = 6000  # hard char cap per record's output
+
+# A command (or its output) may itself contain the transcript's control tags —
+# e.g. the user greps this repo, or `type`s a saved conversation. Left intact,
+# an embedded <user_request=N> pair would hijack the coder's compression
+# regex and a stray </manual_mode> would fake-close the block. Defuse just
+# those openers; everything else passes through verbatim.
+_MANUAL_TAG_RE = re.compile(r"<(?=/?(?:user_request=|manual_mode>))")
+
+
+def _queue_manual_record(record):
+    with _manual_records_lock:
+        _manual_records.append(record)
+        del _manual_records[:-_MANUAL_KEEP]
+
+
+def _finish_manual_record(rec, exit_code):
+    """Close a live command's capture (head/tail line windows) into a final
+    record and queue it for the next agent run."""
+    omitted = rec["total"] - len(rec["head"]) - len(rec["tail"])
+    lines = rec["head"] + ([f"... [{omitted} line(s) omitted] ..."] if omitted > 0 else []) + rec["tail"]
+    if rec.get("interrupted"):
+        status = "interrupted"
+    else:
+        status = "success" if exit_code == 0 else "error"
+    _queue_manual_record({
+        "cmd": rec["cmd"], "cwd": rec["cwd"], "session_id": rec.get("session_id"),
+        "status": status, "exit_code": exit_code, "output": "\n".join(lines),
+    })
+
+
+def _drain_manual_records(chat_session_id, first_request):
+    """Hand this chat its pending records and leave other chats' in the
+    buffer. Untagged records (typed while no chat id existed yet) only go to
+    a chat's FIRST request — so commands typed in a brand-new chat can never
+    leak into an older chat the user switches to before sending anything."""
+    take, keep = [], []
+    with _manual_records_lock:
+        for r in _manual_records:
+            sid = r.get("session_id")
+            match = sid == chat_session_id or (not sid and first_request)
+            (take if match else keep).append(r)
+        _manual_records[:] = keep
+    return take
+
+
+def _requeue_manual_records(records):
+    """Delivery failed (the run died before its first snapshot) — put the
+    records back at the FRONT so ordering survives for the next run."""
+    with _manual_records_lock:
+        _manual_records[:0] = records
+        del _manual_records[:-_MANUAL_KEEP]
+
+
+def _render_manual_block(records) -> str:
+    """The <manual_mode> block the coder replays in its transcript: one JSON
+    object per hand-typed command. Output is capped hard — the block becomes a
+    permanent part of the saved conversation and of every later prompt prefix."""
+    if not records:
+        return ""
+    shown = records[-_MANUAL_BLOCK_CMDS:]
+    parts = []
+    if len(records) > len(shown):
+        parts.append(f"[{len(records) - len(shown)} earlier command(s) omitted]")
+    for r in shown:
+        out = r.get("output") or ""
+        ls = out.split("\n")
+        if len(ls) > _MANUAL_BLOCK_LINES:
+            half = _MANUAL_BLOCK_LINES // 2
+            ls = ls[:half] + [f"... [{len(ls) - 2 * half} line(s) omitted] ..."] + ls[-half:]
+            out = "\n".join(ls)
+        if len(out) > _MANUAL_BLOCK_CHARS:
+            out = (out[:_MANUAL_BLOCK_CHARS // 2] + "\n... [output truncated] ...\n"
+                   + out[-_MANUAL_BLOCK_CHARS // 2:])
+        parts.append(json.dumps(
+            {"cmd": _MANUAL_TAG_RE.sub("&lt;", r.get("cmd") or ""),
+             "cwd": r.get("cwd") or "",
+             "status": r.get("status") or "", "exit_code": r.get("exit_code"),
+             "output": _MANUAL_TAG_RE.sub("&lt;", out)},
+            ensure_ascii=False, indent=2))
+    header = ("Commands the user ran BY HAND at the terminal's `>` prompt since the "
+              "previous run. They executed in the user's OWN shell (cwd shown per "
+              "command) — the agent's shell and cwd are untouched. Treat their "
+              "effects on files and processes as already applied.")
+    return "<manual_mode>\n" + header + "\n\n" + "\n".join(parts) + "\n</manual_mode>"
 
 
 class _ManualTerminal:
@@ -1995,15 +2498,31 @@ class _ManualTerminal:
         self._lock = threading.Lock()
         self._buf = []
         self._buf_lock = threading.Lock()
+        # The RUNNING command's record — used ONLY by interrupt() to flag it.
+        # Everything else (reader, finalize) holds the record by closure: a
+        # stale reader kept alive by an orphaned child that still owns the
+        # pipe must keep writing into ITS OWN command's record, never into
+        # whatever command runs next.
+        self._rec = None
 
     def is_running(self):
         with self._lock:
             return self._proc is not None and self._proc.poll() is None
 
     # ---- output pump -------------------------------------------------------
-    def _emit(self, line):
+    def _emit(self, line, rec=None):
         with self._buf_lock:
             self._buf.append(line)
+            if rec is not None:
+                # head+tail windows, so an endless `ping` can't grow the record
+                # unbounded while still keeping the start and the ending
+                rec["total"] += 1
+                if rec["total"] <= _MANUAL_HEAD_TAIL:
+                    rec["head"].append(line)
+                else:
+                    rec["tail"].append(line)
+                    if len(rec["tail"]) > _MANUAL_HEAD_TAIL:
+                        rec["tail"].pop(0)
 
     def _flush(self):
         with self._buf_lock:
@@ -2027,12 +2546,12 @@ class _ManualTerminal:
             self._flush()
         self._flush()   # drain whatever landed in the final moments
 
-    def _read(self, pipe):
+    def _read(self, pipe, rec=None):
         try:
             for raw in iter(pipe.readline, b""):
                 if not raw:
                     break
-                self._emit(raw.decode("utf-8", errors="replace").rstrip("\r\n"))
+                self._emit(raw.decode("utf-8", errors="replace").rstrip("\r\n"), rec)
         except Exception:
             pass
         finally:
@@ -2042,7 +2561,7 @@ class _ManualTerminal:
                 pass
 
     # ---- lifecycle ---------------------------------------------------------
-    def start(self, command, cwd):
+    def start(self, command, cwd, session_id=None):
         """Spawn `command`. Returns (started, error_message)."""
         if self.is_running():
             return False, "a command is already running — press Ctrl+C to stop it"
@@ -2064,18 +2583,35 @@ class _ManualTerminal:
         except Exception as e:
             return False, str(e)
 
+        # one record per command: everything the user saw, plus how it ended —
+        # harvested into <manual_mode> for the next agent run. The reader and
+        # _wait hold it by CLOSURE (identity-safe); the slot only serves
+        # interrupt()'s flag, guarded by `is` checks.
+        rec = {"cmd": command, "cwd": cwd, "session_id": session_id,
+               "head": [], "tail": [], "total": 0, "interrupted": False}
         with self._lock:
             self._proc = proc
+        with self._buf_lock:
+            self._rec = rec
 
-        threading.Thread(target=self._read, args=(proc.stdout,), daemon=True).start()
+        reader = threading.Thread(target=self._read, args=(proc.stdout, rec), daemon=True)
+        reader.start()
         threading.Thread(target=self._pump, args=(proc,), daemon=True).start()
 
         def _wait():
             code = proc.wait()
+            # Give the reader a moment to drain the pipe's tail. Short on
+            # purpose: an orphaned child holding the pipe would make a longer
+            # join delay shellTermEnd (the prompt unlock) by its full timeout.
+            reader.join(timeout=0.5)
             self._flush()
             with self._lock:
                 if self._proc is proc:
                     self._proc = None
+            with self._buf_lock:
+                if self._rec is rec:
+                    self._rec = None
+            _finish_manual_record(rec, code)
             if webview_window:
                 try:
                     webview_window.evaluate_js(
@@ -2094,6 +2630,10 @@ class _ManualTerminal:
             proc = self._proc
         if proc is None or proc.poll() is not None:
             return False
+        with self._buf_lock:
+            # flag before signalling — the process may die instantly
+            if self._rec is not None:
+                self._rec["interrupted"] = True
         try:
             if IS_WINDOWS:
                 proc.send_signal(getattr(signal, "CTRL_BREAK_EVENT", signal.SIGTERM))
@@ -2165,6 +2705,9 @@ def shell_exec():
     try:
         data = request.get_json() or {}
         command = (data.get('command') or '').strip()
+        # which CHAT the terminal belongs to right now — tags the manual-mode
+        # record so another chat's next run never sees this command
+        session_id = data.get('session_id') or None
         if not command:
             return jsonify({'error': 'Missing command'}), 400
 
@@ -2179,8 +2722,16 @@ def shell_exec():
             target = command[2:].strip().strip('"\'') or '~'
             res = sh.cd(os.path.expanduser(target))
             ok = bool(res.get('success'))
+            output = '' if ok else (res.get('error') or 'Directory not found')
+            # recorded too — a `cd` changes what the user's later commands mean
+            # (the record's cwd is the RESULTING directory)
+            _queue_manual_record({
+                'cmd': command, 'cwd': sh.get_cwd(), 'session_id': session_id,
+                'status': 'success' if ok else 'error', 'exit_code': None,
+                'output': output,
+            })
             return jsonify({
-                'output': '' if ok else (res.get('error') or 'Directory not found'),
+                'output': output,
                 'status': 'success' if ok else 'error',
                 'cwd': sh.get_cwd(),
                 'short': _short_cwd(sh.get_cwd()),
@@ -2189,8 +2740,12 @@ def shell_exec():
         # Everything else runs LIVE: the route returns as soon as the process is
         # spawned and its output is pushed to the terminal line by line, so `ping`
         # scrolls as it happens instead of appearing only once it dies.
-        started, err = _manual_term().start(command, sh.get_cwd())
+        started, err = _manual_term().start(command, sh.get_cwd(), session_id)
         if not started:
+            _queue_manual_record({
+                'cmd': command, 'cwd': sh.get_cwd(), 'session_id': session_id,
+                'status': 'error', 'exit_code': None, 'output': err,
+            })
             return jsonify({'output': err, 'status': 'error',
                             'cwd': sh.get_cwd(), 'short': _short_cwd(sh.get_cwd())}), 200
         return jsonify({'status': 'started',
@@ -2216,10 +2771,31 @@ def shell_kill():
 
 @app.route('/api/stop-agent', methods=['POST'])
 def stop_agent():
-    """Stop the currently running agent"""
-    global active_agent_stop_event
+    """Stop the currently running agent.
+
+    The run is RETIRED here, not when it actually unwinds. It may be parked in
+    an LLM call and only notice the stop when that call returns seconds later —
+    by then the user may already have sent the next task. Clearing the run id
+    (same as New chat) makes every late push it still makes — chain events,
+    watcher reads, its own complete/error — fail run_is_current() and be
+    dropped, so a discarded run can never repaint the run that replaced it.
+    Its memory is still saved: save_run runs before that guard in run_agent's
+    finally."""
+    global active_agent_stop_event, active_agent_session_id
     if active_agent_stop_event:
         active_agent_stop_event.set()
+        active_agent_session_id = None
+        # Kill the Shell-use coder's whole process tree RIGHT NOW. Waiting for
+        # the run to unwind is too late: cli_await terminates the coder itself
+        # within a second of seeing the stop event, and once that parent is dead
+        # the minions it spawned can no longer be resolved from its pid - they
+        # would keep running and keep burning API calls. Killing here, while the
+        # coder is still alive, takes the minions down with it.
+        try:
+            _kill_process_trees(list(_active_shell_pids))
+            _active_shell_pids.clear()
+        except Exception:
+            debug_exception("stop_agent tree kill")
         return jsonify({'status': 'stopped'})
     return jsonify({'status': 'no_agent_running'})
 
@@ -2254,7 +2830,7 @@ def open_github():
 # =============================================================================
 # Flask routes — skills (the Skills stage's Computer-use tab: list / preview /
 # delete the active platform's Auto_Use/<platform>_use/agent/skills/*.md, so
-# the same code serves windows_use on Windows and macOS_use on Mac)
+# the same code serves windows on Windows and mac on Mac)
 # =============================================================================
 def _skills_dir():
     """The active platform's skill-markdown folder — autouse_data/skills/
@@ -2378,11 +2954,19 @@ def list_chats():
 @app.route('/api/chats/<chat_id>', methods=['GET'])
 def get_chat(chat_id):
     """Reopen payload: name + last done message + context_tokens/context_cap (the
-    memory bar's last context size and its fixed 300k budget) for the chat."""
+    memory bar's last context size and its fixed 300k budget) for the chat.
+
+    Each exchange also carries `task_html`/`done_html` — the Markdown rendered
+    by frontend/markdown.py, same as the live run-end path — so a reopened chat
+    reads identically to the notes that were on screen when the run finished.
+    The raw `task`/`done_message` stay in the payload for any consumer that
+    wants plain text."""
     try:
         data = conversation.get_session(chat_id)
         if not data:
             return jsonify({'error': 'Not found'}), 404
+        _render_exchange_html(data.get('exchanges'))
+        data['last_done_message_html'] = md_render(data.get('last_done_message', ''))
         return jsonify(data)
     except Exception:
         debug_exception("get_chat")

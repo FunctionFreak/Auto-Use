@@ -38,6 +38,5 @@ nuitka
 ordered-set
 zstandard
 
-# ios_use
-pymobiledevice3
-libimobiledevice
+# Optional iOS path: use standalone ios_requirements.txt instead
+# (full app stack + pymobiledevice3 — installed by ios_setup.sh).

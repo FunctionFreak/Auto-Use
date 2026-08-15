@@ -29,6 +29,115 @@
     var PAGE_HOLD = 280;   // ms a full page lingers before clearing for the next page
     var LINE_HOLD = 110;   // ms between distinct lines
 
+    // Playful "thinking" lines the head-side line cycles through while the coder's minions
+    // are off working (inherited verbatim from remote_connection/banner.py CP_MSGS — same
+    // trick: a backtick template literal avoids escaping the many apostrophes/quotes;
+    // trim()+filter() strips the code indentation and blank edges).
+    var CP_MSGS = (`
+        summoned minions…
+        digging through the codebase…
+        don't bother me, i'm busy still
+        reticulating splines…
+        consulting the rubber duck…
+        untangling spaghetti…
+        watching minions go brrr…
+        this is fine, everything is fine…
+        spinning up neurons…
+        arguing with the linter…
+        minions are reading… patience, human
+        pondering the orb…
+        grepping the unknown…
+        feeding the hamsters…
+        still thinking, hold tight…
+        writing tiny love letters to stdout…
+        asking stack overflow nicely…
+        looking for the missing semicolon…
+        blaming the intern…
+        performing arcane git rituals…
+        have you tried turning it off and on…
+        just one more refactor, i promise…
+        regex go brrr…
+        negotiating with the type checker…
+        Schrödinger's bug: works on my machine…
+        pretending to understand recursion…
+        this codebase has feelings too…
+        arguing with prettier…
+        i swear i tested this earlier…
+        checking if it's a feature, not a bug…
+        the code works, nobody knows why…
+        reading documentation as last resort…
+        blaming the cache…
+        praying to the build gods…
+        git blame says it was past me…
+        compiling existential dread…
+        tabs vs spaces war ongoing…
+        training a goldfish to write tests…
+        minions arguing over indentation…
+        still cheaper than a senior dev…
+        pushing to prod on a friday…
+        one does not simply async in python…
+        404: motivation not found…
+        rewriting it in rust… mentally…
+        petting the dog, brb…
+        yelling politely at the json…
+        checking if it's plugged in…
+        the cake is a bug…
+        explaining mondays to the AI…
+        deploying vibes…
+        this stack trace feels personal…
+        i was promised flying cars, got jira…
+        writing tests… eventually…
+        minions on coffee break…
+        this wasn't in the spec…
+        ctrl-z is my therapist…
+        running from technical debt…
+        console.log debugger gang…
+        the docs lied to us…
+        trying to remember what i was doing…
+        rebooting reality…
+        yes, that's a feature now…
+        speedrun: any% blame git…
+        thinking too hard, please wait…
+        yet another deeply nested if…
+        promise resolved with disappointment…
+        hot reload, cold coffee…
+        aligning ducks in rows…
+        one liner that took two hours…
+        naming things, the hardest problem…
+        off-by-one somewhere, definitely…
+        loading more excuses…
+        the bug is in another castle…
+        your code is fine, the universe is broken…
+        the linter has strong opinions…
+        minion overheard saying lgtm…
+        convincing the tests to pass…
+        renaming the variable to fix it…
+        drowning in callback hell…
+        73 unread warnings, vibes only…
+        yes it works, no i don't know why…
+        minions found 47 todos, ignored all…
+        scrolling error logs like reels…
+        two minions, one task…
+        sacrificing a keyboard to the demo gods…
+        undoing the undo…
+        reading the error message, finally…
+        minions whispering to each other…
+        the algorithm has thoughts…
+        trying not to break prod…
+        minion union meeting in progress…
+        shaking the magic 8-ball…
+        asking the cat for code review…
+        running tests with fingers crossed…
+        exorcising the legacy code…
+        i promise this is the last bug…
+        binary search through 200 tabs…
+        feature creep is a feature now…
+        minions found a TODO from 2014…
+        deprecated, but still working…
+        putting console.logs in production…
+        redefining what "done" means…
+      `).split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+
     // opts.multiline: true  -> a 5-line scrolling terminal (the coder `>` output). Each pumped
     //   line APPENDS a wrapping .cc-line into a translateY conveyor (.cc-scroll); the viewport
     //   (`target`) is clamped to N rows in CSS so older rows scroll up out of view, and the
@@ -409,7 +518,12 @@
                       '<div class="cc-out-name">AutoUse Code</div>' +
                       '<div class="cc-out-view"></div>' +
                   '</span></div>') +
-            '<div class="cc-minions"><span class="cc-trunk"></span></div>';
+            // .cc-minions frames the TRUNK (which reaches up to the `>` and so must not be
+            // clipped); .cc-mflow is the conveyor window that clips, and .cc-mtree is the
+            // column of rows that slides up inside it. See layoutTrunk().
+            '<div class="cc-minions"><span class="cc-trunk"></span>' +
+                '<div class="cc-mflow"><div class="cc-mtree"></div></div>' +
+            '</div>';
         el.innerHTML =
             '<div class="cc-body">' +
                 (header ? '<div class="cc-main">' + inner + '</div><div class="cc-todo"></div>' : inner) +
@@ -422,6 +536,8 @@
         var outText = el.querySelector('.cc-out-view');   // the scrolling viewport, not the wrapper
         var minionsEl = el.querySelector('.cc-minions');
         var trunk = el.querySelector('.cc-trunk');
+        var flowEl = el.querySelector('.cc-mflow');       // conveyor window (clips)
+        var treeEl = el.querySelector('.cc-mtree');       // the rows — slides inside it
 
         // The `>` terminal shows a clean, multi-line scrolling log of the coder's ACTIONS
         // (synthesized narration, NOT the raw JSON), auto-scrolling once it overflows.
@@ -441,6 +557,28 @@
         // field flows left-to-right, holds, clears and continues instead of stacking up.
         var thinkStream = header ? makeLineStreamer(el.querySelector('.cc-think'), null) : null;
         var minionStreams = {};   // minion id -> its line streamer
+
+        // While minions are off working the coder says nothing for a long stretch, so the
+        // line beside the AI head would just sit on the last step's words. Instead it cycles
+        // the playful CP_MSGS pool: the old output is wiped, then a random line types in,
+        // shimmers for FUN_HOLD_MS, and the next one replaces it — until the next real
+        // packet's prose takes the spot back (stopped in the parser below).
+        var FUN_HOLD_MS = 3000;
+        var funTimer = null, lastFun = -1;
+        function cycleFun() {
+            if (!thinkStream) return;
+            var i = Math.floor(Math.random() * CP_MSGS.length);
+            if (CP_MSGS.length > 1 && i === lastFun) i = (i + 1) % CP_MSGS.length;   // no immediate repeat
+            lastFun = i;
+            thinkStream.push(CP_MSGS[i]);   // single-line streamer: replaces the old page, types, then shimmers
+            funTimer = setTimeout(cycleFun, FUN_HOLD_MS);
+        }
+        function startFunLines() {
+            if (!thinkStream || funTimer) return;
+            thinkStream.reset();            // drop the step's old words beside the head
+            cycleFun();
+        }
+        function stopFunLines() { if (funTimer) { clearTimeout(funTimer); funTimer = null; } }
 
         // LEFT zone — "Tool response: N tools used" + the vertical action-icon chain (extreme
         // left of the stage, mirroring the bottom-left card). The orchestrator places it.
@@ -478,12 +616,13 @@
         var ICONS = window.CliToolIcons;
         // the header's blinking agent head (same mark as the chain's `agent` icon)
         var mascotEl = el.querySelector('.cc-mascot');
-        // 26px canvas -> a ~20px head, the remainder being bleed room for the working glow
+        // 26px canvas -> a ~20px head; while working it wears the stop orb's colour
         var mascot = (mascotEl && ICONS && ICONS.createMascot) ? ICONS.createMascot(mascotEl, 26) : null;
         var actionChain = ICONS ? ICONS.createChain(chainEl.querySelector('.cc-chain'), { orientation: 'vertical' }) : null;
         var tracker = ICONS ? ICONS.createTracker(trackEl.querySelector('.cc-track-tree'), trackEl.querySelector('.cc-track-flow'), trackEl) : null;
         var minionChains = {};         // minion id -> its own horizontal chain
         var minionParsers = {};        // minion id -> its action parser
+        var noteLog = [];              // every scratchpad note this run — read back at task end
 
         function pushActions(chain, obj, isCoder) {
             actionList(obj).forEach(function (a) {
@@ -493,33 +632,102 @@
                 // Shell use narrates EVERY action (all=true) — its terminal is the step's
                 // full record, so nothing may silently produce no line.
                 if (isCoder) { var n = narrationFor(a, !!header); if (n) outStream.push(n); }
-                // scratchpad -> the right "tracking progress" stream (coder only; not minions)
-                if (a.type === 'scratchpad') { if (isCoder && tracker) tracker.push(argOf(a)); return; }
-                // every other real tool -> the icon chain; count it on the UNIVERSAL counter
-                // (coder tools AND minion tools both bump — minions run inside the coder's turn).
+                // scratchpad -> the right "tracking progress" stream (coder only; not minions).
+                // Also LOGGED (noteLog) so the run's notes survive the card: cli_stage.js reads
+                // them via getNotes() at task end and shows them as Agent Notes under the terminal.
+                if (a.type === 'scratchpad') {
+                    if (isCoder) {
+                        var note = argOf(a);
+                        if (note != null && String(note).trim()) {   // blanks would render as empty note rows
+                            noteLog.push(note);
+                            if (noteLog.length > 200) noteLog.shift();   // memory cap
+                        }
+                        if (tracker) tracker.push(note);
+                    }
+                    return;
+                }
+                // The CODER's tools queue behind the opening beats (so the chain always reads
+                // opening -> tick -> tools, even mid-catch-up); minion sub-chains have no
+                // opening phase and keep adding directly.
+                if (chain === actionChain) { toolQ.push({ name: a.type, arg: argOf(a) }); playTools(); return; }
                 if (chain && chain.addAction({ name: a.type, arg: argOf(a) })) bumpToolCount();
             });
         }
 
-        // Opening-phase flow, EXACTLY like the main agent's tool-flow: "communicating with llm
-        // service" -> "thinking" -> (on the packet) "packet received" -> this step's tools ->
-        // repeat. Driven purely by JSON-arrival timing — no backend signal: each received packet
-        // ticks "thinking", plays its tools, then anticipates the next step.
+        // Opening-phase flow, ported from the main agent's tool-flow (bottom_left): the wait for
+        // each packet is told in beats — "communicating with llm service", then the composing
+        // sash ("thinking") holds for THINK_MS no matter what, then the loader ("synthesizing")
+        // spins until the packet lands and ticks over to "synthesizing complete". This step's
+        // tools then play at TOOL_GAP_MS, and the chain anticipates the next step. Driven purely
+        // by JSON-arrival timing — no backend signal. If the packet beats the opening, the
+        // remaining beats fast-forward at CATCHUP_MS so the chain catches the real speed instead
+        // of lagging behind it — then the next opening runs at normal pace again.
+        var STEP_GAP_MS = 850;     // beat before the thinking sash appears
+        var THINK_MS = 5000;       // the sash's MAX hold — a packet landing sooner fast-forwards it (same as bottom_left)
+        var CATCHUP_MS = 300;      // opening pace once the packet has already landed
+        var TOOL_GAP_MS = 340;     // fast cadence between this step's tools
         var thinkingStep = null, openTimer = null, toolsRevealed = false;
+        var openNext = null, receivedEarly = false, fastOpening = false, openingDone = false;
+        var toolQ = [], toolTimer = null, anticipateNext = false;
         function revealTools() { if (!toolsRevealed) { toolsRevealed = true; chainEl.classList.add('cc-tools-active'); } }
         function startOpening() {
             if (!actionChain) return;
             revealTools();
-            actionChain.addStep({ shape: 'server', label: 'communicating with llm service' });
             clearTimeout(openTimer);
-            openTimer = setTimeout(function () {
-                thinkingStep = actionChain.addStep({ shape: 'loader', label: 'thinking', tick: true });
-            }, 850);
+            thinkingStep = null; receivedEarly = false; fastOpening = false; openingDone = false;
+            var specs = [
+                { shape: 'server',    label: 'communicating with llm service' },
+                { shape: 'composing', label: 'thinking' },
+                { shape: 'loader',    label: 'synthesizing', tick: true }
+            ];
+            var i = 0;
+            function play() {
+                var sp = specs[i];
+                i++;
+                if (i === specs.length) {                    // the loader — spins until the packet
+                    thinkingStep = actionChain.addStep(sp);
+                    openingDone = true;
+                    openNext = null;                         // opening's done — nothing left to hurry
+                    if (receivedEarly) { receivedEarly = false; finishThinking(); }
+                    playTools();
+                    return;
+                }
+                actionChain.addStep(sp);
+                var wait = fastOpening ? CATCHUP_MS
+                    : (sp.shape === 'composing' ? THINK_MS : STEP_GAP_MS);
+                openTimer = setTimeout(play, wait);
+            }
+            openNext = play;
+            play();
+        }
+        function finishThinking() {
+            if (thinkingStep) { thinkingStep.complete('synthesizing complete'); thinkingStep = null; }
         }
         function markReceived() {
-            clearTimeout(openTimer);
-            if (!thinkingStep && actionChain) thinkingStep = actionChain.addStep({ shape: 'loader', label: 'thinking', tick: true });
-            if (thinkingStep) { thinkingStep.complete('packet received'); thinkingStep = null; }
+            anticipateNext = false;                          // the packet's own flags set it below
+            if (thinkingStep) { finishThinking(); playTools(); return; }
+            if (openNext) {
+                // The packet beat the opening (often well inside the thinking hold). Don't sit
+                // out the rest of it — drop to catch-up pace so the chain tracks the real speed.
+                receivedEarly = true; fastOpening = true;
+                clearTimeout(openTimer);
+                openTimer = setTimeout(openNext, CATCHUP_MS);
+                return;
+            }
+            // no opening in flight at all (e.g. back-to-back packets) — still land the beat
+            if (actionChain) actionChain.addStep({ shape: 'loader', label: 'synthesizing', tick: true }).complete('synthesizing complete');
+        }
+        // Drain the coder's tool queue once the opening has ticked; when it runs dry,
+        // anticipate the next step (unless this packet ended in exit / a minion dispatch).
+        function playTools() {
+            if (!openingDone || toolTimer) return;
+            if (!toolQ.length) {
+                if (anticipateNext) { anticipateNext = false; startOpening(); }
+                return;
+            }
+            var tool = toolQ.shift();
+            if (actionChain && actionChain.addAction(tool)) bumpToolCount();
+            toolTimer = setTimeout(function () { toolTimer = null; playTools(); }, TOOL_GAP_MS);
         }
         function hasExit(obj) { return actionList(obj).some(function (a) { return a && a.type === 'exit'; }); }
         function hasMinion(obj) { return actionList(obj).some(function (a) { return a && a.type === 'minion'; }); }
@@ -592,13 +800,40 @@
             // NOTE: no blur handler — the path is not a focus affordance, it belongs to
             // user mode as a whole. Only begin() takes it away.
 
-            // Click anywhere on the card and you're at the prompt, like a real terminal —
-            // except over the todo column, where text should stay selectable, and except
-            // while the agent owns the terminal.
-            el.addEventListener('mousedown', function (e) {
+            // Click anywhere on the card and you're at the prompt, like a real
+            // terminal — except over the todo column, and except while the agent
+            // owns it. On `click` (after mouseup), NOT mousedown: focusing during
+            // a mousedown+setTimeout raced the browser's own focus handling
+            // (flaky in the WebView) and could destroy a drag-selection mid-drag.
+            // A completed drag leaves a non-empty selection, which we respect —
+            // click-without-drag focuses, drag selects, like real terminals.
+            function focusPrompt() {
+                cmdEl.focus();
+                try {   // caret at the end of anything already typed
+                    var r = document.createRange();
+                    r.selectNodeContents(cmdEl);
+                    r.collapse(false);
+                    var s = window.getSelection();
+                    s.removeAllRanges();
+                    s.addRange(r);
+                } catch (err) {}
+            }
+            el._focusPrompt = focusPrompt;   // cli_stage's panel-wide click delegate uses this
+            // Click vs select is decided by POINTER TRAVEL, not by "is there a
+            // selection": a stale selection elsewhere on the page survives clicks
+            // on user-select:none spots (icons, padding) and used to silently
+            // swallow the focus — the terminal felt randomly dead. Now: a click
+            // that didn't move focuses, an actual drag (or a double-click word
+            // select, e.detail > 1) is left alone as a selection gesture.
+            var downX = 0, downY = 0;
+            el.addEventListener('mousedown', function (e) { downX = e.clientX; downY = e.clientY; });
+            el.addEventListener('click', function (e) {
                 if (el.classList.contains('cc-running')) return;
                 if (e.target === cmdEl || (e.target.closest && e.target.closest('.cc-todo'))) return;
-                setTimeout(function () { cmdEl.focus(); }, 0);
+                if (e.detail > 1) return;                                        // dbl/triple click = select
+                if (Math.abs(e.clientX - downX) > 4 || Math.abs(e.clientY - downY) > 4) return;  // drag = select
+                if (document.activeElement === cmdEl) return;
+                focusPrompt();
             });
 
             cmdEl.addEventListener('keydown', function (e) {
@@ -615,6 +850,11 @@
                 if (termBusy) return;                // a command owns the prompt right now
                 var cmd = (cmdEl.textContent || '').trim();
                 if (!cmd) return;
+                // Hand-running a command IS using Shell use — engage the same
+                // per-use mode lock a sent agent task engages. Fires only on an
+                // actual Enter with a real command: toggling the picker or just
+                // clicking into the terminal never locks anything.
+                document.dispatchEvent(new CustomEvent('agentmode:lock', { detail: { mode: 'shell' } }));
                 cmdEl.textContent = '';
                 // Echo the command stamped with WHERE it ran, so the scrollback reads like
                 // a terminal's — the executed line scrolls up, the live prompt stays last.
@@ -625,7 +865,9 @@
                 fetch('/api/shell-exec', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ command: cmd })
+                    // session_id tags the command's <manual_mode> record to THIS
+                    // chat, so another chat's next agent run never sees it
+                    body: JSON.stringify({ command: cmd, session_id: window.currentSessionId || null })
                 })
                 .then(function (r) { return r.json(); })
                 .then(function (d) {
@@ -653,18 +895,20 @@
         }
 
         var coderActionParser = makeActionParser(function (obj) {
-            markReceived();                       // this JSON IS the packet -> tick "thinking"
+            markReceived();                       // this JSON IS the packet -> tick "synthesizing"
+            stopFunLines();                       // real output is here — the fun lines yield the spot
             if (thinkStream) streamProse(thinkStream, obj);   // Shell use: words beside the head
             // Shell use: each packet REPLACES the terminal. The `>` area shows the step that
             // just arrived and nothing else — no scrollback from the previous step, and no
             // backlog of its lines still trickling out of the char pump underneath it.
             if (header) outStream.reset();
-            pushActions(actionChain, obj, true);  // actions -> the `>` terminal (+ chain/count)
-            // Anticipate the next step — but NOT after a dispatched minion: the coder is
-            // blocked until that minion returns, so the chain would sit on "communicating
-            // with llm service / thinking" while nothing is being asked. It stops at
+            pushActions(actionChain, obj, true);  // actions -> the `>` terminal (+ tool queue/count)
+            // Anticipate the next step once this packet's tools finish playing — but NOT after
+            // a dispatched minion: the coder is blocked until that minion returns, so the chain
+            // would sit on the opening beats while nothing is being asked. It stops at
             // "dispatched minion" and endMinion() restarts the opening phase.
-            if (!hasExit(obj) && !hasMinion(obj)) startOpening();
+            anticipateNext = !hasExit(obj) && !hasMinion(obj);
+            playTools();   // covers a packet with no chain tools — hand straight to the next opening
         });
 
         function setLine(text) {
@@ -687,33 +931,69 @@
         // leave clean air under the glyph; the compact card keeps its almost-touching look.
         var TRUNK_GAP = header ? 12 : 3;
         function layoutTrunk() {
-            var rows = minionsEl.querySelectorAll('.cc-mrow');
-            if (!rows.length) { trunk.style.height = '0'; return; }
+            var rows = treeEl.querySelectorAll('.cc-mrow');
+            if (!rows.length) {
+                trunk.style.height = '0';
+                treeEl.style.transform = 'translateY(0)';
+                flowEl.classList.remove('cc-mscrolled');
+                return;
+            }
+            // CONVEYOR. In Shell use the card is height-capped (coder_card.css), so past a
+            // few minions the tree no longer fits its window — slide the whole tree up by
+            // the overflow so the NEWEST rows stay in view and the older ones disappear
+            // under the top fade, exactly like the action chain beside the card. The
+            // content-height cards (Computer/Mobile use) grow with their tree instead, so
+            // there `over` is always 0 and nothing moves.
+            var over = Math.max(0, treeEl.offsetHeight - flowEl.clientHeight);
+            treeEl.style.transform = over ? ('translateY(' + (-over) + 'px)') : 'translateY(0)';
+            flowEl.classList.toggle('cc-mscrolled', over > 0);
+
             var mRect = minionsEl.getBoundingClientRect();
             var pRect = pEl.getBoundingClientRect();   // the `>` glyph, top line of the terminal
-            // anchor to the minion's HEAD center (the row also holds a sub-chain below it)
-            var lastHead = rows[rows.length - 1].querySelector('.cc-mrow-head') || rows[rows.length - 1];
-            var lRect = lastHead.getBoundingClientRect();
             var topY = (pRect.top + pRect.height / 2) - mRect.top + TRUNK_GAP;   // just below the `>`
-            var botY = (lRect.top + lRect.height / 2) - mRect.top;
+            // Anchor the bottom to the LAST minion's head centre (the row also holds a
+            // sub-chain below it). offsetTop, NOT getBoundingClientRect: offsets are pure
+            // layout, so they ignore the conveyor transform set above — which at this exact
+            // moment is mid-transition, and whose current value depends on whether the
+            // transition is even running. Reading layout and taking `over` off by hand puts
+            // the trunk on the row's final resting place in one go, whatever the animation
+            // is doing. The chain is .cc-minions > .cc-mflow > (.cc-mtree) > .cc-mrow >
+            // .cc-mrow-head — all three offsetParents are position:relative, and the
+            // untransformed .cc-mtree is transparent to it.
+            var lastRow = rows[rows.length - 1];
+            var head = lastRow.querySelector('.cc-mrow-head');
+            var botY = flowEl.offsetTop + lastRow.offsetTop - over
+                     + (head ? head.offsetTop + head.offsetHeight / 2 : lastRow.offsetHeight / 2);
             trunk.style.top = topY + 'px';
             trunk.style.height = Math.max(0, botY - topY) + 'px';
         }
+        // Re-run the conveyor whenever EITHER side of "does it still fit" moves:
+        //   the window — the app window is resizable, and a resize would otherwise leave the
+        //     tree translated for a height it no longer has;
+        //   the tree — a row keeps GROWING after it's added (its tool sub-chain fills in one
+        //     icon at a time, and `leaving` rows collapse over 0.32s), so the rAF layoutTrunk
+        //     at insert time measures a tree that isn't its final size yet. Without this the
+        //     conveyor under-scrolls and the last row still hangs out of the card.
+        // layoutTrunk only ever writes the tree's TRANSFORM, which no ResizeObserver reports,
+        // so this can't feed back on itself.
+        var treeRO = window.ResizeObserver ? new ResizeObserver(function () { layoutTrunk(); }) : null;
+        if (treeRO) { treeRO.observe(flowEl); treeRO.observe(treeEl); }
 
         function findRow(id) {
-            var rows = minionsEl.querySelectorAll('.cc-mrow');
+            var rows = treeEl.querySelectorAll('.cc-mrow');
             for (var i = 0; i < rows.length; i++) if (rows[i].dataset.id === String(id)) return rows[i];
             return null;
         }
 
         function addMinion(id, query) {
+            startFunLines();   // a minion is off working — the head-side line cycles fun "thinking" lines
             var row = document.createElement('div');
             row.className = 'cc-mrow';
             row.dataset.id = String(id);
             row.innerHTML =
                 '<div class="cc-mrow-head">' + orbLoaderHTML() + '<span class="mline"></span></div>' +
                 '<div class="cc-msub"><div class="cc-mchain"></div></div>';
-            minionsEl.appendChild(row);
+            treeEl.appendChild(row);
             // Each minion streams its live output (initial = query) AND grows its own
             // horizontal action sub-chain, parsed from the same per-minion JSON.
             minionStreams[id] = makeLineStreamer(row.querySelector('.mline'), query || 'minion');
@@ -801,7 +1081,7 @@
             // .leaving class — that class is only added on the next animation frame, so
             // it isn't set yet here; .leaving rows are mid-collapse and don't count either.
             var stillRunning = Array.prototype.filter.call(
-                minionsEl.querySelectorAll('.cc-mrow'),
+                treeEl.querySelectorAll('.cc-mrow'),
                 function (r) { return r !== row && !r.classList.contains('leaving'); }
             ).length;
             if (!stillRunning) startOpening();
@@ -832,6 +1112,10 @@
         }
 
         function dispose() {
+            stopFunLines();
+            if (treeRO) treeRO.disconnect();
+            clearTimeout(openTimer); clearTimeout(toolTimer); toolTimer = null;
+            toolQ.length = 0; openNext = null; thinkingStep = null;
             if (mascot) mascot.dispose();
             if (thinkStream) thinkStream.dispose();
             outStream.dispose();
@@ -882,6 +1166,9 @@
             endMinion: endMinion,
             setWeb: setWeb,
             setDone: setDone,
+            // The run's scratchpad notes, in order — cli_stage.js snapshots these at task
+            // end (before dispose) to build the Agent Notes panel under the terminal.
+            getNotes: function () { return noteLog.slice(); },
             dispose: dispose,
         };
     }

@@ -86,6 +86,19 @@
     font-weight: 600;
 }
 
+/* Per-mode logo on each row — the same marks as the composer's mode picker
+   (computer monitor / phone / shell terminal), so a glance tells you which
+   agent owns the chat. Quiet by default, a touch stronger on the open chat. */
+.chat-mode-icon {
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    opacity: 0.55;
+}
+.chat-history-item.active .chat-mode-icon {
+    opacity: 0.85;
+}
+
 .chat-history-name {
     flex: 1 1 auto;
     min-width: 0;

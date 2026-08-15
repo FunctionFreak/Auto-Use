@@ -6,7 +6,7 @@
 //      stage (and hides Agent Notes so they never overlap); clicking it again
 //      makes the stage vanish from the container.
 // COMPUTER USE tab is live: default view lists the active platform's
-// agent/skills/*.md through service.py (/api/skills — windows_use or macOS_use
+// agent/skills/*.md through service.py (/api/skills — windows or mac
 // picked server-side), rows preview on click and delete via the bin; + swaps in
 // the add form. Save is still design-only; MOBILE USE is design-only too.
 (function () {
@@ -50,13 +50,17 @@
         if (notes) notes.style.display = 'none';       // one thing at a time
         stage.classList.add('active');
         zone.classList.add('active');
+        // Skills owns the screen: the body class stands every OTHER stage down
+        // (skills.css). Without it the shell terminal — a higher layer than this
+        // container — keeps drawing over the list. See hideSkillsOnly for the undo.
+        document.body.classList.add('skills-open');
         resetStage();
     }
 
     // ── Computer-use tab: live skills list / preview / delete ──────────
     // The computer panel holds three sub-views (list | preview | add) that the
     // helpers below swap; the list and preview are fed by service.py, which
-    // resolves the right skills folder for the OS (windows_use / macOS_use).
+    // resolves the right skills folder for the OS (windows / mac).
 
     var BIN_SVG =
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
@@ -242,6 +246,10 @@
     function hideSkillsOnly() {
         var stage = stageEl();
         if (stage) stage.classList.remove('active');
+        // Every close path funnels through here, so this is the one place the
+        // "Skills owns the screen" class comes off — the shell terminal and the
+        // stacking order restore themselves from CSS.
+        document.body.classList.remove('skills-open');
         var notes = notesEl();
         if (notes) notes.style.display = '';           // restore the notes' own visibility
     }
@@ -300,6 +308,11 @@
                 showComputerView('list');
             });
         });
+
+        // Close (×) — identical to clicking the composer icon again: restore
+        // whatever the screen was showing before Skills took it.
+        var closeBtn = stage.querySelector('#skillsCloseBtn');
+        if (closeBtn) closeBtn.addEventListener('click', closeSkills);
 
         // Preview header: Edit swaps to the editable body, Save writes it back.
         var editBtn = stage.querySelector('#skillsEditBtn');
@@ -364,6 +377,28 @@
         window.addEventListener('message', function (e) {
             if (e.data === 'pcbtn:clicked') hideSkillsOnly();
         });
+
+        // A run STARTING takes the screen back. Same signal notes_stage.js
+        // watches: .chat-input gains 'agent-active' the moment send fires.
+        // Without this the `skills-open` body class would survive into the run
+        // and keep the shell terminal parked off-screen for the whole task.
+        var runWatchWired = false;
+        function watchRunStart() {
+            if (runWatchWired) return;
+            var chatInput = document.querySelector('.chat-input');
+            if (!chatInput) return;
+            runWatchWired = true;
+            var running = chatInput.classList.contains('agent-active');
+            new MutationObserver(function () {
+                var now = chatInput.classList.contains('agent-active');
+                if (now === running) return;
+                running = now;
+                if (now) closeSkills();      // never ADDS active — safe alongside
+            }).observe(chatInput, { attributes: true, attributeFilter: ['class'] });
+        }
+        // .chat-input is itself fetch-injected by chat_input.js.
+        document.addEventListener('chatinput:ready', watchRunStart);
+        watchRunStart();                     // in case it mounted before us
     }
 
     function injectIcon() {

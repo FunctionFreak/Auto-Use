@@ -7,12 +7,10 @@
         <img class="stream-image" src="" alt="Agent screen" style="display: none;">
     </div>
 
-    <!-- Web globe + shell terminal — swap in over the screenshot while a web /
-         shell command runs (globe_shell.js fades the screenshot out, these in).
-         Ids preserved so the backend hooks drive them unchanged. -->
-    <div class="work-overlay" id="globePanel" aria-hidden="true">
-        <div id="mainGlobeContainer"></div>
-    </div>
+    <!-- Shell terminal — swaps in over the screenshot while a shell command runs
+         (globe_shell.js fades the screenshot out, this in). Ids preserved so the
+         backend hooks drive it unchanged. A web-search globe used to sit here too;
+         it was removed — a web search now leaves the screenshot up. -->
     <div class="work-overlay" id="shellPanel" aria-hidden="true">
         <!-- Coder-card style: a transparent `>` command line (streams + shimmers
              with a dot loader while it runs), then an L-connector down to the

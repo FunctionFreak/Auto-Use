@@ -14,6 +14,7 @@ A session dump containing any of:
 6. Task-concluding turns: a bare assistant JSON whose next_goal begins "Previous run concluded." (older sessions instead carry a decision field with that text). Its memory field holds either the done report ("Task completed: ...") or the stop reason ("Agent stopped before completing: ..."). Treat this as the authoritative end-of-task record.
 7. The final USER turn may repeat the current <updated_user_request>, and carry <last_response> (the final tool_response), <todo_list> and <scratchpad> (state of the CURRENT task only; facts from older tasks live in tool_response scratchpad_added entries, harvest them from there). Ignore <browser_guidelines> or any other runtime rule blocks entirely; they are instructions for the main agent, not session data.
 8. Missing parts are normal. Never ask for more input. Never refuse.
+9. Coder (shell) sessions: --- ASSISTANT --- steps are JSON with thinking, next_goal, action (native tool calls; no memory/decision/eval fields), and their --- USER --- tool responses are <Tool_response> blocks — a JSON head (status, exit_code) plus raw <output> text from shell/file tools. Task-concluding turns may fold memory into a labeled next_goal: "memory: <done report> next_goal: Previous run concluded. ..." — treat that memory label's text as the authoritative end-of-task record. User requests still arrive as <updated_user_request no="N">. There are no element ids or screenshots. All other rules apply unchanged.
 </input>
 
 <truth_hierarchy>
@@ -95,7 +96,7 @@ Task 2: Make a chart of Netflix's 10-year report [status: completed]
 2.1 The agent fetched the data, delegated chart generation to cli_agent in parallel, then wrote and ran the script directly via shell when the file had not appeared.
 2.2 Found via web: Netflix 2014-2024 revenue $5,505M to $39,001M; net income $267M to $8,712M with a low of $123M in 2015.
 2.3 Blocker: netflix_10_year_report.png missing after cli_agent delegation (cli_agent works in its own subfolder aced58e9) -> resolved by writing generate_chart.py and running it directly via shell.
-2.4 Outcome: chart verified at /Users/ashishyadav/Desktop/sandbox_workspace/netflix_10_year_report.png (256109 bytes). The parallel cli_agent's result was never collected.
+2.4 Outcome: chart verified at /Users/user/Desktop/sandbox_workspace/netflix_10_year_report.png (256109 bytes). The parallel cli_agent's result was never collected.
 
 Task 3: Get the Nvidia stock price [status: stopped_by_user]
 3.1 The agent created the ToDo list only.

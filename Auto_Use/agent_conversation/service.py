@@ -1,21 +1,4 @@
-# Copyright 2026 Autouse AI — https://github.com/auto-use/Auto-Use
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-# If you build on this project, please keep this header and credit
-# Autouse AI (https://github.com/auto-use/Auto-Use) in forks and derivative works.
-# A small attribution goes a long way toward a healthy open-source
-# community — thank you for contributing.
+# Copyright 2026 Ashish Yadav — Auto-Use
 
 """ConversationService — permanent, resumable chat memory for the UI path.
 
@@ -41,8 +24,8 @@ WHOLE install directory, and chats used to be written inside it):
         <session_id>/conversation.json  <- one folder per session: the
                                            optimized, resumable history snapshot
 
-There is exactly ONE of these for the whole app — windows_use, macOS_use and
-ios_use all route their memory through this single service — so this one root
+There is exactly ONE of these for the whole app — windows, mac and
+ios all route their memory through this single service — so this one root
 is every platform's chat store.
 
 The saved history is the agent's FULL per-step memory: each assistant step with
@@ -97,6 +80,7 @@ class ConversationService:
         chats left behind in this package's own directory by an older build."""
         d = _ensure(data_root() / "agent_conversation")
         self._migrate_legacy(d)
+        self._migrate_run_pkg(d)
         return d
 
     def _index_file(self) -> Path:
@@ -138,6 +122,18 @@ class ConversationService:
 
     _migrate_lock = threading.Lock()
     _migrated_dests = set()      # keyed by destination, so tests can repoint the env var
+
+    # ── one-time migration: platform package rename ────────────────────────
+    # The platform packages were renamed:
+    #     Auto_Use/macOS_use  -> Auto_Use/mac
+    #     Auto_Use/windows_use -> Auto_Use/windows
+    #     Auto_Use/ios_use     -> Auto_Use/ios
+    # and `run_pkg` is the ONE place that name was persisted into user data.
+    # See _migrate_run_pkg. The KEYS below are deliberately the old spellings —
+    # they are historical data values, not module paths, so a repo-wide rename
+    # sweep must never rewrite them or the migration silently becomes a no-op.
+    _RUN_PKG_RENAMES = {"macOS_use": "mac", "windows_use": "windows", "ios_use": "ios"}
+    _run_pkg_migrated = set()    # same keying as _migrated_dests
 
     def _legacy_root(self) -> Path:
         """Where root() used to point before the move to autouse_data/."""
@@ -295,6 +291,61 @@ class ConversationService:
                 # The next app start retries from scratch.
                 self._migrated_dests.add(key)
 
+    def _migrate_run_pkg(self, dest: Path) -> None:
+        """Rewrite index.json's `run_pkg` to the current package names, once.
+
+        WHY THIS EXISTS: the platform packages were renamed (see
+        _RUN_PKG_RENAMES above for the old -> new spellings), and `run_pkg` is PERSISTED
+        user data — the per-chat mode lock compares it against the live package
+        name (frontend/service.py start_or_resume / the shell route). Left
+        alone, every chat saved by an older build fails that comparison and
+        400s with "This chat is locked to Computer use" — while the user IS in
+        Computer use — with no way to recover the chat.
+
+        WHERE IT RUNS: from root(), right after _migrate_legacy, so it covers
+        every entry point (GUI, --cli-mode / --minion-mode re-execs, a bare
+        import) with no ordering requirement on app.py. It reads `dest`
+        directly rather than through _index_file(), which would recurse back
+        into root().
+
+        IDEMPOTENT: a pass that finds no old names writes nothing, so re-runs
+        are free, a crash resumes next launch, and a user who restores an old
+        chat folder months later still gets it rewritten. The in-process set is
+        only a fast path, never a correctness gate.
+        """
+        key = str(dest)
+        if key in self._run_pkg_migrated:
+            return
+        with self._migrate_lock:
+            if key in self._run_pkg_migrated:
+                return
+            try:
+                f = dest / "index.json"
+                if not f.exists():
+                    return          # fresh install — nothing written yet, and
+                                    # _read_bytes would log a scary traceback
+                index = self._read_json_dict(f)
+                changed = 0
+                for entry in index.values():
+                    if not isinstance(entry, dict):
+                        continue
+                    new = self._RUN_PKG_RENAMES.get(entry.get("run_pkg"))
+                    if new:
+                        entry["run_pkg"] = new
+                        changed += 1
+                if changed:
+                    # Atomic, like _merge_legacy_index: never a truncated index.
+                    part = f.with_name(f.name + ".part")
+                    part.write_bytes(json.dumps(index, indent=2).encode("utf-8"))
+                    os.replace(str(part), str(f))
+                    logger.info("migrated run_pkg on %d chat(s): %s", changed, f)
+            except Exception:
+                logger.exception("migrate run_pkg")
+            finally:
+                # Set even on failure so we don't re-scan on every root() call;
+                # the next app start retries from scratch.
+                self._run_pkg_migrated.add(key)
+
     # ── index.json (session -> display meta) ───────────────────────────────
     def _read_index(self) -> dict:
         f = self._index_file()
@@ -318,7 +369,8 @@ class ConversationService:
             logger.exception("write index.json")
 
     def _touch_index(self, session_id, *, title=None, last_done_message=None,
-                     context_tokens=None, context_cap=None, run_pkg=None) -> dict:
+                     context_tokens=None, context_cap=None, run_pkg=None,
+                     agent_mode=None) -> dict:
         """Create-or-update one index entry. created_at + title are set ONCE
         (title never overwritten, so the original objective stays the label);
         updated_at + last_done_message + context_tokens/context_cap refresh
@@ -344,9 +396,17 @@ class ConversationService:
         if context_cap is not None:
             entry["context_cap"] = int(context_cap or 0)
         if run_pkg:
-            # Which agent package produced this chat's memory (macOS_use /
-            # windows_use / ios_use) — lets a resume detect a mode switch.
+            # Which agent package produced this chat's memory (mac /
+            # windows / ios) — lets a resume detect a mode switch.
             entry["run_pkg"] = run_pkg
+        if agent_mode:
+            # Which AGENT MODE owns this chat ("computer" / "mobile" / "shell").
+            # Orthogonal to run_pkg: shell runs share the desktop PLATFORM_PKG,
+            # so the pkg alone can't tell a shell chat from a computer one —
+            # this field is what the per-chat mode lock reads. Stamped at MINT
+            # time (start_or_resume) so even a chat whose first run never
+            # finished is correctly tagged, then re-stamped on every save.
+            entry["agent_mode"] = agent_mode
         entry["updated_at"] = now
         index[str(session_id)] = entry
         self._write_index(index)
@@ -432,8 +492,34 @@ class ConversationService:
             return f"Agent terminated (error / provider): {message}".strip().rstrip(":")
         return f"Agent stopped before completing: {message}".strip().rstrip(":")
 
+    @staticmethod
+    def _is_terminal_note(entry) -> bool:
+        """True only for OUR synthetic terminal note (the resume bridge), any
+        generation. Structural — exact key sets + the canonical sentence — so a
+        real step (native {content, tool_calls} or 4-key main-agent JSON) that
+        merely echoes the bridge phrase it saw in context can never match."""
+        try:
+            d = json.loads(str(entry))
+        except Exception:
+            return False
+        if not isinstance(d, dict):
+            return False
+        keys = set(d.keys())
+        goal = str(d.get("next_goal", ""))
+        # Main-agent bridge (both generations): pre-thinking {memory, next_goal}
+        # and {thinking, memory, next_goal} (thinking = "not required") — also
+        # the shape shell chats saved before the coder's native-tools bridge.
+        if keys in ({"memory", "next_goal"}, {"thinking", "memory", "next_goal"}):
+            return goal.startswith("Previous run concluded.")
+        # Shell (coder) bridge: labeled convention — memory folded into
+        # next_goal ("memory: ... next_goal: ..."), no standalone memory key.
+        if keys == {"thinking", "next_goal"}:
+            return goal.startswith("memory: ") and "next_goal: Previous run concluded." in goal
+        return False
+
     def _build_history(self, task, assistant_messages, tool_responses,
-                       status, message, prior_task=None) -> dict:
+                       status, message, prior_task=None, agent_mode=None,
+                       request_no=None) -> dict:
         """Build the saved conversation = the agent's FULL per-step memory
         (thinking / eval / decision / memory / next_goal / action all preserved,
         tool results as-is), capped with a terminal note recording how the run
@@ -453,14 +539,48 @@ class ConversationService:
         else:
             tools = tools[:len(full_assistant)]
         done_message = self._terminal_message(status, message)
+        # A zero-step run (stopped/failed before its first step) saves its seed
+        # back unchanged — the tail is then ALREADY a terminal note with an
+        # empty tool slot. Shell chats RECORD that run instead of erasing it:
+        # fill the old bridge's slot with this request's numbered marker (the
+        # same string a normal resume writes), then let the new terminal note
+        # below cap it — the memory keeps "request N arrived → stopped/failed"
+        # in chronological order and the previous conclusion survives.
+        # Elsewhere (main agent, or no request number to write) stacking would
+        # accrete dangling notes with nothing between them — REPLACE the tail
+        # so it stays singular and carries the NEWEST ending.
+        # The check is STRUCTURAL (exact key sets + the canonical sentence),
+        # never a substring — a real model step that merely echoes the bridge
+        # phrase it saw in context must never be eaten.
+        if full_assistant and tools[-1] is None and self._is_terminal_note(full_assistant[-1]):
+            if agent_mode == "shell" and request_no and str(task or "").strip():
+                tools[-1] = (f"<user_request={int(request_no)}>\n{task}"
+                             f"\n</user_request={int(request_no)}>")
+            else:
+                full_assistant.pop()
+                tools.pop()
         # Cap with a terminal note so a resumed run (and the reader) always sees
         # how the previous run ended — on EVERY ending (done / stop / error). On
         # resume it becomes the most-recent step, so the agent's builder replays
         # every real step's tool result beneath it.
-        full_assistant.append(json.dumps({
-            "memory": done_message,
-            "next_goal": "Previous run concluded. Awaiting the user's next request; resume from this point.",
-        }, ensure_ascii=False, indent=2))
+        if agent_mode == "shell":
+            # Shell (coder) bridge — the coder's native-tool-calling
+            # conventions: thinking uses its "skipped" convention, and memory
+            # folds into the labeled next_goal ("memory: ... next_goal: ...")
+            # because the native step format has no standalone memory field.
+            note = {
+                "thinking": "skipped",
+                "next_goal": (f"memory: {done_message} "
+                              "next_goal: Previous run concluded. "
+                              "Awaiting the user's next request."),
+            }
+        else:
+            note = {
+                "thinking": "not required",   # matches the step schema's skip convention
+                "memory": done_message,
+                "next_goal": "Previous run concluded. Awaiting the user's next request; resume from this point.",
+            }
+        full_assistant.append(json.dumps(note, ensure_ascii=False, indent=2))
         tools.append(None)
         return {
             "version": 1,
@@ -473,7 +593,7 @@ class ConversationService:
         }
 
     # ── public API used by app.py ──────────────────────────────────────────
-    def start_or_resume(self, req_session_id, task):
+    def start_or_resume(self, req_session_id, task, agent_mode=None):
         """Resolve the chat session for an incoming run.
 
         Returns (session_id, prior_history):
@@ -482,6 +602,10 @@ class ConversationService:
             the SAME id).
           - otherwise -> fresh start: mint a new id and seed its index entry so
             the sidebar shows it immediately. prior_history is None.
+
+        agent_mode ("computer"/"mobile"/"shell") stamps a freshly MINTED chat's
+        index row so the per-chat mode lock is correct from second one — even if
+        the run later dies before save_run ever re-stamps it.
         """
         # A malformed id (stale/corrupt client state) is treated as "no such
         # session" and falls through to a fresh start, exactly as it did before
@@ -493,12 +617,13 @@ class ConversationService:
             sid = str(req_session_id)
             return sid, self._read_session(sid)
         sid = self._new_id()
-        self._touch_index(sid, title=self._title_from_task(task))
+        self._touch_index(sid, title=self._title_from_task(task), agent_mode=agent_mode)
         return sid, None
 
     def save_run(self, session_id, assistant_messages, tool_responses, status,
                  message, task, last_messages=None, context_tokens=None,
-                 context_cap=None, run_pkg=None):
+                 context_cap=None, run_pkg=None, agent_mode=None,
+                 request_no=None):
         """Persist a finished run + refresh index meta. Writes TWO things:
           - conversation.json  — the lean resume seed (assistant/tool turns).
           - memory_log.txt      — the TRUE debug memory: the exact final payload
@@ -509,7 +634,8 @@ class ConversationService:
             existing = self._read_session(session_id)
             prior_task = existing.get("task") if isinstance(existing, dict) else None
             payload = self._build_history(
-                task, assistant_messages, tool_responses, status, message, prior_task
+                task, assistant_messages, tool_responses, status, message, prior_task,
+                agent_mode=agent_mode, request_no=request_no,
             )
             self._write_session(session_id, payload)
             done_message = payload["done_message"]
@@ -538,6 +664,7 @@ class ConversationService:
                 context_tokens=context_tokens,  # latest context size for the memory bar
                 context_cap=context_cap,        # fixed 300k memory budget (MEMORY_CAP)
                 run_pkg=run_pkg,                # which agent produced this memory
+                agent_mode=agent_mode,          # which MODE owns the chat (per-chat lock)
             )
             return done_message
         except Exception:
@@ -560,11 +687,80 @@ class ConversationService:
             return "\n".join(b.get("text", "") for b in content if isinstance(b, dict))
         return content if isinstance(content, str) else str(content)
 
+    @staticmethod
+    def _render_tool_calls(calls) -> str:
+        """Readable view of a native assistant turn's tool_calls: the tracking
+        params pulled OUT of the call arguments into their own fields, then one
+        action entry per call — the same shape the agents' snapshot views use.
+        Without this the whole step renders as an empty assistant turn (all its
+        substance rides in the calls).
+
+        `memory` is a MAIN-DRIVER tracking param (the coder folds memory into
+        next_goal and never sends one), so it is rendered only when present —
+        coder turns keep their exact previous rendering."""
+        thinking = memory = next_goal = ""
+        actions = []
+        for tc in calls or []:
+            fn = (tc or {}).get("function") or {}
+            args = fn.get("arguments")
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except (ValueError, TypeError):
+                    args = {"raw_arguments": args}
+            if not isinstance(args, dict):
+                args = {}
+            args = dict(args)
+            step_thinking = str(args.pop("thinking", "") or "").strip()
+            step_memory = str(args.pop("memory", "") or "").strip()
+            step_next_goal = str(args.pop("next_goal", "") or "").strip()
+            thinking = thinking or step_thinking
+            memory = memory or step_memory
+            next_goal = next_goal or step_next_goal
+            actions.append({"type": fn.get("name") or "", **args})
+        rendered = {"thinking": thinking or "skipped"}
+        if memory:
+            rendered["memory"] = memory
+        rendered["next_goal"] = next_goal
+        rendered["action"] = actions
+        return json.dumps(rendered, indent=2, ensure_ascii=False)
+
+    @staticmethod
+    def _render_persisted_step(entry) -> str:
+        """A persisted assistant entry, readable: a native {content, tool_calls}
+        step renders like the live turns (provider_meta dropped — it is opaque
+        provider blobs, unreadable by design); anything else (old-format step
+        JSON, bridge note, plain prose) is already readable and passes through."""
+        try:
+            d = json.loads(str(entry))
+        except Exception:
+            return str(entry or "")
+        if (isinstance(d, dict) and isinstance(d.get("tool_calls"), list)
+                and ("content" in d or d.get("tool_calls"))):
+            content = str(d.get("content") or "")
+            block = ConversationService._render_tool_calls(d["tool_calls"])
+            return (content + "\n" + block) if content else block
+        return str(entry or "")
+
+    @staticmethod
+    def _render_persisted_results(raw) -> str:
+        """Persisted tool results, readable: the native [{tool_call_id, content}]
+        list joins to its content bodies (already <Tool_response>-wrapped);
+        plain strings (request markers, legacy results) pass through."""
+        try:
+            data = json.loads(str(raw))
+        except Exception:
+            return str(raw)
+        if isinstance(data, list) and all(isinstance(d, dict) and "tool_call_id" in d for d in data):
+            return "\n".join(str(d.get("content") or "") for d in data)
+        return str(raw)
+
     def _render_messages(self, messages, header_lines=None, final_response=None):
         """Render an exact messages payload to the human-readable conversation log
         (same shape as main.py's conversation_N.txt): SYSTEM PROMPT block, then
-        each ASSISTANT / USER turn in the order sent — the USER turns include the
-        live <user_request>/<todo_list>/<scratchpad>/<element_tree>."""
+        each ASSISTANT / USER / TOOL turn in the order sent. Native (coder)
+        assistant turns get their tool_calls rendered readably; main-agent turns
+        carry no tool_calls and render exactly as before."""
         bar = "=" * 60
         out = list(header_lines or [])
         if header_lines:
@@ -574,11 +770,30 @@ class ConversationService:
             content = self._content_text(m.get("content", ""))
             if role == "SYSTEM":
                 out += ["=== SYSTEM PROMPT ===", content, "", bar, ""]
-            else:
-                out += [f"--- {role} ---", content, ""]
+                continue
+            calls = m.get("tool_calls")
+            if calls:
+                block = self._render_tool_calls(calls)
+                content = (content + "\n" + block) if content else block
+            out += [f"--- {role} ---", content, ""]
         if final_response:
-            out += ["--- ASSISTANT (final response) ---", str(final_response), ""]
+            out += ["--- ASSISTANT (final response) ---",
+                    self._render_persisted_step(final_response), ""]
         return "\n".join(out) + "\n"
+
+    def _norm_run_pkg(self, pkg):
+        """A persisted run_pkg mapped to its CURRENT package name.
+
+        Belt and braces alongside _migrate_run_pkg: that rewrites index.json on
+        first touch, but its write can fail (read-only volume, disk full) and
+        the failure is deliberately swallowed. Every READ normalizes too, so a
+        legacy row can never reach the per-chat mode lock in frontend/service.py
+        with an old spelling — which would 400 the chat with "locked to Computer
+        use" while the user IS in Computer use, unrecoverably. Both callers
+        below feed that lock AND the sidebar's mode icon in frontend/chat/chat.js.
+        """
+        p = pkg or ""
+        return self._RUN_PKG_RENAMES.get(p, p)
 
     def list_sessions(self):
         """All sessions, newest-first, as {id, name, updated_at, last_done_message}."""
@@ -588,6 +803,8 @@ class ConversationService:
             "name": meta.get("title") or "New chat",
             "updated_at": meta.get("updated_at", 0),
             "last_done_message": meta.get("last_done_message", ""),
+            "agent_mode": meta.get("agent_mode", ""),
+            "run_pkg": self._norm_run_pkg(meta.get("run_pkg", "")),   # legacy rows: lets the sidebar infer the mode icon
         } for sid, meta in index.items()]
         items.sort(key=lambda x: x.get("updated_at", 0), reverse=True)
         return items
@@ -610,7 +827,8 @@ class ConversationService:
             "context_tokens": int(meta.get("context_tokens", 0) or 0),
             "context_cap": int(meta.get("context_cap", 0) or 0),
             "last_done_message": meta.get("last_done_message", ""),
-            "run_pkg": meta.get("run_pkg", ""),
+            "run_pkg": self._norm_run_pkg(meta.get("run_pkg", "")),
+            "agent_mode": meta.get("agent_mode", ""),
             "exchanges": self._read_exchanges(session_id),
         }
 
@@ -682,10 +900,11 @@ class ConversationService:
             out += ["", "--- ASSISTANT ---"]
             if i == 0 and task:
                 out += ["<User_Task>", task, "</User_Task>", ""]
-            out.append(str(step))
+            out.append(self._render_persisted_step(step))
             tr = tools[i] if i < len(tools) else None
             if tr:
-                out += ["", "--- USER ---", "<tool_response>", str(tr), "</tool_response>"]
+                out += ["", "--- USER ---", "<tool_response>",
+                        self._render_persisted_results(tr), "</tool_response>"]
         return "\n".join(out) + "\n"
 
     def export_to_downloads(self, session_id, system_prompt=None):

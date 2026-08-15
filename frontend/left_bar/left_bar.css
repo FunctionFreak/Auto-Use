@@ -23,7 +23,10 @@
     z-index: 30;
     box-sizing: border-box;
 
-    /* Rounded glass rectangle */
+    /* Rounded rectangle in the app's exact cream, so the bar reads as one
+       surface with the page/titlebar (see TITLEBAR_COLOR in app.py). The rim
+       shine + drop shadow are what separate it from the background now. */
+    background: #F9F1EC;
     border-radius: var(--glass-radius);
     overflow: hidden;
     box-shadow: 0 clamp(4px, 1vw, 8px) clamp(16px, 3vw, 32px) rgba(0, 0, 0, 0.1);
@@ -50,6 +53,20 @@
     box-shadow: 0 clamp(6px, 1.5vw, 12px) clamp(20px, 4vw, 40px) rgba(0, 0, 0, 0.15);
 }
 
+/* The bar is now a FLAT cream panel. The grey glass tint would dull that cream
+   away from the exact #F9F1EC, and the blur + SVG displacement have nothing to
+   act on (blurring a flat colour returns the same colour) — they would only cost
+   GPU. Drop both here; the shine rim above still draws the card's edge. Same
+   reasoning as the setup card in setup/setup.css. */
+.left-bar .liquidGlass-effect {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    filter: none;
+}
+.left-bar .liquidGlass-tint {
+    background: transparent;
+}
+
 /* Content wrapper — top-aligned column (overrides the centered
    .liquidGlass-content). Body fills the space; footer pins to the bottom. */
 .left-bar .left-bar-content {
@@ -72,12 +89,21 @@
     padding-bottom: clamp(8px, 1vw, 12px);
 }
 
-/* Auto Use brand logo, top-left of the bar. */
+/* Auto Use brand logo (the rounded app icon, /logo_rounded.png), top-left of
+   the bar. aspect-ratio matches the file's real pixels (376 x 348) so the box
+   is reserved at the right width before the image loads — no reflow of the
+   header when it arrives. The shadow lifts the tile off the bar, whose cream
+   is close to the icon's own background; it is the source artwork's shadow
+   scaled down ~10x for this size, since at 4px/6px offsets it would read as a
+   smudge on a 34px mark. */
 .left-bar-logo {
     height: clamp(26px, 3vw, 34px);
     width: auto;
-    object-fit: contain;
+    aspect-ratio: 376 / 348;
+    flex-shrink: 0;
     display: block;
+    object-fit: contain;
+    filter: drop-shadow(0.5px 0.8px 0.8px rgba(79, 54, 63, 0.18));
     -webkit-user-select: none;
     user-select: none;
 }
@@ -102,8 +128,7 @@
 /* GitHub star pill — header's right edge, beside the logo. Same visual
    recipe as the New-chat button (border/background/radius/font), and the
    same hover plus a slight grow. Live count wired by left_bar.js; click
-   currently shows the repo-suspended notice (see .gh-suspend-note below)
-   instead of opening the repo in the system browser. */
+   opens the repo in the system browser via /api/open-github. */
 .gh-star-pill {
     margin-left: auto;                 /* park at the header's right edge */
     flex-shrink: 0;                    /* never squeeze — it clips the GitHub mark */
@@ -132,56 +157,3 @@
 .gh-mark { width: clamp(13px, 1.4vw, 15px); height: clamp(13px, 1.4vw, 15px); flex-shrink: 0; }
 .gh-star { width: clamp(11px, 1.2vw, 13px); height: clamp(11px, 1.2vw, 13px); flex-shrink: 0; color: #e3a008; }
 .gh-star-count { line-height: 1; }
-
-/* TEMP — "original repo suspended" notice. Lives directly under <body>
-   (the bar's overflow:hidden would clip it inside) and is positioned by
-   left_bar.js just under the star pill. Hidden state keeps the element
-   measurable (opacity, not display) so JS can read offsetWidth to clamp
-   it inside the viewport before revealing. */
-.gh-suspend-note {
-    position: fixed;
-    z-index: 200;                       /* above the bar (30) and app cards */
-    width: min(300px, calc(100vw - 20px));
-    box-sizing: border-box;
-    padding: clamp(10px, 1.2vw, 14px) clamp(12px, 1.4vw, 16px);
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    border-radius: clamp(10px, 1.2vw, 14px);
-    background: rgba(255, 255, 255, 0.92);
-    -webkit-backdrop-filter: blur(14px);
-    backdrop-filter: blur(14px);
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    opacity: 0;
-    transform: translateY(-6px);
-    pointer-events: none;
-    transition: opacity 0.25s ease, transform 0.25s ease;
-}
-.gh-suspend-note.visible {
-    opacity: 1;
-    transform: translateY(0);
-    pointer-events: auto;
-}
-.gh-suspend-title {
-    display: flex;
-    align-items: center;
-    gap: clamp(6px, 0.7vw, 8px);
-    font-size: clamp(12px, 1.2vw, 14px);
-    font-weight: 700;
-    color: rgba(60, 60, 60, 0.95);
-    margin-bottom: clamp(4px, 0.5vw, 6px);
-}
-.gh-suspend-title::before {
-    content: '';
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #e3a008;                /* same amber as the star */
-    box-shadow: 0 0 0 3px rgba(227, 160, 8, 0.18);
-    flex-shrink: 0;
-}
-.gh-suspend-text {
-    font-size: clamp(11px, 1.1vw, 12.5px);
-    font-weight: 500;
-    line-height: 1.5;
-    color: rgba(90, 90, 90, 0.95);
-}

@@ -13,7 +13,7 @@
 (function () {
     'use strict';
 
-    var ICON = 20;
+    var ICON = 24;                       // logo size — same as bottom_left's chain (keep == CSS .cc-chain-icon)
     var COLOR = 'rgba(85, 90, 100, 0.92)';
     var VSCALE = (ICON / 2) / 44;        // source coords (~±44) -> ICON-px icon
     var TYPE_MS = 12;                    // per-char typing
@@ -127,19 +127,126 @@
         ctx.restore();
     }
 
-    // --- web globe (animated wireframe) — from bottom_left globePainter ---
+    // --- web globe — bottom_left's "searching" orb: a dotted lat/long sphere with a
+    //     scan meridian sweeping it (same constants; see bottom_left.js for the tuning
+    //     notes). Each dot's ink drives its ALPHA over the chain grey, so the near/far
+    //     depth read survives in one colour. ---
+    var ORB_RGB = '85, 90, 100';                 // == COLOR, minus its alpha
+    var G_SPIN = 0.5, G_SPEED = 2.665, G_SCAN_MUL = 4.335;
+    var G_LAT = 9, G_LON = 19;                   // rings × dots-per-ring
+    var G_RBASE = 1.05, G_RDEPTH = 2.975, G_RBOOST = 1.0, G_RMIN = 0.3;
+    var G_A_FAR = 0.62, G_A_NEAR = 1.0, G_DIM = 0.68;
     function globePainter() {
-        var R = ICON / 2 - 1.5, TILT = 0.34;
-        return function (ctx, cx, cy, t, alpha) {
-            ctx.strokeStyle = COLOR; ctx.globalAlpha = alpha * 0.9; ctx.lineWidth = 0.8;
-            ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
-            ctx.beginPath(); ctx.ellipse(cx, cy, R, R * TILT, 0, 0, Math.PI * 2); ctx.stroke();
-            ctx.beginPath(); ctx.ellipse(cx, cy - R * 0.52, R * 0.85, R * 0.85 * TILT, 0, 0, Math.PI * 2); ctx.stroke();
-            ctx.beginPath(); ctx.ellipse(cx, cy + R * 0.52, R * 0.85, R * 0.85 * TILT, 0, 0, Math.PI * 2); ctx.stroke();
-            var spin = t * 0.0012;
-            for (var k = 0; k < 3; k++) {
-                var rx = Math.abs(Math.cos(spin + k * (Math.PI / 3))) * R;
-                ctx.beginPath(); ctx.ellipse(cx, cy, rx, R, 0, 0, Math.PI * 2); ctx.stroke();
+        var R = (ICON / 2) * 0.82;
+        var rs = Math.pow(ICON / 300, 0.6);      // radii were tuned on a 300pt frame
+        var dots = [];
+        return function (ctx, cx, cy, now, alpha) {
+            var t = (now / 1000) * G_SPEED;
+            var yaw = t * G_SPIN, tilt = 0.4 + 0.06 * Math.sin(t * 0.35);
+            var st = Math.sin(tilt), ct = Math.cos(tilt), sy = Math.sin(yaw), cyw = Math.cos(yaw);
+            // the scan sweeps relative to the spin
+            var scan = t * (G_SPIN + (1.7 - G_SPIN) * G_SCAN_MUL);
+            dots.length = 0;
+            for (var li = 0; li <= G_LAT; li++) {
+                var lat = -Math.PI / 2 + (li / G_LAT) * Math.PI;
+                var cosLat = Math.cos(lat), sinLat = Math.sin(lat);
+                var lonCount = Math.max(1, Math.round(Math.abs(cosLat) * G_LON));
+                for (var lj = 0; lj < lonCount; lj++) {
+                    var lon = (lj / lonCount) * 2 * Math.PI;
+                    // spin + tilt + orthographic projection (makeProj, inlined)
+                    var x1 = (cosLat * Math.cos(lon)) * cyw + (cosLat * Math.sin(lon)) * sy;
+                    var z1 = -(cosLat * Math.cos(lon)) * sy + (cosLat * Math.sin(lon)) * cyw;
+                    var y1 = sinLat * ct - z1 * st;
+                    var z = sinLat * st + z1 * ct;
+                    var depth = (z + 1) / 2;
+                    // the scan: a moving meridian read as a size ripple, not a shine
+                    var dA = lon + yaw - scan;
+                    var d = Math.atan2(Math.sin(dA), Math.cos(dA));
+                    var boost = Math.exp(-(d * d) / 0.18) * Math.max(0, z);
+                    dots.push({
+                        x: cx + x1 * R, y: cy - y1 * R, z: z,
+                        r: Math.max(G_RMIN, (G_RBASE + G_RDEPTH * depth + G_RBOOST * boost) * rs),
+                        a: (G_A_FAR + (G_A_NEAR - G_A_FAR) * depth) * (G_DIM + (1 - G_DIM) * Math.min(1, boost))
+                    });
+                }
+            }
+            dots.sort(function (p, q) { return p.z - q.z; });   // painter: far → near
+            ctx.globalAlpha = 1;
+            for (var i = 0; i < dots.length; i++) {
+                var dot = dots[i];
+                ctx.fillStyle = 'rgba(' + ORB_RGB + ',' + (alpha * dot.a).toFixed(3) + ')';
+                ctx.beginPath(); ctx.arc(dot.x, dot.y, dot.r, 0, Math.PI * 2); ctx.fill();
+            }
+        };
+    }
+
+    // --- composing — bottom_left's "thinking" orb: an undulating multi-band dotted sash
+    //     over a faint fibonacci scaffold (same constants; see bottom_left.js for the
+    //     tuning notes). The opening phase shows it for the thinking beat. ---
+    var C_SPEED = 3.12, C_LANES = 12, C_SEGS = 44, C_GHOST = 38;
+    var C_RBASE = 0.94, C_RDEPTH = 1.45, C_RMIN = 0.3;
+    var C_A_FAR = 0.42, C_A_NEAR = 1.0;          // depth ramp for the band
+    var C_GHOST_A = 0.14, C_GHOST_SPAN = 0.26;   // the faint scaffold it rides on
+    function composingPainter() {
+        var R = (ICON / 2) * 0.86;
+        var rs = Math.pow(ICON / 300, 0.6);
+        // band plane basis (u, v, n = u × v) at the frozen orientation
+        var ta = 0.55, sTa = Math.sin(ta), cTa = Math.cos(ta);
+        var vy = cTa, vz = sTa;                  // u = (1,0,0), v = (0,cos ta,sin ta)
+        var ny = -vz, nz = vy;                   // n = u × v = (0,-vz,vy)
+        // makeProj(0, 0.3, …): yaw 0 leaves x alone; tilt folds y/z
+        var sT = Math.sin(0.3), cT = Math.cos(0.3);
+        // the fibonacci scaffold never moves either — resolve it once
+        var golden = Math.PI * (3 - Math.sqrt(5)), ghosts = [];
+        for (var gi = 0; gi < C_GHOST; gi++) {
+            var gy = 1 - (2 * (gi + 0.5)) / C_GHOST;
+            var grad = Math.sqrt(1 - gy * gy), ga = gi * golden;
+            var gx3 = grad * Math.cos(ga), gy3 = gy, gz3 = grad * Math.sin(ga);
+            var gz = (gy3 * sT + gz3 * cT) * R;
+            ghosts.push({
+                x: gx3 * R, y: -(gy3 * cT - gz3 * sT) * R, z: gz,
+                r: Math.max(C_RMIN, 0.8 * rs),
+                a: C_GHOST_A + C_GHOST_SPAN * ((gz / R + 1) / 2)
+            });
+        }
+        var dots = [];
+        return function (ctx, cx, cy, now, alpha) {
+            var t = (now / 1000) * C_SPEED;
+            dots.length = 0;
+            for (var g = 0; g < ghosts.length; g++) {
+                var gh = ghosts[g];
+                dots.push({ x: cx + gh.x, y: cy + gh.y, z: gh.z, r: gh.r, a: gh.a });
+            }
+            var mid = (C_LANES - 1) / 2, half = Math.max(1, mid);
+            for (var w = 0; w < C_LANES; w++) {
+                var laneOff = (w - mid) * 0.075;
+                var edge = Math.abs(w - mid) / half;
+                for (var k = 0; k < C_SEGS; k++) {
+                    var a = (k / C_SEGS) * 2 * Math.PI;
+                    // the undulation: two travelling waves along the band
+                    var off = laneOff
+                        + 0.16 * Math.sin(a * 3 - t * 1.7 + w * 0.22)
+                        + 0.07 * Math.sin(a * 5 + t * 1.1);
+                    var ca = Math.cos(a), sa = Math.sin(a);
+                    var x = ca, y = vy * sa + ny * off, z = vz * sa + nz * off;
+                    var l = Math.sqrt(x * x + y * y + z * z) || 1;
+                    x = (x / l) * R; y = (y / l) * R; z = (z / l) * R;
+                    var zr = y * sT + z * cT;
+                    var depth = (zr / R + 1) / 2;
+                    dots.push({
+                        x: cx + x, y: cy - (y * cT - z * sT), z: zr,
+                        r: Math.max(C_RMIN, (C_RBASE + C_RDEPTH * depth) * (1 - 0.25 * edge) * rs),
+                        // outer lanes read a touch lighter, as in the source
+                        a: (C_A_FAR + (C_A_NEAR - C_A_FAR) * depth) * (1 - 0.22 * edge)
+                    });
+                }
+            }
+            dots.sort(function (p, q) { return p.z - q.z; });   // painter: far → near
+            ctx.globalAlpha = 1;
+            for (var i = 0; i < dots.length; i++) {
+                var dot = dots[i];
+                ctx.fillStyle = 'rgba(' + ORB_RGB + ',' + (alpha * dot.a).toFixed(3) + ')';
+                ctx.beginPath(); ctx.arc(dot.x, dot.y, dot.r, 0, Math.PI * 2); ctx.fill();
             }
         };
     }
@@ -188,56 +295,57 @@
         };
     }
 
-    // Master intensity of the working glow — one number for the whole effect (both the
-    // blurred halo and the crisp rim scale off it). The stop-orb colours are vivid, so
-    // at full strength they read as neon against the card's soft greys.
-    var GLOW_A = 0.18;
+    // The stop orb's look (tool_icon.html .stop) — NOT a hard gradient: a lavender body
+    // with heavily BLURRED pink/blue accent blobs under a whitish sheen, so it reads
+    // soft and pastel. This recreates that on the head with radial gradients (a real
+    // canvas blur filter is patchy in WKWebView): hazy pink top-right, hazy blue
+    // bottom-left, pale sheen over the middle — clipped to the head, gently breathing.
+    function paintWorkingCoat(ctx, t, alpha) {
+        ctx.save();
+        ctx.clip();                                     // the head path — the haze stays inside
+        var breath = (Math.sin(t / 700) + 1) / 2;       // 0..1 slow pulse (like orbPulse)
+        var drift = Math.sin(t / 1100) * 4;             // the blobs wander a little
+        // wide, low-density gradients with a gaussian-ish falloff — no solid cores, just
+        // a wash of colour, like the orb's blur(8px) blobs seen through its white body
+        ctx.globalAlpha = alpha * (0.5 + 0.2 * breath);
+        var pink = ctx.createRadialGradient(14, -10 + drift, 0, 14, -10 + drift, 36);
+        pink.addColorStop(0, 'rgba(255, 0, 115, 0.5)');
+        pink.addColorStop(0.45, 'rgba(255, 0, 115, 0.26)');
+        pink.addColorStop(1, 'rgba(255, 0, 115, 0)');
+        ctx.fillStyle = pink; ctx.fillRect(-30, -30, 60, 60);
+        var blue = ctx.createRadialGradient(-12, 14 - drift, 0, -12, 14 - drift, 34);
+        blue.addColorStop(0, 'rgba(0, 187, 255, 0.5)');
+        blue.addColorStop(0.45, 'rgba(0, 187, 255, 0.26)');
+        blue.addColorStop(1, 'rgba(0, 187, 255, 0)');
+        ctx.fillStyle = blue; ctx.fillRect(-30, -30, 60, 60);
+        // the orb's milky body: a broad white veil over everything, colour only ghosting
+        // through it — this is what makes it read "blurred" instead of painted-on
+        var sheen = ctx.createRadialGradient(0, -2, 0, 0, -2, 34);
+        sheen.addColorStop(0, 'rgba(255, 255, 255, 0.62)');
+        sheen.addColorStop(0.6, 'rgba(255, 255, 255, 0.4)');
+        sheen.addColorStop(1, 'rgba(255, 255, 255, 0.18)');
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = sheen; ctx.fillRect(-30, -30, 60, 60);
+        ctx.restore();
+    }
 
     // --- agent mascot head (blinking) — from bottom_left agentPainter ---
-    // opts.glow: () => bool. When it returns true the head is ringed with the stop orb's
-    // rotating gradient (tool_icon.html's agentPainter) — used to show the agent is
-    // WORKING. A live getter, not a flag, so the same painter instance can be switched
-    // at runtime. The chain's small `agent` icon passes nothing and never glows.
+    // opts.glow: () => bool. When it returns true the head wears the stop orb's soft
+    // colours — used to show the agent is WORKING. A live getter, not a flag, so the
+    // same painter instance can be switched at runtime. The chain's small `agent`
+    // icon passes nothing and stays grey.
     function agentPainter(opts) {
         opts = opts || {};
         return function (ctx, cx, cy, t, alpha) {
+            var working = !!(opts.glow && opts.glow());
             ctx.save();
             ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
-            ctx.globalAlpha = alpha * 0.92; ctx.fillStyle = COLOR;
+            ctx.globalAlpha = alpha * 0.92;
+            ctx.fillStyle = working ? '#9292d8' : COLOR;   // the orb's lavender base
             ctx.beginPath();
             if (ctx.roundRect) ctx.roundRect(-30, -30, 60, 60, 13); else ctx.rect(-30, -30, 60, 60);
             ctx.fill();
-
-            // The glow strokes the head's OWN path — no beginPath between fill and stroke.
-            if (opts.glow && opts.glow()) {
-                var gradAng = t / 500;
-                var gx = Math.cos(gradAng) * 45, gy = Math.sin(gradAng) * 45;
-                var grad = ctx.createLinearGradient(gx, gy, -gx, -gy);
-                grad.addColorStop(0, '#ff0073');
-                grad.addColorStop(0.5, '#9292d8');
-                grad.addColorStop(1, '#00bbff');
-                ctx.strokeStyle = grad;
-                ctx.lineJoin = 'round';
-                var breath = (Math.sin(t / 400) + 1) / 2;   // 0..1 smooth pulse
-                if (typeof ctx.filter !== 'undefined') {
-                    // a real canvas blur — a wide stroke alone bands into visible squares
-                    ctx.save();
-                    ctx.filter = 'blur(' + (4 + 4 * breath) + 'px)';
-                    ctx.lineWidth = 6 + 2 * breath;
-                    ctx.globalAlpha = alpha * 0.7 * GLOW_A;
-                    ctx.stroke();
-                    ctx.restore();                          // drop the filter for the crisp line
-                } else {
-                    ctx.shadowColor = 'rgba(146, 146, 216, 0.8)';
-                    ctx.shadowBlur = 8 + 4 * breath;
-                    ctx.lineWidth = 4;
-                    ctx.stroke();
-                    ctx.shadowBlur = 0;
-                }
-                ctx.lineWidth = 1.5;
-                ctx.globalAlpha = alpha * 0.95 * GLOW_A;
-                ctx.stroke();
-            }
+            if (working) paintWorkingCoat(ctx, t, alpha);
 
             var bt = t % 1800, sy = 1;
             if (bt > 1620) sy = bt < 1710 ? 1 - ((bt - 1620) / 90) * 0.92 : 0.08 + ((bt - 1710) / 90) * 0.92;
@@ -381,6 +489,7 @@
         agent:   agentPainter,
         minion:  minionPainter,
         loader:  loaderPainter,
+        composing: composingPainter,             // undulating sash — the "thinking" beat
     };
 
     /* ===================== action name -> {shape, FIXED label} =====================
@@ -455,8 +564,8 @@
     // shared rAF loop through the _render escape hatch, so no second loop starts.
     // agentPainter draws a 60-unit head already scaled by VSCALE, so pre-scale by
     // k about the centre to land it at exactly `size` px.
-    // `size` is the CANVAS box; the head is drawn at HEAD_FRAC of it so the working
-    // glow has room to bleed instead of being clipped square at the canvas edge.
+    // `size` is the CANVAS box; the head is drawn at HEAD_FRAC of it (kept from the
+    // old glow-bleed sizing so the head's on-screen size doesn't change).
     var HEAD_FRAC = 0.78;
     function createMascot(canvas, size) {
         size = size || 44;

@@ -33,7 +33,9 @@
     };
 
     /* ---------------- icon geometry ---------------- */
-    var ICON = 16;                              // icon size (css px); keep == CSS .tf-icon
+    var ICON = 24;                              // icon size (css px); keep == CSS --tf-icon
+                                                // (every shape scales off it: VSCALE, the orb's
+                                                //  R/rs, the tick, the "!" badge, the conveyor pitch)
     var COLOR = 'rgba(85, 90, 100, 0.92)';
     var VSCALE = (ICON / 2) / 44;              // source coords (~±42) -> icon
     var TYPE_MS = 12;                          // blazing-fast per-char typing
@@ -99,19 +101,149 @@
         };
     }
 
-    // globe — clean rotating wireframe (outline + parallels + meridians)
+    // globe — the "searching" thinking-orb: a dotted lat/long sphere with a scan
+    // meridian sweeping it (port of all-orbs.html `globe` mode / drawGlobe, with
+    // the small-size preset already resolved: radii × 1.75, scanMul 4.335,
+    // speed 2.665). The dot COUNT runs denser than the shipped 0.105 preset
+    // (which gave 6 × 14 = 54 dots and read too sparse/light here): the rings
+    // are also stepped up past what the count scale would pair with 19 lon,
+    // for a tighter vertical read — 9 × 19 = 108 dots. One more ring and the
+    // rows start merging near the poles at icon size.
+    // The orb ships as grayscale ink; here each dot's ink drives its ALPHA over
+    // the chain grey instead, so the near/far depth read survives in one colour.
+    // Both ramps sit HIGHER than the orb's own ink values (which mapped to
+    // 0.17–0.88 and read washed-out next to the solid-grey logos on either side):
+    // G_A_* is the near/far depth ramp, G_DIM the floor for dots off the meridian.
+    var ORB_RGB = '85, 90, 100';                 // == COLOR, minus its alpha
+    var G_SPIN = 0.5, G_SPEED = 2.665, G_SCAN_MUL = 4.335;
+    var G_LAT = 9, G_LON = 19;                   // rings × dots-per-ring
+    var G_RBASE = 1.05, G_RDEPTH = 2.975, G_RBOOST = 1.0, G_RMIN = 0.3;
+    var G_A_FAR = 0.62, G_A_NEAR = 1.0, G_DIM = 0.68;
     function globePainter() {
-        var R = ICON / 2 - 1.5, TILT = 0.34;
+        var R = (ICON / 2) * 0.82;
+        var rs = Math.pow(ICON / 300, 0.6);      // radii were tuned on a 300pt frame
+        var dots = [];
         return function (ctx, cx, cy, now, alpha) {
-            ctx.strokeStyle = COLOR; ctx.globalAlpha = alpha * 0.9; ctx.lineWidth = 0.8;
-            ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
-            ctx.beginPath(); ctx.ellipse(cx, cy, R, R * TILT, 0, 0, Math.PI * 2); ctx.stroke();
-            ctx.beginPath(); ctx.ellipse(cx, cy - R * 0.52, R * 0.85, R * 0.85 * TILT, 0, 0, Math.PI * 2); ctx.stroke();
-            ctx.beginPath(); ctx.ellipse(cx, cy + R * 0.52, R * 0.85, R * 0.85 * TILT, 0, 0, Math.PI * 2); ctx.stroke();
-            var spin = now * 0.0012;
-            for (var k = 0; k < 3; k++) {
-                var rx = Math.abs(Math.cos(spin + k * (Math.PI / 3))) * R;
-                ctx.beginPath(); ctx.ellipse(cx, cy, rx, R, 0, 0, Math.PI * 2); ctx.stroke();
+            var t = (now / 1000) * G_SPEED;
+            var yaw = t * G_SPIN, tilt = 0.4 + 0.06 * Math.sin(t * 0.35);
+            var st = Math.sin(tilt), ct = Math.cos(tilt), sy = Math.sin(yaw), cyw = Math.cos(yaw);
+            // the scan sweeps relative to the spin
+            var scan = t * (G_SPIN + (1.7 - G_SPIN) * G_SCAN_MUL);
+            dots.length = 0;
+            for (var li = 0; li <= G_LAT; li++) {
+                var lat = -Math.PI / 2 + (li / G_LAT) * Math.PI;
+                var cosLat = Math.cos(lat), sinLat = Math.sin(lat);
+                var lonCount = Math.max(1, Math.round(Math.abs(cosLat) * G_LON));
+                for (var lj = 0; lj < lonCount; lj++) {
+                    var lon = (lj / lonCount) * 2 * Math.PI;
+                    // spin + tilt + orthographic projection (makeProj, inlined)
+                    var x1 = (cosLat * Math.cos(lon)) * cyw + (cosLat * Math.sin(lon)) * sy;
+                    var z1 = -(cosLat * Math.cos(lon)) * sy + (cosLat * Math.sin(lon)) * cyw;
+                    var y1 = sinLat * ct - z1 * st;
+                    var z = sinLat * st + z1 * ct;
+                    var depth = (z + 1) / 2;
+                    // the scan: a moving meridian read as a size ripple, not a shine
+                    var dA = lon + yaw - scan;
+                    var d = Math.atan2(Math.sin(dA), Math.cos(dA));
+                    var boost = Math.exp(-(d * d) / 0.18) * Math.max(0, z);
+                    dots.push({
+                        x: cx + x1 * R, y: cy - y1 * R, z: z,
+                        r: Math.max(G_RMIN, (G_RBASE + G_RDEPTH * depth + G_RBOOST * boost) * rs),
+                        // ink → alpha: near dots read solid, far ones recede;
+                        // G_DIM keeps everything off the meridian a step quieter
+                        a: (G_A_FAR + (G_A_NEAR - G_A_FAR) * depth) * (G_DIM + (1 - G_DIM) * Math.min(1, boost))
+                    });
+                }
+            }
+            dots.sort(function (p, q) { return p.z - q.z; });   // painter: far → near
+            ctx.globalAlpha = 1;
+            for (var i = 0; i < dots.length; i++) {
+                var dot = dots[i];
+                ctx.fillStyle = 'rgba(' + ORB_RGB + ',' + (alpha * dot.a).toFixed(3) + ')';
+                ctx.beginPath(); ctx.arc(dot.x, dot.y, dot.r, 0, Math.PI * 2); ctx.fill();
+            }
+        };
+    }
+
+    // composing — the "composing" thinking-orb: an undulating multi-band sash
+    // (port of all-orbs.html `ribbon` mode / drawRibbon). spin = 0, so the band's
+    // ORIENTATION is frozen and only the travelling wave moves — that lets the
+    // whole projection basis be precomputed once. Painted in the chain grey like
+    // the globe orb: ink → alpha, near dots solid, far ones receding.
+    // Counts + radii come from the reference's BIG (64) preset — counts × 0.25 →
+    // 3 lanes × 44 segs + 38 ghost dots, then bandMul 3.9 → 12 lanes; radii × 0.85
+    // — NOT its small (20) one. The small preset resolves to 10 coarse lanes,
+    // 20 segs and only 8 scaffold dots, which at icon size reads as a thin ring of
+    // merged strokes rather than the round dotted sash the reference shows. The
+    // small preset's faster speed (3.12 vs 2.34) is kept so the wave still travels
+    // visibly during the composing beat, and R is widened 0.78 → 0.86 to fill
+    // more of the box.
+    var C_SPEED = 3.12, C_LANES = 12, C_SEGS = 44, C_GHOST = 38;
+    var C_RBASE = 0.94, C_RDEPTH = 1.45, C_RMIN = 0.3;
+    var C_A_FAR = 0.42, C_A_NEAR = 1.0;          // depth ramp for the band
+    var C_GHOST_A = 0.14, C_GHOST_SPAN = 0.26;   // the faint scaffold it rides on
+    function composingPainter() {
+        var R = (ICON / 2) * 0.86;
+        var rs = Math.pow(ICON / 300, 0.6);
+        // band plane basis (u, v, n = u × v) at the frozen orientation
+        var ta = 0.55, sTa = Math.sin(ta), cTa = Math.cos(ta);
+        var vy = cTa, vz = sTa;                  // u = (1,0,0), v = (0,cos ta,sin ta)
+        var ny = -vz, nz = vy;                   // n = u × v = (0,-vz,vy)
+        // makeProj(0, 0.3, …): yaw 0 leaves x alone; tilt folds y/z
+        var sT = Math.sin(0.3), cT = Math.cos(0.3);
+        // the fibonacci scaffold never moves either — resolve it once
+        var golden = Math.PI * (3 - Math.sqrt(5)), ghosts = [];
+        for (var gi = 0; gi < C_GHOST; gi++) {
+            var gy = 1 - (2 * (gi + 0.5)) / C_GHOST;
+            var grad = Math.sqrt(1 - gy * gy), ga = gi * golden;
+            var gx3 = grad * Math.cos(ga), gy3 = gy, gz3 = grad * Math.sin(ga);
+            var gz = (gy3 * sT + gz3 * cT) * R;
+            ghosts.push({
+                x: gx3 * R, y: -(gy3 * cT - gz3 * sT) * R, z: gz,
+                // the reference's paint() floors EVERY dot at rMin, scaffold included
+                // — at icon size 0.8 * rs (0.18px) sits well under it
+                r: Math.max(C_RMIN, 0.8 * rs),
+                a: C_GHOST_A + C_GHOST_SPAN * ((gz / R + 1) / 2)
+            });
+        }
+        var dots = [];
+        return function (ctx, cx, cy, now, alpha) {
+            var t = (now / 1000) * C_SPEED;
+            dots.length = 0;
+            for (var g = 0; g < ghosts.length; g++) {
+                var gh = ghosts[g];
+                dots.push({ x: cx + gh.x, y: cy + gh.y, z: gh.z, r: gh.r, a: gh.a });
+            }
+            var mid = (C_LANES - 1) / 2, half = Math.max(1, mid);
+            for (var w = 0; w < C_LANES; w++) {
+                var laneOff = (w - mid) * 0.075;
+                var edge = Math.abs(w - mid) / half;
+                for (var k = 0; k < C_SEGS; k++) {
+                    var a = (k / C_SEGS) * 2 * Math.PI;
+                    // the undulation: two travelling waves along the band
+                    var off = laneOff
+                        + 0.16 * Math.sin(a * 3 - t * 1.7 + w * 0.22)
+                        + 0.07 * Math.sin(a * 5 + t * 1.1);
+                    var ca = Math.cos(a), sa = Math.sin(a);
+                    var x = ca, y = vy * sa + ny * off, z = vz * sa + nz * off;
+                    var l = Math.sqrt(x * x + y * y + z * z) || 1;
+                    x = (x / l) * R; y = (y / l) * R; z = (z / l) * R;
+                    var zr = y * sT + z * cT;
+                    var depth = (zr / R + 1) / 2;
+                    dots.push({
+                        x: cx + x, y: cy - (y * cT - z * sT), z: zr,
+                        r: Math.max(C_RMIN, (C_RBASE + C_RDEPTH * depth) * (1 - 0.25 * edge) * rs),
+                        // outer lanes read a touch lighter, as in the source
+                        a: (C_A_FAR + (C_A_NEAR - C_A_FAR) * depth) * (1 - 0.22 * edge)
+                    });
+                }
+            }
+            dots.sort(function (p, q) { return p.z - q.z; });   // painter: far → near
+            ctx.globalAlpha = 1;
+            for (var i = 0; i < dots.length; i++) {
+                var dot = dots[i];
+                ctx.fillStyle = 'rgba(' + ORB_RGB + ',' + (alpha * dot.a).toFixed(3) + ')';
+                ctx.beginPath(); ctx.arc(dot.x, dot.y, dot.r, 0, Math.PI * 2); ctx.fill();
             }
         };
     }
@@ -230,7 +362,11 @@
 
     // Cursor (left-pointing arrow) with a "breathing" click pulse — 1/2/3 presses
     // per 2s loop (shapes 'cu*'). Animated + pulses about its own pivot.
+    // The arrow's MASS (the triangle) sits at x≈-14..5 while its thin tail runs out
+    // to 20, so drawn as authored the body reads left of the chain's connector line.
+    // CURSOR_RECENTER nudges the whole glyph right so the triangle straddles the line.
     var CURSOR_PTS = [[-11, -27], [-11, 16], [2, 6], [20, 4]], CURSOR_PIVOT = { x: -1, y: -4 };
+    var CURSOR_RECENTER = 3;
     function clickScale(now, clicks) {
         var local = now % 2000, dip;
         if (clicks === 3) dip = Math.min(1, Math.exp(-Math.pow((local - 700) / 80, 2)) + Math.exp(-Math.pow((local - 960) / 80, 2)) + Math.exp(-Math.pow((local - 1220) / 80, 2)));
@@ -244,6 +380,7 @@
             ctx.save();
             ctx.translate(cx, cy); ctx.scale(VSCALE, VSCALE);
             if (flip) ctx.scale(-1, 1);                       // mirror -> points up-right (right click)
+            ctx.translate(CURSOR_RECENTER, 0);                // after the flip, so it mirrors too
             ctx.globalAlpha = alpha * 0.92; ctx.fillStyle = COLOR; ctx.strokeStyle = COLOR;
             ctx.translate(CURSOR_PIVOT.x, CURSOR_PIVOT.y); ctx.scale(s, s); ctx.translate(-CURSOR_PIVOT.x, -CURSOR_PIVOT.y);
             ctx.lineWidth = 6; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
@@ -256,9 +393,10 @@
 
     // Pen taking notes — tilted pen + nib + three note lines; the top line's left
     // end sweeps in/out so it reads as "writing" (shape 'pn'). Animated.
-    var PEN_LINE_REST = -26;
+    var PEN_LINE_REST = -26, PEN_RECENTER = 3.5;
     function drawPenShape(ctx, lineLeftX) {
         ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.translate(PEN_RECENTER, 0);    // note lines run left, pen tip right -> mass sat left
         ctx.lineWidth = 6.5; ctx.beginPath(); ctx.moveTo(22, -20); ctx.lineTo(0, 2); ctx.stroke();
         ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0, 2); ctx.lineTo(-5, 7); ctx.stroke();
         ctx.lineWidth = 3;
@@ -289,9 +427,10 @@
     }
 
     // Drag-and-drop — dashed drop-zone + a box that glides into it (shape 'dd'). Animated.
-    var DRAG_START = { x: -18, y: -14 }, DRAG_TARGET = { x: 17, y: 12 };
+    var DRAG_START = { x: -18, y: -14 }, DRAG_TARGET = { x: 17, y: 12 }, DRAG_RECENTER = -2.5;
     function drawDragDropShape(ctx, bx, by) {
         ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.translate(DRAG_RECENTER, 0);   // drop-zone sits right of the box's travel start
         ctx.lineWidth = 2.5; ctx.setLineDash([4, 4]);
         ctx.beginPath();
         if (ctx.roundRect) ctx.roundRect(2, -2, 30, 28, 4); else ctx.rect(2, -2, 30, 28);
@@ -316,9 +455,10 @@
 
     // Todo list — 3 rows (checkbox + task line). alphas[i]>0 draws a tick + strike on
     // row i. 'todo' shows it empty (created); 'todoUpd' ticks the rows off (updated).
-    var TODO_ROWS = [-16, 0, 16], TODO_ENDS = [22, 26, 14];
+    var TODO_ROWS = [-16, 0, 16], TODO_ENDS = [22, 26, 14], TODO_RECENTER = 6;
     function drawTodoShape(ctx, alphas) {
         ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.translate(TODO_RECENTER, 0);   // boxes left + long rows right -> mass sat left of the line
         for (var i = 0; i < TODO_ROWS.length; i++) {
             var ry = TODO_ROWS[i];
             ctx.lineWidth = 2.5; ctx.beginPath();
@@ -426,7 +566,7 @@
     // (soft red so it stands out against the grey chain).
     function drawBang(ctx, cx, cy, alpha) {
         var R = ICON / 2 - 1.5;
-        ctx.save(); ctx.translate(cx + 0.5, cy); ctx.globalAlpha = alpha;  // +0.5: sit the tip on the connector line
+        ctx.save(); ctx.translate(cx, cy); ctx.globalAlpha = alpha;   // the glyph is symmetric about cx
         var red = 'rgba(198, 92, 80, 0.95)';
         ctx.fillStyle = red; ctx.strokeStyle = red;
         ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.lineWidth = 2.2;
@@ -454,7 +594,7 @@
     // phone + hand tapping the screen, with touch ripple — "tapping the screen"
     var TAP_TOUCH = { x: -14, y: -6 };   // touch point on the phone screen
     var TAP_TILT = -0.55;                // hand tilt: finger points up-left, fist to bottom-right
-    var TAP_RECENTER = 9.5;              // phone+hand spans x≈[-36..17] — shift right so the
+    var TAP_RECENTER = 11;               // phone+hand spans x≈[-36..17] — shift right so the
                                          // composition centers on the chain like the other icons
     function drawTapPhone(ctx) {
         ctx.lineCap = 'round'; ctx.lineJoin = 'round';
@@ -718,6 +858,7 @@
         server: function () { return vecPainter(vecServer); },
         loader: loaderPainter,
         globe:  globePainter,
+        composing: composingPainter,                // undulating sash — the "thinking" beat
         agent:  agentPainter,                       // mascot head (blinking)
         apple:  function () { return vecPainter(vecApple); },
         shell:  function () { return vecPainter(vecShell); },
@@ -761,8 +902,9 @@
     var DEMO = [
         { shape: 'screen',  label: 'screenshot taken', phase: true },
         { shape: 'tree',    label: 'mapping pixel and element', phase: true },
-        { shape: 'server',  label: 'communicating with llm service', phase: true },
-        { shape: 'loader',  label: 'thinking', doneLabel: 'packet received', tick: true, phase: true },
+        { shape: 'server',    label: 'communicating with llm service', phase: true },
+        { shape: 'composing', label: 'thinking', phase: true },
+        { shape: 'loader',    label: 'understanding context', doneLabel: 'synthesizing finished', tick: true, phase: true },
         { shape: 'click1',  label: 'select' },
         { shape: 'pen',     label: 'typing text' },
         { shape: 'click2',  label: 'double left click' },
@@ -780,12 +922,17 @@
         { shape: 'book',    label: 'saving to agent memory' },
     ];
 
-    // Per-turn opening phases (real run).
+    // Per-turn opening phases (real run). The wait for the packet is told in two
+    // beats: the composing sash ("thinking") holds for COMPOSE_MS, then the loader
+    // ("understanding context") spins until the packet lands and ticks over to
+    // "synthesizing finished". If the packet beats the composing hold, the rest of
+    // the opening is fast-forwarded (see startOpening / markReceived).
     var OPEN = {
-        screenshot:  { shape: 'screen', label: 'screenshot taken', phase: true },
-        mapping:     { shape: 'tree',   label: 'mapping pixel and element', phase: true },
-        communicate: { shape: 'server', label: 'communicating with llm service', phase: true },
-        thinking:    { shape: 'loader', label: 'thinking', doneLabel: 'packet received', tick: true, phase: true },
+        screenshot:  { shape: 'screen',    label: 'screenshot taken', phase: true },
+        mapping:     { shape: 'tree',      label: 'mapping pixel and element', phase: true },
+        communicate: { shape: 'server',    label: 'communicating with llm service', phase: true },
+        composing:   { shape: 'composing', label: 'thinking', phase: true },
+        thinking:    { shape: 'loader',    label: 'understanding context', doneLabel: 'synthesizing finished', tick: true, phase: true },
     };
 
     // Backend action/tool name -> { shape, label }. left_click is split by click count.
@@ -923,7 +1070,11 @@
         if (!treeEl || !flowEl) return;
         var gap = getGap();
         var pitch = ICON + gap;                            // ICON === item height
-        var maxVisible = Math.max(1, Math.floor((flowEl.clientHeight - gap) / pitch));
+        // N logos occupy EXACTLY N * pitch: the tree's padding-top draws the first
+        // connector, then every item adds one gap + one icon. The only other cost is
+        // the tree's own top offset — subtracting a gap here (as this used to) threw
+        // away a whole row whenever the leftover slack was smaller than one gap.
+        var maxVisible = Math.max(1, Math.floor((flowEl.clientHeight - treeEl.offsetTop) / pitch));
         var overflow = Math.max(0, index - (maxVisible - 1));
         treeEl.style.transform = 'translateY(' + (-overflow * pitch) + 'px)';
     }
@@ -931,6 +1082,8 @@
     /* ---------------- timing ---------------- */
     var GAP_MS = 700, HOLD_MS = 2200, FADE_MS = 450, WORK_MS = 1400;  // idle demo
     var STEP_GAP_MS = 950;     // ~1s between opening phases (real run)
+    var COMPOSE_MS = 5000;     // the composing sash's own beat before the loader takes over
+    var CATCHUP_MS = 300;      // opening pace once the packet has already landed
     var TOOL_GAP_MS = 340;     // fast cadence between tools (real run)
     var RENDER_TAIL = 12;      // only the last N items are re-rendered each frame
 
@@ -940,7 +1093,13 @@
     // The chain stays EMPTY until a real agent run drives it. The demo is opt-in
     // only (window.toolFlow.startTest()) — it never auto-runs on app start.
     var demoOn = false, demoTimer = null;
+    // True only between run_start and run_end. onFlow drops everything else while
+    // it's false, so a stopped run's trailing events can't leak into a new chat.
+    var runActive = false;
     var thinkingStep = null, receivedEarly = false, openingDone = true;
+    // openNext advances the opening sequence; markReceived calls it early (and flips
+    // fastOpening) when the packet lands before the composing beat is up.
+    var openNext = null, fastOpening = false;
     var openTimers = [], toolQ = [], toolTimer = null;
     var todoCreateCount = 0;   // # of create-todo (todo_list) calls this run — 2nd+ shows "overwrote todo"
     // True while the current run is a Mobile-use run — read once at run_start from
@@ -967,6 +1126,7 @@
     }
 
     function clearChain() {
+        runActive = false;                 // the run this chain belonged to is over for us
         clearArr(openTimers); clearTimeout(toolTimer); toolTimer = null; toolQ.length = 0;
         clearTimeout(demoTimer);
         for (var i = 0; i < STEPS.length; i++) {
@@ -976,6 +1136,7 @@
             if (s._item && s._item.parentNode) s._item.parentNode.removeChild(s._item);
         }
         STEPS.length = 0; frontier = -1; thinkingStep = null; receivedEarly = false; openingDone = true; shimmerWord = null;
+        openNext = null; fastOpening = false;
         todoCreateCount = 0;
         if (treeEl) {                                        // snap the conveyor back to top, no animation
             treeEl.style.transition = 'none';
@@ -1019,32 +1180,50 @@
        event ticks it ("packet received"); tools queue behind the opening, then play fast. */
     function startOpening(hasImage) {
         clearArr(openTimers);
-        openingDone = false; thinkingStep = null; receivedEarly = false;
+        openingDone = false; thinkingStep = null; receivedEarly = false; fastOpening = false;
         var specs = [];
         if (hasImage) { specs.push(OPEN.screenshot); specs.push(OPEN.mapping); }
         specs.push(OPEN.communicate);
+        specs.push(OPEN.composing);
         specs.push(OPEN.thinking);
         var i = 0;
-        (function play() {
+        function play() {
             var sp = specs[i];
             if (sp === OPEN.thinking) {
                 thinkingStep = addStep(sp);                  // stays active (loader spins) until received
                 openingDone = true;
+                openNext = null;                             // opening's done — nothing left to hurry
                 if (receivedEarly) { receivedEarly = false; complete(thinkingStep); thinkingStep = null; }
                 playTools();
             } else {
                 addStep(sp);
             }
             i++;
-            if (i < specs.length) openTimers.push(setTimeout(play, STEP_GAP_MS));
-        })();
+            if (i < specs.length) {
+                // the composing sash gets its own, longer beat — unless the packet
+                // already landed, in which case everything runs at catch-up pace
+                var wait = fastOpening ? CATCHUP_MS
+                    : (sp === OPEN.composing ? COMPOSE_MS : STEP_GAP_MS);
+                openTimers.push(setTimeout(play, wait));
+            }
+        }
+        openNext = play;
+        play();
     }
-    // received{tools}: the packet arrived — tick "packet received", then play this
-    // turn's tools (read from the action block) one-by-one, fast.
+    // received{tools}: the packet arrived — tick the loader over to "synthesizing
+    // finished", then play this turn's tools (read from the action block) fast.
     function markReceived(tools) {
         toolQ = (tools || []).slice();
-        if (thinkingStep) { complete(thinkingStep); thinkingStep = null; playTools(); }
-        else { receivedEarly = true; }                       // fast LLM: handled when thinking appears
+        if (thinkingStep) { complete(thinkingStep); thinkingStep = null; playTools(); return; }
+        receivedEarly = true;                                // handled when the loader appears
+        // The LLM beat the opening (often well under COMPOSE_MS). Don't sit out the
+        // rest of the composing hold — drop to catch-up pace so the chain tracks the
+        // real speed instead of lagging seconds behind it.
+        if (openNext) {
+            fastOpening = true;
+            clearArr(openTimers);
+            openTimers.push(setTimeout(openNext, CATCHUP_MS));
+        }
     }
     function playTools() {
         if (toolTimer || !openingDone || !toolQ.length) return;
@@ -1071,7 +1250,7 @@
     // so it isn't counted; it just caps the chain with a short explanation.
     function showError(text) {
         clearArr(openTimers); clearTimeout(toolTimer); toolTimer = null; toolQ.length = 0;
-        thinkingStep = null; receivedEarly = false; openingDone = true;
+        thinkingStep = null; receivedEarly = false; openingDone = true; openNext = null;
         addStep({ shape: 'error', label: text || 'something went wrong' });
     }
 
@@ -1081,15 +1260,26 @@
         // backend (app.py) calls: window.toolFlow.onFlow('<event>', '<json payload>')
         onFlow: function (event, payload) {
             if (!treeEl) return;
+            // Events are RUN-SCOPED: anything that arrives once the chain has been
+            // torn down (New chat / send, both via reset()) or after run_end belongs
+            // to a finished run and is dropped. The driver emits its "!" cap only
+            // AFTER the loop exits and cleanup runs, so hitting stop and jumping
+            // straight to a new chat used to land that "!" in the fresh chain.
+            if (!runActive && event !== 'run_start') return;
             var p = {};
             if (payload) { try { p = JSON.parse(payload); } catch (e) { p = {}; } }
             switch (event) {
-                case 'run_start': mobileRun = isMobileRun(); stopDemo(); clearChain(); if (zoneEl) zoneEl.classList.add('flow-started'); break;
+                case 'run_start':
+                    mobileRun = isMobileRun(); stopDemo(); clearChain();
+                    runActive = true;                             // after clearChain — it clears the flag
+                    if (zoneEl) zoneEl.classList.add('flow-started');
+                    break;
                 case 'turn':      startOpening(!!p.hasImage); break;
                 case 'received':  markReceived(p.tools); break;   // tick + play this turn's tools
                 case 'error':     showError(p.text); break;       // "!" drop (stop / backend error)
                 case 'run_end':   // run finished: stop the shine on the final item; keep it visible
                     if (shimmerWord) { shimmerWord.classList.remove('shimmer'); shimmerWord = null; }
+                    runActive = false;
                     break;
             }
         },

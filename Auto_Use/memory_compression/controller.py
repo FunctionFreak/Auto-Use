@@ -1,34 +1,21 @@
-# Copyright 2026 Autouse AI — https://github.com/auto-use/Auto-Use
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-# If you build on this project, please keep this header and credit
-# Autouse AI (https://github.com/auto-use/Auto-Use) in forks and derivative works.
-# A small attribution goes a long way toward a healthy open-source
-# community — thank you for contributing.
+# Copyright 2026 Ashish Yadav — Auto-Use
 
 """CompressionController — runtime orchestration for the handoff compression
 agent (sibling agent/service.py builds the dump and makes the LLM call).
 
 The compression agent is its OWN agent: everything about WHEN it fires, HOW
 the worker runs, and HOW the result is spliced back lives here, in ONE place
-shared by all platform agents (macOS_use / ios_use / windows_use). A platform
+shared by all platform agents (mac / ios / windows). A platform
 agent wires it with four hooks, all called from its main loop:
 
     reset()          — at the top of process_request (invalidates stale workers)
     maybe_trigger()  — right after each main-agent LLM call (last_usage fresh)
     apply_pending()  — at the top of each loop iteration (splices IN PLACE)
     finish_run()     — after the loop exits (stops a dangling indicator)
+
+The CODER agent reuses this same controller with two constructor callables
+(dump_builder / synthetic_entry) that swap the main-agent history format for
+its native tool-calling one; trigger/threading/splice orchestration is shared.
 
 Threading contract (unchanged from the original in-agent version): the dump is
 snapshotted on the CALLER's thread; the daemon worker makes one plain-text LLM
@@ -37,23 +24,36 @@ apply_pending, i.e. on the main loop's thread. A generation counter makes
 stale results (from a previous run on the same instance) unappliable.
 """
 
+import os
 import threading
 
 from .agent.service import MemoryCompressionAgent, make_synthetic_entry
 
-# Rolling-compression trigger: fire when the main agent's live context size
+# Rolling-compression trigger: fire when the agent's live context size
 # (incl. cached tokens) crosses this. memory_tracker.MEMORY_CAP is the bar's
 # display budget; this is the point compression starts keeping context down.
-COMPRESS_THRESHOLD = 110_000
+# AUTOUSE_COMPRESS_THRESHOLD overrides it (test knob) — subprocess agents (the
+# coder) inherit the env automatically, so one setting covers every agent.
+try:
+    COMPRESS_THRESHOLD = int(os.getenv("AUTOUSE_COMPRESS_THRESHOLD", "") or 110_000)
+except (TypeError, ValueError):
+    COMPRESS_THRESHOLD = 110_000
 
 
 class CompressionController:
 
-    def __init__(self, llm_manager, llm_manager_cls, token_callback, stop_event):
-        self.llm_manager = llm_manager          # MAIN agent's manager — read last_usage ONLY
+    def __init__(self, llm_manager, llm_manager_cls, token_callback, stop_event,
+                 dump_builder=None, synthetic_entry=None):
+        self.llm_manager = llm_manager          # owning agent's manager — read last_usage ONLY
         self.llm_manager_cls = llm_manager_cls  # platform's LLMManager class for the 2nd manager
         self.token_callback = token_callback    # frontend token pipe (indicator rides on it)
         self.stop_event = stop_event
+        # Agent-flavor hooks (None = main-agent defaults): dump_builder renders
+        # steps [0..k] into the compressor's <input> text; synthetic_entry maps
+        # (step_k_entry, handoff_text) -> (entry, tool_slot) for the splice.
+        # The coder passes native-format implementations from its view module.
+        self._dump_builder = dump_builder
+        self._synthetic_entry = synthetic_entry
         self._threshold = COMPRESS_THRESHOLD
         self._inflight = False    # one compression in flight, ever
         self._result = None       # {"gen","k","text"} deposited by the worker
@@ -90,14 +90,15 @@ class CompressionController:
                 # A SECOND manager — same provider/model/key, plain-text mode.
                 # Never reuse the main one: its last_usage would race the loop.
                 second = self.llm_manager_cls(main.provider, main.model_short_name,
-                                              main.thinking, main.runtime_api_key, mode="text")
+                                              api_key=main.runtime_api_key, mode="text")
                 self._compressor = MemoryCompressionAgent(second)
             except Exception as e:
                 print(f"🧠 [memory] Compression unavailable: {e}")
                 self._rearm_len = len(assistant_messages) + 5
                 return
         k = len(assistant_messages) - 1                 # last completed step
-        dump = self._compressor.build_dump(assistant_messages, tool_responses, k, task)
+        dump = (self._dump_builder or self._compressor.build_dump)(
+            assistant_messages, tool_responses, k, task)
         self._inflight = True
         self._notify("start")                           # indicator on
         print(f"🧠 [memory] Context at {ctx:,} tokens — compressing steps 1..{k + 1} in background")
@@ -140,12 +141,13 @@ class CompressionController:
         k = res["k"]
         if not (0 <= k < len(assistant_messages)):
             return web_memory_index
-        assistant_messages[:k + 1] = [
-            make_synthetic_entry(assistant_messages[k], res["text"])
-        ]
-        tool_responses[:k + 1] = [
-            tool_responses[k] if k < len(tool_responses) else None
-        ]
+        if self._synthetic_entry is not None:
+            entry, slot = self._synthetic_entry(assistant_messages[k], res["text"])
+        else:
+            entry = make_synthetic_entry(assistant_messages[k], res["text"])
+            slot = tool_responses[k] if k < len(tool_responses) else None
+        assistant_messages[:k + 1] = [entry]
+        tool_responses[:k + 1] = [slot]
         if web_memory_index is not None:
             web_memory_index = None if web_memory_index <= k else web_memory_index - k
         # Anti-thrash: no re-trigger until 3 fresh steps exist.

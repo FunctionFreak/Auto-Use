@@ -101,16 +101,17 @@
     display: flex; flex-direction: column; gap: 12px; padding-top: 12px;
     will-change: transform; transition: transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
-/* one chain link: connector line (drawn on .in) + 16px canvas + typed label. Shared by the
+/* one chain link: connector line (drawn on .in) + 24px canvas (same logo size as the main
+   agent's bottom-left chain; keep == tool_icons ICON) + typed label. Shared by the
    chain AND the in-card minion sub-chains, so scoped to #cliContainer (covers both). */
-#cliContainer .cc-chain-item { position: relative; height: 20px; display: flex; align-items: center; gap: 8px; }
+#cliContainer .cc-chain-item { position: relative; height: 24px; display: flex; align-items: center; gap: 8px; }
 #cliContainer .cc-chain-item::before {
-    content: ""; position: absolute; left: 9.5px; top: -12px; height: 12px; width: 1px;
+    content: ""; position: absolute; left: 11.5px; top: -12px; height: 12px; width: 1px;
     background: rgba(0, 0, 0, 0.22); transform: scaleY(0); transform-origin: top;
     transition: transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 #cliContainer .cc-chain-item.in::before { transform: scaleY(1); }
-#cliContainer .cc-chain-icon { flex: 0 0 auto; width: 20px; height: 20px; opacity: 0; transition: opacity 0.3s ease; }
+#cliContainer .cc-chain-icon { flex: 0 0 auto; width: 24px; height: 24px; opacity: 0; transition: opacity 0.3s ease; }
 #cliContainer .cc-chain-item.in .cc-chain-icon { opacity: 1; }
 #cliContainer .cc-chain-word {
     flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -180,7 +181,7 @@
     display: flex; flex-direction: row; align-items: center; gap: 8px;
     will-change: transform; transition: transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
-#cliContainer .cc-mchain .cc-chain-item::before { left: -8px; top: 9.5px; height: 1px; width: 8px; transform: scaleX(0); transform-origin: left; }
+#cliContainer .cc-mchain .cc-chain-item::before { left: -8px; top: 11.5px; height: 1px; width: 8px; transform: scaleX(0); transform-origin: left; }
 #cliContainer .cc-mchain .cc-chain-item.in::before { transform: scaleX(1); }
 #cliContainer .cc-mchain .cc-chain-word { display: none; }
 
@@ -460,8 +461,34 @@ body.cli-typing .coder-card.has-head .cc-out-view::-webkit-scrollbar { display: 
    One vertical .cc-trunk (its top/height set in JS so it runs from the `>` line's
    center down to the last minion's center) + a horizontal elbow per row. cc-minions'
    left margin puts the trunk (left:0) directly under the `>`. */
-.coder-card .cc-minions { position: relative; display: flex; flex-direction: column; gap: 3px; margin: 3px 0 5px 3px; padding-left: 16px; }
+/* .cc-minions is the TRUNK'S frame, not the rows' — the trunk hangs off the `>` which is
+   ABOVE this box, so it has to stay overflow:visible. The rows live one level down, inside
+   the conveyor window. */
+.coder-card .cc-minions { position: relative; display: flex; flex-direction: column; min-height: 0; margin: -2px 0 0 3px; }
 .coder-card .cc-trunk { position: absolute; left: 0; top: 0; width: 1px; height: 0; background: rgba(0,0,0,0.22); }
+/* The conveyor WINDOW — the same pattern as .cc-chain-flow / .cc-track-flow: it clips, and
+   the .cc-mtree inside translates up, so the NEWEST minions always stay in view and older
+   rows slide away under the top fade (.cc-mscrolled, toggled from layoutTrunk). Without it
+   a 4th minion simply grew past the height-capped Shell-use card and painted over the Tool
+   response row below — .cc-body is overflow:visible on purpose, for the compact card whose
+   height its tree really does set.
+   padding-left:16px IS the trunk→row gap (it used to sit on .cc-minions): the elbow is drawn
+   at left:-16px on the row, so it lands ON this window's left edge instead of outside the
+   clip and being cut off. */
+.coder-card .cc-mflow { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; padding-left: 16px; }
+.coder-card .cc-mflow.cc-mscrolled {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 16px);
+            mask-image: linear-gradient(to bottom, transparent 0, #000 16px);
+}
+/* the sliding tree. The 5px of vertical padding keeps the first/last loader's orbiting glow
+   clear of the clip edge (the same "chopped loader" the .cc-mrow note below warns about);
+   .cc-minions' -2px top margin cancels it so the tree sits exactly where it always did. It
+   lives on the TREE rather than the window on purpose — that makes offsetHeight vs
+   clientHeight an exact overflow measurement in layoutTrunk. */
+.coder-card .cc-mtree {
+    display: flex; flex-direction: column; gap: 3px; padding: 5px 0;
+    will-change: transform; transition: transform 0.32s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
 /* a minion row is now a COLUMN: a head (loader + live line) above its own action sub-chain.
    NO overflow:hidden here — it used to clip the negative-left elbow (so the trunk never turned
    into an L) AND the loader's orbiting glow (the "chopped" loader). Text clipping is scoped to
@@ -528,16 +555,21 @@ body.cli-typing .coder-card.has-head .cc-out-view::-webkit-scrollbar { display: 
 body.cli-shell #cliContainer { padding-right: clamp(34px, 3.4vw, 50px); }
 
 body.cli-shell #cliContainer .cc-agent {
+    /* FIT the panel, never push past it: the panel doesn't scroll, so the unit must
+       shrink to it (same fix the cli-typing block below already applies). */
+    flex: 1 1 auto;
+    min-height: 0;
     display: grid;
     grid-template-columns: 1fr 1fr;
-    /* Row 1: the terminal. Its height also places the progress bar (pinned to the
-       row's bottom) and everything below it, so it sets how far down the whole
-       lower half sits. Row 2 needs a DEFINITE height, not auto: .cc-chain /
-       .cc-track-tree are position:absolute, so their flow parents have zero content
-       height and would collapse in an auto row — icons present but clipped to
-       nothing. 150px ≈ caption + exactly 4 chain links (12 pad + 4×20 + 3×12 gap);
-       the 5th pushes the conveyor up, which is the intended "only 4 at a time". */
-    grid-template-rows: minmax(42vh, auto) minmax(150px, auto);
+    /* Row 1: the terminal — whatever's left after the tools row, so the grid ALWAYS
+       fits the panel. (It used to be minmax(42vh, auto); auto grew with content and
+       pushed the tool-response row past the panel's clipped edge.) The progress bar
+       stays pinned to this row's bottom. Row 2 needs a DEFINITE height, not auto:
+       .cc-chain / .cc-track-tree are position:absolute, so their flow parents have
+       zero content height and would collapse in an auto row — icons present but
+       clipped to nothing. 166px ≈ caption + exactly 4 chain links (12 pad + 4×24 +
+       3×12 gap); the 5th pushes the conveyor up — the intended "only 4 at a time". */
+    grid-template-rows: minmax(0, 1fr) minmax(166px, auto);
     grid-template-areas:
         "term  term"
         "tools track";
@@ -556,6 +588,80 @@ body.cli-shell #cliContainer .cc-actions { grid-area: tools; }
 body.cli-shell #cliContainer .cc-track   { grid-area: track; }
 /* Shell use only: the terminal goes full-bleed (normally capped at 340px + centred). */
 body.cli-shell #cliContainer .coder-card { width: 100%; }
+
+/* Shell use: BOUND the card's content to the card.
+   Everywhere else .coder-card is content-height, so .cc-main can be a plain block and the
+   minion tree is free to set the card's height. Here the card is STRETCHED to grid row 1
+   (.cc-card-wrap align-items:stretch) — a fixed height — and nothing inside was holding the
+   content to it, so past ~3 minions the tree ran out through the outlined bottom, over the
+   progress bar and across the "Tool response" caption, until .cc-agent's overflow:hidden cut
+   it off mid-row.
+   The column below hands every FIXED part (name, head, terminal) its natural height and
+   gives everything left to .cc-minions, whose conveyor then keeps the newest minions in
+   view however many are dispatched.
+   :not(.cli-typing) because the hand-typing block above assigns the same properties the
+   other way round (terminal flexes, minions fixed) at the same class count — this way the
+   two can't fight, whichever ends up later in the file. */
+body.cli-shell:not(.cli-typing) .coder-card.has-head .cc-body { overflow: hidden; }
+body.cli-shell:not(.cli-typing) .coder-card.has-head .cc-main {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+body.cli-shell:not(.cli-typing) .coder-card.has-head .cc-head,
+body.cli-shell:not(.cli-typing) .coder-card.has-head .cc-brain,
+body.cli-shell:not(.cli-typing) .coder-card.has-head .cc-term { flex: 0 0 auto; }
+body.cli-shell:not(.cli-typing) .coder-card.has-head .cc-minions { flex: 1 1 auto; min-height: 0; }
+
+/* ---- Agent Notes (Shell use) — the finished run's scratchpad + done message, shown
+   in the free row UNDER the idle terminal (cli_stage.js renderNotes). Reuses the main
+   stage's global .agent-note* classes (notes_stage.css) so the look is identical —
+   pen header, numbered rows, drifting accent — just compacted to terminal scale.
+   Capped + internally scrolling (scrollbar hidden, inherited from .agent-notes-list)
+   so it can never push the panel past its clipped edge. Cleared on the next send. */
+body.cli-shell #cliContainer .cc-notes {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    min-height: 0;
+    max-height: 34vh;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    padding: 10px 6px 2px;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(12px);
+    transition: opacity 0.4s ease, transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
+                max-height 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), padding 0.4s ease;
+}
+body.cli-shell #cliContainer .cc-notes.in { opacity: 1; transform: translateY(0); }
+/* Clicking into the terminal (hand-typing mode) hands the whole panel to the prompt:
+   the notes COLLAPSE (max-height 0, so the typing grid's auto row really frees the
+   space) instead of just fading in place. They never need to reappear — cli-typing
+   only ever drops via begin() (a new run, which clears the notes anyway) or by
+   leaving Shell use (which also clears them). */
+body.cli-shell.cli-typing #cliContainer .cc-notes {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    opacity: 0;
+    transform: translateY(12px);
+    pointer-events: none;
+}
+/* header sits on the terminal's left edge instead of stage-centred */
+body.cli-shell #cliContainer .cc-notes .agent-notes-header {
+    justify-content: flex-start;
+    margin-bottom: 8px;
+    font-size: 12px;
+}
+/* full-width reading column at card scale — drop the main stage's centred
+   700px column and its -40px optical nudge */
+body.cli-shell #cliContainer .cc-notes .agent-notes-list {
+    width: 100%;
+    align-self: stretch;
+    left: 0;
+    font-size: 11px;
+}
 
 /* The faintest grey wash + a thin outline that's solid along the bottom and fades
    out toward the top — same ::after + mask technique as .memory-bar-track, so the

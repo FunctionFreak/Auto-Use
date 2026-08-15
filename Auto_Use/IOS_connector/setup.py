@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Ashish Yadav — Auto-Use
+
 # WebDriverAgent one-shot signer + runner.
 #
 # Layout expected (put this file and the html/ folder next to a fresh WDA clone):
@@ -842,7 +844,10 @@ def main():
     print(f"WDA setup   ->  http://localhost:{PORT}")
     print(f"project     ->  {PROJECT}   exists={PROJECT.exists()}")
     if not PROJECT.exists():
-        print(f"  (put a fresh WebDriverAgent clone at {WDA_DIR})")
+        # WebDriverAgent is not vendored in this repo — ios_setup.sh clones it
+        # from the Appium project at a pinned tag. See THIRD_PARTY_NOTICES.md.
+        print(f"  (no WebDriverAgent clone at {WDA_DIR})")
+        print("   run:  bash ios_setup.sh      # fetches it and checks the toolchain")
     srv = Server(("127.0.0.1", PORT), Handler)
     # When the desktop app embeds this UI in an iframe (AUTOUSE_EMBED=1) we don't
     # want a stray browser tab — the app loads http://localhost:PORT itself.

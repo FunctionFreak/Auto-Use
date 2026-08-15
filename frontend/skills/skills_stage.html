@@ -2,8 +2,8 @@
      shows one thing at a time). skills.js reveals it when the composer's Skills
      icon is clicked and hides the Agent Notes so the two never overlap.
      COMPUTER USE tab is live: it lists the active platform's
-     Auto_Use/<platform>_use/agent/skills/*.md via /api/skills (windows_use on
-     Windows, macOS_use on Mac), with per-file preview and delete; the + button
+     Auto_Use/<platform>_use/agent/skills/*.md via /api/skills (windows on
+     Windows, mac on Mac), with per-file preview and delete; the + button
      swaps in the add form (whose Save is still design-only, and whose Cancel
      returns to the list). MOBILE USE keeps the plain design-only form, where
      Cancel closes the stage. -->
@@ -30,6 +30,12 @@
                     <svg class="skills-add-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
                 </span>
                 <span class="skills-add-label">Add skills</span>
+            </button>
+            <!-- Close — puts the screen back exactly the way it was before
+                 Skills opened (Agent Notes, the shell terminal, or the plain
+                 4-zone grid). Same handler as clicking the composer icon again. -->
+            <button class="skills-close" id="skillsCloseBtn" type="button" aria-label="Close skills" title="Close">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
             </button>
         </div>
 

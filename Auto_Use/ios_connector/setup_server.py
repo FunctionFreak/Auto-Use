@@ -1,6 +1,5 @@
-# Copyright 2026 Autouse AI — https://github.com/auto-use/Auto-Use
-#
-# Licensed under the Apache License, Version 2.0 (the "License").
+# Copyright 2026 Ashish Yadav — Auto-Use
+
 """Launcher for the existing WebDriverAgent setup UI (ios_connector/setup.py).
 
 setup.py is the complete, self-contained sign → build → install → run tool with

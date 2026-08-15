@@ -13,8 +13,11 @@
 
     var zoneEl = null, flowEl = null, treeEl = null, frontier = -1;
 
-    /* ---------------- blazing-fast typewriter (from bottom_left) ---------------- */
-    function typeText(el, text, onTick) {
+    /* ---------------- blazing-fast typewriter (from bottom_left) ----------------
+       Entries arrive as HTML (frontend/markdown.py). Typing markup character by
+       character would show raw tags mid-animation, so we type the PLAIN text and
+       swap the real markup in on the final tick — the line lands formatted. */
+    function typeText(el, text, onTick, markup) {
         if (!el) return;
         clearTimeout(el._typeTimer);
         el.textContent = '';
@@ -22,10 +25,24 @@
         (function tick() {
             i = Math.min(i + CHARS_PER_TICK, text.length);
             el.textContent = text.slice(0, i);
+            if (i >= text.length) {
+                if (markup) {
+                    el.innerHTML = markup;                // already escaped server-side
+                    el.classList.add('md');
+                }
+                if (onTick) onTick();                     // final height may differ again
+                return;
+            }
             if (onTick) onTick();                         // text may wrap -> height grew, re-pin scroll
-            if (i >= text.length) return;
             el._typeTimer = setTimeout(tick, TYPE_MS);
         })();
+    }
+
+    // Plain text behind rendered Markdown — what the typewriter actually types.
+    function htmlToText(markup) {
+        var d = document.createElement('div');
+        d.innerHTML = String(markup == null ? '' : markup);
+        return (d.textContent || '').trim();
     }
 
     /* ---------------- conveyor scroll ----------------
@@ -39,7 +56,7 @@
     }
 
     /* ---------------- one scratchpad entry: dot bullet + typed text ---------------- */
-    function addEntry(text) {
+    function addEntry(text, markup) {
         if (!treeEl) return;
         var item = document.createElement('div');
         item.className = 'br-item';
@@ -56,7 +73,7 @@
         item.classList.add('line-in');                    // draw the connecting line
         setTimeout(function () {
             item.classList.add('icon-in');                // reveal the dot
-            typeText(word, text, scrollToFrontier);       // type the entry; re-pin as it wraps
+            typeText(word, text, scrollToFrontier, markup);  // type it; re-pin as it wraps
         }, 320);                                          // dot/text land as the line reaches them
     }
 
@@ -83,13 +100,17 @@
 
     // Public API — driven by script.js (streamMilestone -> push; start/end on run lifecycle).
     window.trackingProgress = {
-        push: function (text) {                           // one scratchpad entry arrived
+        push: function (payload) {                        // one scratchpad entry arrived
             if (!treeEl) return;
-            var t = stripNum(text);
+            // payload is rendered Markdown (markdown.py, already number-stripped).
+            // stripNum still runs on the PLAIN text — never on the markup, where
+            // a '. ' inside the content would slice through a tag.
+            var markup = String(payload == null ? '' : payload);
+            var t = stripNum(htmlToText(markup));
             if (!t) return;
             // reveal (label + stream) only when there's actually something written
             if (zoneEl && frontier < 0) zoneEl.classList.add('br-active');
-            addEntry(t);
+            addEntry(t, markup);
         },
         start: function () {                              // new run: reset; stay hidden until 1st entry
             if (zoneEl) zoneEl.classList.remove('br-active');

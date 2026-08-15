@@ -1,6 +1,5 @@
-# Copyright 2026 Autouse AI — https://github.com/auto-use/Auto-Use
-#
-# Licensed under the Apache License, Version 2.0 (the "License").
+# Copyright 2026 Ashish Yadav — Auto-Use
+
 """Paired-device registry + WDA session toggle.
 
 Two halves, both dead simple:

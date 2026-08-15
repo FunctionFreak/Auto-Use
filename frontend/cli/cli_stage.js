@@ -19,6 +19,8 @@
     var queue = [];                    // FIFO of { taskId, desc } waiting for a free slot
     var minionParent = new Map();      // minion_id -> parent task_id
     var idleCard = null;               // the waiting terminal shown in Shell use
+    var clearTimer = null;             // the deferred end-of-run wipe — cancellable, so a
+                                       // run starting inside its 600ms window isn't destroyed
 
     function getContainer() { return document.getElementById('cliContainer'); }
     // 1 card -> full-size; 2 -> halves; 3 -> thirds (drives the height transition in CSS).
@@ -41,7 +43,29 @@
     }
 
     function clearAll() {
+        clearTimer = null;
+        // A NEW run started before this deferred wipe fired (await_end schedules it
+        // +600ms out, and the backend's await poll can lag the visible task end by a
+        // second) — never clear out from under a live run: it would snapshot the live
+        // card as 'stopped' and destroy it. The new run's own await_end reschedules.
+        if (awaitActive) return;
         var c = getContainer();
+        // A run that dies without its cliTaskEnd (backend error / stop teardown) would
+        // lose its notes with the card — snapshot the first card's scratchpad now, so
+        // the Agent Notes still land under the fresh idle terminal.
+        if (shellPinned && !shellNotes && cards.size) {
+            var first = cards.values().next().value;
+            captureNotes(first, 'stopped', '');
+        }
+        // Shell use, already settled: cliTaskEnd unmounted the run's card and mounted
+        // the idle terminal (+ Agent Notes) at task end — there is nothing left to
+        // clear. Wiping anyway would tear that unit down just to rebuild it 600ms
+        // later, which BLINKED the freshly faded-in notes (and the terminal).
+        if (shellPinned && !cards.size && idleCard) {
+            queue.length = 0;
+            minionParent.clear();
+            return;
+        }
         cards.forEach(function (card) { if (card && card.dispose) card.dispose(); });
         if (c) { c.innerHTML = ''; c.classList.remove('n2', 'n3'); }
         cards.clear();
@@ -75,6 +99,9 @@
     function mountAgent(taskId, desc) {
         var c = getContainer();
         if (!c || !window.CliCoderCard || cards.has(taskId)) return;
+        shellNotes = null;                // a new run starts — the last run's notes are done
+        shellHistory = null;              // ...and so is a reopened chat's history view
+        clearTimeout(clearTimer); clearTimer = null;   // and the last run's deferred wipe is moot
 
         // Shell use: PROMOTE the waiting terminal rather than swapping it out. It is already
         // the same card, in the same place, with the same live mascot canvas — tearing it
@@ -86,6 +113,8 @@
             var pUnit = promoted._unit;
             idleCard = null;                                   // it's a live card now
             pUnit.classList.remove('cc-idle');
+            var oldNotes = pUnit.querySelector('.cc-notes');   // notes make way for the run
+            if (oldNotes) pUnit.removeChild(oldNotes);
             if (promoted.chainEl) pUnit.insertBefore(promoted.chainEl, pUnit.firstChild);
             if (promoted.trackEl) pUnit.appendChild(promoted.trackEl);
             cards.set(taskId, promoted);
@@ -128,6 +157,120 @@
     var awaitActive = false;      // a cli_await is in flight?
     var heroWasVisible = false;   // was the "Made to do…" hero up before Shell use hid it?
 
+    // ---- Agent Notes (Shell use) ------------------------------------------------
+    // The main app shows the agent's scratchpad as full-grid "Agent Notes" on run end;
+    // that stage sits BEHIND this panel in Shell use (z 5 vs 6) and the backend never
+    // pushes it for shell runs anyway. So the CLI stage builds its own, terminal-sized:
+    // the coder's scratchpad notes (snapshotted from the card at task end, before
+    // dispose), rendered with the SAME global .agent-note* classes (notes_stage.css)
+    // in the free row under the idle terminal — and cleared the moment the next task
+    // is sent, exactly like the main stage hides on a send. The done message is
+    // captured alongside but not rendered for now. Clicking into the terminal
+    // (cli-typing) collapses the notes — the prompt needs the room (coder_card.css).
+    var shellNotes = null;        // { entries: [..], status, summary } of the last finished run
+    var shellHistory = null;      // [{task, done_message}] of a REOPENED shell chat (cliShellHistory)
+
+    function captureNotes(card, status, summary) {
+        if (!shellPinned || !card) return;
+        // A reopened chat owns the panel: if the user navigated to a saved
+        // chat while this run was still finishing, its transcript view wins —
+        // the finished run's notes belong to the chat that just ended, not to
+        // the one on screen. Non-EMPTY only: reopening the running chat's OWN
+        // row mid-first-run stores an empty transcript, and eating the notes
+        // for that would end the run into a completely blank terminal.
+        if (shellHistory && shellHistory.length) return;
+        shellNotes = {
+            entries: (card.getNotes ? card.getNotes() : []),
+            status: String(status || 'complete'),
+            summary: String(summary || '')
+        };
+    }
+
+    function renderNotes(unit) {
+        // Two sources, one panel: a reopened chat's exchange history wins over
+        // the last run's live notes (they're mutually nulled at the write sites).
+        var hasHistory = !!(shellHistory && shellHistory.length);
+        if ((!hasHistory && !shellNotes) || !unit || unit.querySelector('.cc-notes')) return;
+        var n = shellNotes;
+        // Nothing to say — keep the row clean. An interrupted run is never
+        // "nothing to say": it must show even when it was stopped before it
+        // wrote a single note.
+        if (!hasHistory && !n.entries.length && n.status !== 'stopped') return;
+
+        var box = document.createElement('div');
+        box.className = 'cc-notes';
+        box.innerHTML =
+            '<div class="agent-notes-header">' +
+                '<svg class="agent-notes-pen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+                    '<path d="M12 20h9"></path>' +
+                    '<path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"></path>' +
+                '</svg>' +
+                '<span class="agent-notes-title">Agent Notes</span>' +
+            '</div>' +
+            '<div class="agent-notes-list"></div>';
+        var list = box.querySelector('.agent-notes-list');
+
+        // `markup` is server-rendered Markdown (markdown.py) and is assigned as
+        // HTML; `text` is raw and always goes in as textContent, never parsed.
+        function row(num, text, markup) {
+            var r = document.createElement('div');
+            r.className = 'agent-note';
+            var no = document.createElement('span');
+            no.className = 'agent-note-num';
+            no.textContent = num;
+            var txt = document.createElement('span');
+            txt.className = 'agent-note-text' + (markup ? ' md' : '');
+            if (markup) txt.innerHTML = String(markup);
+            else txt.textContent = String(text);
+            r.appendChild(no); r.appendChild(txt);
+            list.appendChild(r);
+        }
+        if (hasHistory) {
+            // Reopened chat: "N. task" + how that run ended below it — the same
+            // rows the main stage's showAgentHistory renders (notes_stage.js),
+            // with the identical global classes and the same rendered Markdown.
+            shellHistory.forEach(function (x, i) {
+                x = x || {};
+                row((i + 1) + '.', String(x.task || ''), x.task_html);
+                var reply = document.createElement('div');
+                reply.className = 'agent-note-reply' + (x.done_html ? ' md' : '');
+                if (x.done_html) reply.innerHTML = String(x.done_html);
+                else reply.textContent = String(x.done_message || '');
+                list.appendChild(reply);
+            });
+        } else {
+            // Live run end: notes only — status/summary stay captured in shellNotes
+            // (a done-message row can come back later) but aren't rendered for now
+            n.entries.forEach(function (t, i) { row((i + 1) + '.', t); });
+            // ...except a STOPPED ending. The card vanishes on task_end, so with
+            // no marker an interrupted run is indistinguishable from a finished
+            // one — this is the Shell-use counterpart of the tool-flow chain's
+            // "agent interrupted" cap in Computer use.
+            if (n.status === 'stopped') {
+                var stopped = document.createElement('div');
+                stopped.className = 'agent-note-reply';
+                stopped.textContent = n.summary || 'agent interrupted';
+                list.appendChild(stopped);
+            }
+        }
+
+        // WKWebView refuses to wheel-scroll an overflow area inside a transformed
+        // subtree, and #cliContainer carries a transform — the list would look
+        // scrollable and simply not move (its scrollbar is hidden, so overflowing
+        // notes would be unreachable). scrollTop DOES work, so drive it from the
+        // wheel ourselves — same fix as the terminal's output view in coder_card.js.
+        list.addEventListener('wheel', function (e) {
+            if (list.scrollHeight <= list.clientHeight) return;
+            list.scrollTop += (e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY);
+            e.preventDefault();
+        }, { passive: false });
+
+        unit.appendChild(box);
+        // fade/slide in like a mounting agent unit (.cc-notes.in in coder_card.css)
+        if (window.requestAnimationFrame) requestAnimationFrame(function () { box.classList.add('in'); });
+        else box.classList.add('in');
+    }
+
     // The waiting terminal: a normal coder card that's simply never fed any
     // events, so it sits there as an empty `>` prompt with its blinking cursor.
     // It keeps the mode looking like a terminal instead of a blank panel; a real
@@ -147,6 +290,7 @@
         unit.classList.add('cc-idle');
         idleCard._unit = unit;
         c.appendChild(unit);
+        renderNotes(unit);   // the last run's Agent Notes, in the free row under the terminal
     }
 
     function unmountIdle() {
@@ -178,13 +322,17 @@
             if (window.hideWelcomeHero) window.hideWelcomeHero();
         } else {
             unmountIdle();
+            shellNotes = null;                              // stale across mode switches
+            shellHistory = null;
             document.body.classList.remove('cli-typing');   // no prompt outside Shell use
             // left Shell use — but never yank the stage out from under a live run
             if (!awaitActive) {
                 document.body.classList.remove('cli-stage');
                 // no terminal in this mode: the hero is the empty state again. Skipped
-                // mid-run (guarded above), since a running agent already hid it.
-                if (heroWasVisible && window.showWelcomeHero) window.showWelcomeHero();
+                // mid-run (guarded above), and skipped when a CHAT is open (leaving
+                // shell because a saved chat was reopened — the hero would bleed
+                // through the transparent grid over that chat's history).
+                if (heroWasVisible && !window.currentSessionId && window.showWelcomeHero) window.showWelcomeHero();
                 heroWasVisible = false;
             }
         }
@@ -197,18 +345,92 @@
         window.cliAwaitStart = function (reason) {
             injectPanel();
             awaitActive = true;
+            // a stale end-of-run wipe from the LAST run must not fire into this one
+            clearTimeout(clearTimer); clearTimer = null;
             document.body.classList.add('cli-stage');
         };
         window.cliAwaitEnd = function () {
             awaitActive = false;
-            if (!shellPinned) document.body.classList.remove('cli-stage');
-            setTimeout(clearAll, 600);   // clear cards after the slide-down finishes
+            if (!shellPinned) {
+                document.body.classList.remove('cli-stage');
+                // A New chat / mode switch DURING the live run deferred the hero
+                // hand-off (the un-pin branch skips it while awaitActive) — the
+                // stage is really going away now, so finish it here.
+                if (heroWasVisible && !window.currentSessionId && window.showWelcomeHero) {
+                    window.showWelcomeHero();
+                    heroWasVisible = false;
+                }
+            }
+            clearTimeout(clearTimer);
+            clearTimer = setTimeout(clearAll, 600);   // clear cards after the slide-down finishes
         };
 
         // agent_mode.js paints the picker's data-mode BEFORE dispatching either
         // event, so reading it back here is always current.
         document.addEventListener('agentmode:ready', syncShellStage);
         document.addEventListener('agentmode:changed', syncShellStage);
+        // agentmode:set is SILENT by contract (no agentmode:changed — ios_session
+        // must not react), but the stage still has to follow it: New chat resets
+        // the picker to Computer use this way, and the pinned shell terminal must
+        // slide away with it. Deferred one tick — this listener registers before
+        // agent_mode's fetch-injected wire(), so a same-tick read would see the
+        // STALE dataset.mode; the timeout lets agent_mode's set handler paint first.
+        document.addEventListener('agentmode:set', function () { setTimeout(syncShellStage, 0); });
+        // Shell use: the whole PANEL is the terminal — clicking anywhere on it
+        // (the empty space around/below the card included) puts you at the
+        // prompt, not just the thin `>` line. Clicks on the card itself are
+        // handled by the card's own click-to-focus; this covers the rest of the
+        // stage. Guards: user-mode terminal only (idleCard set — never over a
+        // running agent), never over the Agent Notes box (focusing flips on
+        // cli-typing, which collapses the notes — they must stay readable), and
+        // a completed text selection stays a selection.
+        // Same click-vs-drag rule as the card's own handler: pointer travel and
+        // double-clicks mean "selecting", anything else focuses — a stale page
+        // selection must never swallow the click (it used to make the terminal
+        // feel randomly dead on user-select:none spots).
+        var stageDownX = 0, stageDownY = 0;
+        document.addEventListener('mousedown', function (e) { stageDownX = e.clientX; stageDownY = e.clientY; });
+        document.addEventListener('click', function (e) {
+            if (!shellPinned || !idleCard || !idleCard.el) return;
+            var t = e.target;
+            if (!t || !t.closest || !t.closest('#cliContainer')) return;
+            if (t.closest('.cc-notes')) return;
+            if (idleCard.el.contains(t)) return;   // the card's own handler owns this click
+            if (e.detail > 1) return;                                                    // dbl/triple = select
+            if (Math.abs(e.clientX - stageDownX) > 4 || Math.abs(e.clientY - stageDownY) > 4) return;  // drag
+            if (idleCard.el._focusPrompt) idleCard.el._focusPrompt();
+        });
+        // New chat = a NEW terminal. chat.js resets the main chat UI, but the
+        // shell stage owns its own panel — without this, the old terminal's
+        // scrollback, prompt path, typing state and Agent Notes all survived
+        // into the "fresh" chat. Tear everything down and mount a brand-new
+        // bare `>_` idle terminal. (clearAll can't be reused here: its
+        // already-settled guard would skip exactly the common case, and its
+        // notes-capture fallback would drag the old run's notes along.)
+        document.addEventListener('chat:new', function () {
+            if (!shellPinned) return;
+            var c = getContainer();
+            // any live run's backend UI pushes were already invalidated by
+            // /api/new-chat; its cards go with the old chat, stale events for
+            // dead task ids are simply dropped by the cli* handlers
+            cards.forEach(function (card) { if (card && card.dispose) card.dispose(); });
+            cards.clear();
+            queue.length = 0;
+            minionParent.clear();
+            shellNotes = null;                             // fresh chat — no old notes
+            shellHistory = null;                           // ...and no reopened transcript
+            clearTimeout(clearTimer); clearTimer = null;   // no deferred wipe into the new terminal
+            document.body.classList.remove('cli-typing');
+            unmountIdle();
+            if (c) { c.innerHTML = ''; c.classList.remove('n2', 'n3'); }
+            mountIdle();                                   // brand-new bare `>_` terminal
+            // the fresh terminal IS this mode's empty state — startNewChat just
+            // showed the hero, which would bleed through the transparent panel;
+            // re-hide it (same synchronous dispatch, so it never flashes) and
+            // remember it belongs to this fresh chat if the user leaves Shell use.
+            if (window.hideWelcomeHero) window.hideWelcomeHero();
+            heroWasVisible = true;
+        });
         syncShellStage();   // in case the picker mounted first
 
         // A coder agent starts → mount it if a slot is free, else queue it. Up to 2 show at once;
@@ -232,7 +454,13 @@
             if (card && card.setTodo) card.setTodo(payload);
         };
         window.cliTaskEnd = function (taskId, status, summary) {
-            if (cards.has(taskId)) { unmountAgent(taskId); return; }   // instant vanish + pull next queued
+            if (cards.has(taskId)) {
+                // Snapshot the run's scratchpad + done message BEFORE the card is disposed —
+                // mountIdle (via unmountAgent) shows them as Agent Notes under the terminal.
+                captureNotes(cards.get(taskId), status, summary);
+                unmountAgent(taskId);                                  // instant vanish + pull next queued
+                return;
+            }
             // finished before it was ever shown → just drop it from the queue
             for (var i = 0; i < queue.length; i++) if (queue[i].taskId === taskId) { queue.splice(i, 1); break; }
         };
@@ -263,9 +491,47 @@
             return first && first.value;
         }
 
-        window.cliShellNote = function (text) {
+        window.cliShellNote = function (text, chatId) {
+            // A late run-end note carries its CHAT id — if the user has since
+            // opened a DIFFERENT chat, that outcome belongs to the other chat's
+            // terminal, not the one on screen: drop it. (A New chat needs no
+            // guard here — /api/new-chat already invalidates the run's pushes.)
+            if (chatId && window.currentSessionId && String(window.currentSessionId) !== String(chatId)) return;
             var card = currentCard();
             if (card && card.note) card.note(text);
+        };
+
+        // Reopened shell chat: chat.js hands us the chat's exchange transcript
+        // ({task, done_message} per run) — shown as Agent Notes rows under the
+        // idle terminal (the notes-stage overlay sits BEHIND the pinned panel).
+        // State-based, so it works whichever order it lands in relative to the
+        // silent agentmode:set that re-pins the stage.
+        window.cliShellHistory = function (exchanges) {
+            shellHistory = Array.isArray(exchanges) ? exchanges.map(function (x) {
+                x = x || {};
+                return {
+                    task: String(x.task || ''),
+                    done_message: String(x.done_message || ''),
+                    // Pre-rendered Markdown from /api/chats/<id> (markdown.py).
+                    task_html: x.task_html ? String(x.task_html) : '',
+                    done_html: x.done_html ? String(x.done_html) : ''
+                };
+            }) : [];
+            shellNotes = null;             // the reopen view replaces the last run's notes
+            // Hand-typing collapses .cc-notes (coder_card.css); the user asked to
+            // SEE a chat — drop typing mode so the history is visible. The focus
+            // handler only re-adds it on a fresh click into the prompt.
+            document.body.classList.remove('cli-typing');
+            if (idleCard && idleCard.el && document.activeElement && idleCard.el.contains(document.activeElement)) {
+                try { document.activeElement.blur(); } catch (e) {}
+            }
+            if (idleCard && idleCard._unit) {   // already pinned: re-render in place
+                var old = idleCard._unit.querySelector('.cc-notes');
+                if (old && old.parentNode) old.parentNode.removeChild(old);
+                renderNotes(idleCard._unit);
+            }
+            // not pinned yet: the deferred agentmode:set sync mounts the idle
+            // terminal, and mountIdle's renderNotes picks the history up.
         };
 
         // Live output from a HAND-TYPED command (service.py's _ManualTerminal). Lines

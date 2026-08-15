@@ -45,8 +45,10 @@
                 num.className = 'agent-note-num';
                 num.textContent = (i + 1) + '.';
                 var txt = document.createElement('span');
-                txt.className = 'agent-note-text';
-                txt.textContent = String(t);
+                txt.className = 'agent-note-text md';
+                // HTML, not text: frontend/markdown.py already rendered the
+                // note's Markdown and escaped everything the model wrote.
+                txt.innerHTML = String(t);
                 row.appendChild(num);
                 row.appendChild(txt);
                 listEl.appendChild(row);
@@ -58,9 +60,18 @@
     // Reopen view: the chat's WHOLE life as numbered exchanges — "N. <user
     // request>" with how that run ended (done / stopped / error message)
     // indented below it. Fed by chat.js from /api/chats/<id>'s `exchanges`
-    // (exchanges.json, appended per run ending). Live run-end keeps using
-    // showAgentNotes above — this renderer is only for reopening old chats.
-    window.showAgentHistory = function (exchanges) {
+    // (exchanges.json, appended per run ending).
+    //
+    // ALSO the live run-end fallback: when a run ends with an empty scratchpad
+    // there are no notes to show, so service.py pushes this transcript instead
+    // of leaving the stage on "No notes" — and because save_run() appends
+    // before pushing, the run that just finished is the last row. That path
+    // arrives as a JSON string (evaluate_js), chat.js passes a real array.
+    window.showAgentHistory = function (payload) {
+        var exchanges = payload;
+        if (typeof payload === 'string') {
+            try { exchanges = JSON.parse(payload); } catch (e) { exchanges = []; }
+        }
         if (!Array.isArray(exchanges)) exchanges = [];
         var listEl = document.getElementById('agentNotesList');
         if (!listEl) return;
@@ -80,15 +91,19 @@
                 num.className = 'agent-note-num';
                 num.textContent = (i + 1) + '.';
                 var txt = document.createElement('span');
-                txt.className = 'agent-note-text';
-                txt.textContent = String(x.task || '');
+                txt.className = 'agent-note-text md';
+                // *_html come pre-rendered from /api/chats/<id> (markdown.py).
+                // Older payloads without them fall back to plain text.
+                if (x.task_html) txt.innerHTML = String(x.task_html);
+                else txt.textContent = String(x.task || '');
                 row.appendChild(num);
                 row.appendChild(txt);
                 listEl.appendChild(row);
 
                 var reply = document.createElement('div');
-                reply.className = 'agent-note-reply';
-                reply.textContent = String(x.done_message || '');
+                reply.className = 'agent-note-reply md';
+                if (x.done_html) reply.innerHTML = String(x.done_html);
+                else reply.textContent = String(x.done_message || '');
                 listEl.appendChild(reply);
             });
         }

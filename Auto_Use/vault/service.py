@@ -1,3 +1,5 @@
+# Copyright 2026 Ashish Yadav — Auto-Use
+
 import json
 import os
 import logging

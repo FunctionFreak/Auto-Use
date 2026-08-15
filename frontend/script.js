@@ -36,7 +36,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ============================================
     let selectedProvider = null;
     let selectedModel = null;
-    let providersData = [];   // [{ id, name, models: [{ id, display_name, reasoning_support }] }]
+    let providersData = [];   // [{ id, name, models: [{ id, display_name }] }]
 
     // Query the chat input on demand (it's declared later in this closure).
     const getChatInput = () => document.querySelector('.chat-input');
@@ -89,7 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!chatDropdown) return;
         const models = activeProviderModels();
         chatDropdown.setItems(models.map(m => ({
-            value: m.id, label: m.display_name, reasoning: m.reasoning_support
+            value: m.id, label: m.display_name
         })));
         chatDropdown.setDisabled(!selectedProvider);   // kept clickable via CSS so it can toast
         if (selectedModel && models.some(m => m.id === selectedModel)) {
@@ -187,19 +187,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }).catch(() => { refreshChatDropdown(); });
     };
 
-    // Build the brain SVG icon (same #icon-brain symbol the old dropdown used)
-    // for models that support reasoning. Native <select> can't hold SVG — which
-    // is why these are custom dropdowns.
-    const brainIcon = () => {
-        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        svg.classList.add('model-icon');
-        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-        use.setAttribute('href', '#icon-brain');
-        svg.appendChild(use);
-        return svg;
-    };
-
-    // Lightweight custom dropdown. items: [{ value, label, reasoning }].
+    // Lightweight custom dropdown — NOT a native <select>, which can't give us the
+    // glass menu, the per-option "why it's unavailable" hint, or a disabled option
+    // that toasts instead of selecting. items: [{ value, label, disabled, hint, disabledMsg }].
     const makeDropdown = (rootId, onChange) => {
         const root = document.getElementById(rootId);
         if (!root) return null;
@@ -267,8 +257,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         hint.className = 'model-dropdown-option-hint';
                         hint.textContent = it.hint || 'unavailable';
                         opt.appendChild(hint);
-                    } else if (it.reasoning) {
-                        opt.appendChild(brainIcon());
                     }
                     opt.addEventListener('click', (e) => {
                         e.stopPropagation();
@@ -298,8 +286,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     const label = document.createElement('span');
                     label.textContent = chosen.querySelector('.model-dropdown-option-label').textContent;
                     valueEl.appendChild(label);
-                    const icon = chosen.querySelector('.model-icon');
-                    if (icon) valueEl.appendChild(icon.cloneNode(true));
                     valueEl.classList.remove('placeholder');
                 }
             },
@@ -326,7 +312,6 @@ document.addEventListener('DOMContentLoaded', () => {
         providerDropdown.setItems(providersData.map(p => ({
             value: p.id,
             label: p.name,
-            reasoning: false,
             disabled: !apiKeys[p.id],
             hint: 'API key needed',
             disabledMsg: 'Add the ' + p.name + ' API key in Settings first',
@@ -839,7 +824,11 @@ document.addEventListener('DOMContentLoaded', () => {
             imgElement.onload = () => {
                 imgElement.classList.toggle('portrait', imgElement.naturalHeight > imgElement.naturalWidth);
             };
-            imgElement.src = `data:image/jpeg;base64,${base64Image}`;
+            // This element receives two different formats: the plain preview is
+            // JPEG, but in DEBUG mode it gets the annotated PNG instead. Sniff the
+            // base64 magic prefix rather than hardcoding either one.
+            const mime = base64Image.startsWith('iVBORw0KGgo') ? 'image/png' : 'image/jpeg';
+            imgElement.src = `data:${mime};base64,${base64Image}`;
             imgElement.style.display = 'block'; // Show image when data arrives
         }
     };

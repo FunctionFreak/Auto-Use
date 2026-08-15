@@ -1,22 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2026 Autouse AI — https://github.com/auto-use/Auto-Use
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-# If you build on this project, please keep this header and credit
-# Autouse AI (https://github.com/auto-use/Auto-Use) in forks and derivative works.
-# A small attribution goes a long way toward a healthy open-source
-# community — thank you for contributing.
+# Copyright 2026 Ashish Yadav — Auto-Use
 """License header checker for AutoUse."""
 
 from __future__ import annotations
@@ -30,29 +13,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Build the expected header from small pieces so this script's own source
 # does not contain a second literal copy of the header that would confuse
 # a naive duplicate detector.
-_COPYRIGHT_OWNER = "Autouse AI"
-_COPYRIGHT_URL = "https://github.com/auto-use/Auto-Use"
+_COPYRIGHT_OWNER = "Ashish Yadav"
+_COPYRIGHT_PROJECT = "Auto-Use"
 _COPYRIGHT_YEAR = "2026"
 
 EXPECTED_HEADER_LINES = [
-    f"# Copyright {_COPYRIGHT_YEAR} {_COPYRIGHT_OWNER} — {_COPYRIGHT_URL}",
-    "#",
-    '# Licensed under the Apache License, Version 2.0 (the "License");',
-    "# you may not use this file except in compliance with the License.",
-    "# You may obtain a copy of the License at",
-    "#",
-    "#     http://www.apache.org/licenses/LICENSE-2.0",
-    "#",
-    "# Unless required by applicable law or agreed to in writing, software",
-    '# distributed under the License is distributed on an "AS IS" BASIS,',
-    "# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.",
-    "# See the License for the specific language governing permissions and",
-    "# limitations under the License.",
-    "#",
-    f"# If you build on this project, please keep this header and credit",
-    f"# {_COPYRIGHT_OWNER} ({_COPYRIGHT_URL}) in forks and derivative works.",
-    "# A small attribution goes a long way toward a healthy open-source",
-    "# community — thank you for contributing.",
+    f"# Copyright {_COPYRIGHT_YEAR} {_COPYRIGHT_OWNER} — {_COPYRIGHT_PROJECT}",
 ]
 
 # Used for duplicate detection. The copyright line is unique enough that
@@ -76,23 +42,41 @@ EXCLUDE_FILES = {
 
 
 def tracked_python_files() -> list[Path]:
-    result = subprocess.run(
-        ["git", "ls-files", "*.py"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "*.py"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        lines = result.stdout.splitlines()
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        # Fall back when git is unavailable (local workspaces without git).
+        lines = [
+            p.relative_to(REPO_ROOT).as_posix()
+            for p in REPO_ROOT.rglob("*.py")
+        ]
+
     files = []
-    for line in result.stdout.splitlines():
-        line = line.strip()
+    for line in lines:
+        line = line.strip().replace("\\", "/")
         if not line:
             continue
         if any(line.startswith(p) for p in EXCLUDE_PREFIXES):
             continue
+        if any(f"/{name}/" in f"/{line}/" for name in (
+            ".venv", "venv", "env", "build", "dist", "__pycache__",
+            "node_modules", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+        )):
+            continue
         if line in EXCLUDE_FILES:
             continue
-        files.append(REPO_ROOT / line)
+        path = REPO_ROOT / line
+        if not path.exists():
+            # git ls-files also lists tracked files deleted from the worktree.
+            continue
+        files.append(path)
     return files
 
 
@@ -109,17 +93,17 @@ def check_file(path: Path) -> list[str]:
     rel = path.relative_to(REPO_ROOT)
 
     if header_slice != EXPECTED_HEADER_LINES:
-        if DUPLICATE_MARKER in text:
+        if DUPLICATE_MARKER in text or "Copyright 2026 Autouse AI" in text:
             errors.append(
-                f"{rel}: Apache header present but does not match the "
+                f"{rel}: copyright header present but does not match the "
                 f"expected AutoUse header (check wording or position)."
             )
         else:
-            errors.append(f"{rel}: missing Apache 2.0 header.")
+            errors.append(f"{rel}: missing copyright header.")
 
     if text.count(DUPLICATE_MARKER) > 1:
         errors.append(
-            f"{rel}: Apache header appears more than once "
+            f"{rel}: copyright header appears more than once "
             f"(only one header allowed)."
         )
 

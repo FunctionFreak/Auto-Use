@@ -1,0 +1,189 @@
+/* The "agent is driving" overlay: a breathing blue glow along the viewport
+   edges, a hexagon wave crawling inside it, and the neon bloom that marks
+   whatever the agent clicks or types into.
+
+   browser.py arms every tab with glow.js as a document-start script, so this
+   sheet and its layer exist from the first paint of every document — no
+   catch-up beat after a navigation. Open glow.html in a browser to see and
+   tweak the whole thing on its own.
+
+   Everything is scoped to .autouse-* classes inside one fixed container, so
+   nothing here touches the page's own elements — no html/body rules, no
+   pseudo-element hijacking, no background or font changes. !important is on
+   the load-bearing properties only, to survive pages with aggressive resets
+   (`* { animation: none !important }` and friends). pointer-events stays none
+   throughout: every click, human or agent, passes straight through. */
+
+.autouse-layer {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: auto !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    pointer-events: none !important;
+    z-index: 2147483647 !important;
+    overflow: hidden !important;
+    contain: strict;
+}
+
+/* --- hexagon wave (drawn by glow.js) ------------------------------------ */
+
+.autouse-hex {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    display: block !important;
+    pointer-events: none !important;
+}
+
+/* --- soft edges --------------------------------------------------------- */
+
+.autouse-edge {
+    position: absolute !important;
+    pointer-events: none !important;
+    /* Enough blur to read as light, little enough that it does not vanish
+       against a white page. */
+    filter: blur(20px) !important;
+}
+
+/* Top and bottom stretch past the corners so the gradient's start and end
+   points stay offscreen. */
+.autouse-edge-top,
+.autouse-edge-bottom {
+    left: -20% !important;
+    right: -20% !important;
+    height: 40px !important;
+    background: linear-gradient(90deg, transparent 0%, rgba(0, 110, 255, 0.85) 50%, transparent 100%) !important;
+    background-size: 200% 100% !important;
+}
+
+.autouse-edge-top {
+    top: -20px !important;
+    animation: autouse-wave-x 7s ease-in-out infinite alternate,
+               autouse-breathe 4.5s ease-in-out infinite alternate !important;
+}
+
+.autouse-edge-bottom {
+    bottom: -20px !important;
+    animation: autouse-wave-x 8.5s ease-in-out infinite alternate -2s,
+               autouse-breathe 5.2s ease-in-out infinite alternate -1s !important;
+}
+
+.autouse-edge-left,
+.autouse-edge-right {
+    top: -20% !important;
+    bottom: -20% !important;
+    width: 40px !important;
+    background: linear-gradient(180deg, transparent 0%, rgba(0, 110, 255, 0.85) 50%, transparent 100%) !important;
+    background-size: 100% 200% !important;
+}
+
+.autouse-edge-left {
+    left: -20px !important;
+    animation: autouse-wave-y 6s ease-in-out infinite alternate -3s,
+               autouse-breathe 4s ease-in-out infinite alternate -2s !important;
+}
+
+.autouse-edge-right {
+    right: -20px !important;
+    animation: autouse-wave-y 7.5s ease-in-out infinite alternate -1s,
+               autouse-breathe 5.8s ease-in-out infinite alternate -4s !important;
+}
+
+/* The light spot travelling along an edge... */
+@keyframes autouse-wave-x {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 100% 50%; }
+}
+
+@keyframes autouse-wave-y {
+    0% { background-position: 50% 0%; }
+    100% { background-position: 50% 100%; }
+}
+
+/* ...and the whole edge breathing in and out. */
+@keyframes autouse-breathe {
+    0% { opacity: 0.3; }
+    100% { opacity: 1.0; }
+}
+
+/* --- the click / type bloom --------------------------------------------- */
+
+/* No border and no flat fill on purpose: a hard outline reads as a browser
+   error box, and a filled rectangle hides the very thing it is pointing at.
+   This is light instead — brightest over the element's centre, falling off to
+   nothing past its edges, so the element stays legible underneath.
+
+   glow.js sets left/top/width/height in CSS pixels straight from the rect the
+   controller acted on, so the bloom sits exactly where the click landed. */
+.autouse-box {
+    position: fixed !important;
+    /* Geometry deliberately NOT !important here: glow.js sets left/top/width/
+       height inline (with its own important priority) for each action, and an
+       !important rule in this sheet would outrank the inline value and pin the
+       bloom to a 0x0 box at the origin — invisible. */
+    left: 0;
+    top: 0;
+    width: 0;
+    height: 0;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    pointer-events: none !important;
+    opacity: 0;
+    /* A circle, not a rounded rectangle: glow.js hands this a square box
+       centred on the element, so a round radial reads as one point of light
+       rather than a boxy patch. Scaling grows it from the centre. */
+    border-radius: 50% !important;
+    transform-origin: center center !important;
+    /* The centre stays translucent on purpose: the point is to say "here",
+       not to hide what was hit — a solid core makes the element's own label
+       unreadable in the screenshot the human is watching. A soft radial that
+       fades to nothing by the edge keeps it a bloom, never a disc. */
+    background:
+        radial-gradient(circle closest-side,
+            rgba(150, 225, 255, 0.55) 0%,
+            rgba(40, 165, 255, 0.42) 38%,
+            rgba(0, 120, 255, 0.20) 68%,
+            rgba(0, 110, 255, 0) 100%) !important;
+    box-shadow:
+        0 0 24px 8px rgba(0, 150, 255, 0.38),
+        0 0 52px 20px rgba(0, 110, 255, 0.18) !important;
+    /* The blur is what turns the circle into a soft glow; the outer stops of
+       the gradient are already transparent, so the edge dissolves rather than
+       smearing a visible ring. */
+    filter: blur(6px) !important;
+}
+
+/* One bloom per action: flare bright, settle, then fade out. Kept short —
+   the controller holds the action only about as long as this runs. */
+.autouse-box-on {
+    animation: autouse-bloom 620ms ease-out forwards !important;
+}
+
+@keyframes autouse-bloom {
+    0%   { opacity: 0;    transform: scale(0.90); }
+    18%  { opacity: 1;    transform: scale(1.06); }
+    45%  { opacity: 0.92; transform: scale(1.00); }
+    100% { opacity: 0;    transform: scale(1.02); }
+}
+
+/* Someone who asked the OS for less motion gets the glow as steady light
+   rather than no signal at all. */
+@media (prefers-reduced-motion: reduce) {
+    .autouse-edge {
+        animation: none !important;
+        opacity: 0.75 !important;
+    }
+    .autouse-box-on {
+        animation: none !important;
+        opacity: 0.9 !important;
+    }
+}

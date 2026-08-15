@@ -34,8 +34,8 @@
         var NO_SUB_MODES = { shell: true };
 
         // Per-chat mode lock: once a chat has run in one mode it stays there —
-        // the OTHER mode's row greys out with an "Open a new chat" hover hint.
-        // Driven by 'agentmode:lock' (detail {mode:'computer'|'mobile'|null});
+        // the OTHER rows grey out with an "Open a new chat" hover hint.
+        // Driven by 'agentmode:lock' (detail {mode:'computer'|'mobile'|'shell'|null});
         // null unlocks (fresh chat that never ran).
         var lockedMode = null;
         var wrapRows = wrap.querySelectorAll('.agent-opt-wrap');
@@ -149,7 +149,9 @@
         // start). Locking to a mode greys the other row; null unlocks.
         document.addEventListener('agentmode:lock', function (e) {
             var d = e.detail || {};
-            lockedMode = (d.mode === 'computer' || d.mode === 'mobile') ? d.mode : null;
+            // Any real mode locks (the label map is the source of truth — shell
+            // included); anything else (null / garbage) unlocks.
+            lockedMode = MODE_LABEL[d.mode] ? d.mode : null;
             paint();
         });
 

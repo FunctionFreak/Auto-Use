@@ -1,21 +1,4 @@
-# Copyright 2026 Autouse AI — https://github.com/auto-use/Auto-Use
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-# If you build on this project, please keep this header and credit
-# Autouse AI (https://github.com/auto-use/Auto-Use) in forks and derivative works.
-# A small attribution goes a long way toward a healthy open-source
-# community — thank you for contributing.
+# Copyright 2026 Ashish Yadav — Auto-Use
 
 """
 Auto Use — unified entry point (Windows + macOS)
@@ -127,19 +110,19 @@ if IS_COMPILED:
 # Native window styling + centering (the "critical bit" — stays in app.py)
 # =============================================================================
 
-# Soft off-white with a hint of grey (light greige), used to tint the native
-# title bar on BOTH macOS and Windows. KEEP IN SYNC with the app/splash
-# background in frontend (style.css `body` + `.splash-overlay`, and
-# intro_animation.html) so the bar and content read as one unified surface.
-TITLEBAR_COLOR = "#D0CFC9"
+# Warm cream, used to tint the native title bar on BOTH macOS and Windows.
+# KEEP IN SYNC with the app/splash background in frontend (style.css `body` +
+# `.splash-overlay`, setup.css, and intro_animation.html) so the bar and
+# content read as one unified surface.
+TITLEBAR_COLOR = "#F9F1EC"
 
 
 def _style_macos_titlebar():
-    """Tint the native macOS window titlebar off-white instead of stark white.
+    """Tint the native macOS window titlebar cream instead of stark white.
 
     The bright bar at the top of the window is the native NSWindow titlebar
     (pywebview exposes it as `window.native`). We make it transparent so the
-    window's own background color shows through, set to a soft off-white. macOS-only.
+    window's own background color shows through, set to a warm cream. macOS-only.
     """
     win = service.get_window()
     nswindow = getattr(win, 'native', None) if win is not None else None
@@ -160,7 +143,7 @@ def _style_macos_titlebar():
             nswindow.setBackgroundColor_(color)
             nswindow.setTitlebarAppearsTransparent_(True)
             # Pin the titlebar to Aqua so title text + traffic lights stay dark on
-            # the off-white bar even in Dark Mode.
+            # the cream bar even in Dark Mode.
             nswindow.setAppearance_(
                 NSAppearance.appearanceNamed_(NSAppearanceNameAqua)
             )
@@ -180,7 +163,7 @@ def _style_macos_titlebar():
 
 
 def _style_windows_titlebar():
-    """Tint the native Windows title bar (caption) to the same off-white as macOS.
+    """Tint the native Windows title bar (caption) to the same cream as macOS.
 
     Windows 11 (build 22000+) exposes DWM attributes to set the caption background
     and title-text colors; on Windows 10 these are unsupported and the calls
@@ -217,7 +200,7 @@ def _style_windows_titlebar():
             dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(v), ctypes.sizeof(v))
 
         # Force light-mode caption (dark glyphs) so they stay readable on the
-        # off-white bar even in Dark Mode, then set the caption + title-text colors.
+        # cream bar even in Dark Mode, then set the caption + title-text colors.
         _set(DWMWA_USE_IMMERSIVE_DARK_MODE, 0)
         _set(DWMWA_CAPTION_COLOR, _colorref(TITLEBAR_COLOR))
         _set(DWMWA_TEXT_COLOR, _colorref("#2A2A2A"))
@@ -279,7 +262,7 @@ def main():
         # has no `-m`, so StatusBanner.show() re-execs AutoUse.exe with this flag.
         sys.argv.remove("--banner-mode")
         try:
-            from Auto_Use.windows_use.remote_connection.banner import _run_subprocess_banner
+            from Auto_Use.windows.remote_connection.banner import _run_subprocess_banner
             _run_subprocess_banner()
         except Exception:
             debug_exception("Banner mode")
@@ -291,15 +274,15 @@ def main():
     if not IS_SECONDARY_PROCESS:
         if IS_WINDOWS:
             try:
-                from Auto_Use.windows_use.remote_connection.telegram.view import telegram_bp, start_bot
+                from Auto_Use.windows.remote_connection.telegram.view import telegram_bp, start_bot
                 service.app.register_blueprint(telegram_bp)
                 start_bot()
             except Exception:
                 debug_exception("telegram_blueprint_init")
         elif IS_MAC:
             try:
-                from Auto_Use.macOS_use.remote_connection.telegram.view import telegram_bp
-                from Auto_Use.macOS_use.remote_connection.telegram.service import start_bot as start_telegram_bot
+                from Auto_Use.mac.remote_connection.telegram.view import telegram_bp
+                from Auto_Use.mac.remote_connection.telegram.service import start_bot as start_telegram_bot
                 service.app.register_blueprint(telegram_bp)
                 start_telegram_bot()
             except Exception as _tg_e:
@@ -369,6 +352,10 @@ def main():
         f'http://127.0.0.1:5000{start_path}',
         width=win_w,
         height=win_h,
+        # What the webview paints BEFORE the page loads. pywebview defaults this
+        # to '#FFFFFF', which flashed stark white for a beat at every launch
+        # before the cream splash painted over it. Pin it to the app colour.
+        background_color=TITLEBAR_COLOR,
     )
     service.set_window(win)
 
@@ -377,7 +364,7 @@ def main():
     if IS_WINDOWS:
         try:
             import atexit
-            from Auto_Use.windows_use.remote_connection.banner import close_all_banners
+            from Auto_Use.windows.remote_connection.banner import close_all_banners
 
             def _on_app_closing():
                 close_all_banners()
@@ -403,7 +390,7 @@ def main():
     # APIs require the main dispatch queue).
     if IS_MAC:
         try:
-            from Auto_Use.macOS_use.controller.hotkey.service import _get_keyboard
+            from Auto_Use.mac.controller.hotkey.service import _get_keyboard
             _get_keyboard()
         except Exception:
             pass

@@ -107,3 +107,103 @@
     font-style: italic;
     text-align: center;
 }
+
+/* =====================================================================
+   Rendered Markdown (.md) — the HTML frontend/markdown.py produces for
+   scratchpad notes, done/exit summaries AND the live "tracking progress"
+   stream (container/top_right). Everything is scoped to .md so plain-text
+   rows are untouched, and every colour is `inherit` so one rule set works
+   on all three surfaces, each of which sets its own grey. Kept tight:
+   notes sit in a dense numbered column, so block elements collapse their
+   outer margins and inherit the column's size rather than setting a scale.
+   ===================================================================== */
+.md > *:first-child { margin-top: 0; }
+.md > *:last-child { margin-bottom: 0; }
+
+.md p { margin: 0 0 0.5em; }
+/* Emphasis carries WEIGHT, never a darker ink. `color: inherit` keeps bold text
+   and headings on the exact grey of the surrounding row (notes 0.62, replies
+   0.48, tracking stream its own grey), so a note reads as one calm column
+   instead of black words punched through a soft one. */
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 {
+    margin: 0.7em 0 0.35em;
+    font-weight: 700;
+    line-height: 1.3;
+    color: inherit;
+}
+.md h1 { font-size: 1.25em; }
+.md h2 { font-size: 1.15em; }
+.md h3 { font-size: 1.06em; }
+.md h4, .md h5, .md h6 { font-size: 1em; }
+
+.md strong { font-weight: 700; color: inherit; }
+.md em { font-style: italic; }
+.md del { opacity: 0.6; }
+
+.md a {
+    color: #7e99e0;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    word-break: break-word;
+}
+.md a:hover { color: #a789e0; }
+
+.md code {
+    font-family: inherit;              /* the column is already monospace */
+    font-size: 0.94em;
+    padding: 0.1em 0.34em;
+    border-radius: 4px;
+    background: rgba(146, 146, 216, 0.13);
+    color: inherit;                    /* the tint sets it apart, not darker ink */
+    word-break: break-word;
+}
+.md pre {
+    margin: 0.5em 0;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.045);
+    overflow-x: auto;                  /* long lines scroll, never widen the stage */
+    scrollbar-width: none;
+}
+.md pre::-webkit-scrollbar { display: none; }
+.md pre code {
+    padding: 0;
+    background: none;
+    white-space: pre;
+    word-break: normal;
+}
+
+.md ul, .md ol { margin: 0.3em 0 0.5em; padding-left: 1.5em; }
+.md li { margin: 0.12em 0; }
+.md ul ul, .md ul ol, .md ol ul, .md ol ol { margin: 0.12em 0 0.12em; }
+
+.md blockquote {
+    margin: 0.45em 0;
+    padding: 0.1em 0 0.1em 0.7em;
+    border-left: 2px solid rgba(146, 146, 216, 0.5);
+    color: inherit;
+    opacity: 0.78;                     /* dims relative to the host grey, not to black */
+}
+
+.md hr {
+    margin: 0.7em 0;
+    border: 0;
+    border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.md table {
+    margin: 0.5em 0;
+    border-collapse: collapse;
+    font-size: 0.95em;
+    display: block;
+    overflow-x: auto;                  /* wide tables scroll on their own */
+    scrollbar-width: none;
+}
+.md table::-webkit-scrollbar { display: none; }
+.md th, .md td {
+    padding: 3px 8px;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    text-align: left;
+    vertical-align: top;
+}
+.md th { font-weight: 700; background: rgba(146, 146, 216, 0.09); }

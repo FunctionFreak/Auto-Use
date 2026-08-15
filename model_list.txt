@@ -7,82 +7,82 @@ In main.py, set:
     MODEL    = "<model-name>"
 
 Copy the names exactly as written below (case-sensitive).
+A name that is not on this list is NOT validated - it is sent to the
+provider verbatim and comes back as a 404 model_not_found.
 
 
 --------------------------------------------------------------
 PROVIDER = "openrouter"
 --------------------------------------------------------------
-MODEL name
+MODEL name                thinking  vision
 --------------------------------------------------------------
-gemini-3.1-pro
-gemini-3.5-flash
-gpt-5.4-mini
-gpt-5.4-pro
-gpt-5.5
-gpt-5.5-pro
-claude-opus-4.6
-claude-opus-4.7-fast
-claude-sonnet-4.6
-grok-4-fast
-grok-4.1-fast
-grok-4.3
-kimi-k2.6
-mistral-medium-3.5
-qwen-3.6-plus
-Nex-N2-Pro (free)
+gemini-3.1-pro            low       yes
+gemini-3.6-flash          minimal   yes
+gpt-5.6-terra             low       yes
+gpt-5.6-luna              low       yes
+claude-opus-5             medium    yes
+claude-sonnet-5           low       yes
+grok-4.3                  low       yes
+grok-4.5                  low       yes
+kimi-k3                   low       yes
+claude-opus-5-fast        low       yes
+mistral-medium-3.5        none      yes
 
 
 --------------------------------------------------------------
 PROVIDER = "groq"
 --------------------------------------------------------------
-MODEL name
+MODEL name                thinking  vision
 --------------------------------------------------------------
-llama-4-scout
+qwen3.6-27b               -         yes
 
 
 --------------------------------------------------------------
 PROVIDER = "openai"
 --------------------------------------------------------------
-MODEL name
+MODEL name                thinking  vision
 --------------------------------------------------------------
-gpt-5.4-mini
-gpt-5.4
-gpt-5.5
-gpt-5.5-pro
+gpt-5.6-luna              none      yes
+gpt-5.6-terra             medium    yes
 
 
 --------------------------------------------------------------
 PROVIDER = "anthropic"
 --------------------------------------------------------------
-MODEL name
+MODEL name                thinking  vision
 --------------------------------------------------------------
-claude-haiku-4.5
-claude-opus-4.5
-claude-opus-4.6
-claude-opus-4.7
-claude-sonnet-4.6
+claude-haiku-4.5          sampling  yes
+claude-opus-5             low       yes
+claude-sonnet-5           low       yes
 
 
 --------------------------------------------------------------
 PROVIDER = "google"
 --------------------------------------------------------------
-MODEL name
+MODEL name                thinking  vision
 --------------------------------------------------------------
-gemini-3.1-pro
-gemini-3.5-flash
-gemini-3.1-pro-vertex
-gemini-3.5-flash-vertex
+gemini-3.1-pro            low       yes
+gemini-3.6-flash          low       yes
+gemini-3.1-pro-vertex     low       yes
+gemini-3.6-flash-vertex   low       yes
 
 
 --------------------------------------------------------------
 PROVIDER = "perplexity"
 --------------------------------------------------------------
-MODEL name
+MODEL name                thinking  vision
 --------------------------------------------------------------
-gpt-5.4
-gemini-3.1-pro
-gemini-3.5-flash
-claude-sonnet-4.6
-claude-opus-4.6
-claude-opus-4.7
-sonar
+gpt-5.6-terra             medium    yes
+gpt-5.6-luna              low       yes
+claude-opus-5             low       yes
+claude-sonnet-5           low       yes
+gemini-3.1-pro            low       yes
+gemini-3.6-flash          low       yes
+grok-4.5                  low       yes
+grok-4.3                  low       yes
+kimi-k3                   low       yes
+
+
+--------------------------------------------------------------
+30 models across 6 providers.
+--------------------------------------------------------------

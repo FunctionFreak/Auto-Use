@@ -100,11 +100,13 @@
                 resetChatUi();
             }
 
-            // Shell use bypasses the main agent entirely: the task goes STRAIGHT
-            // to the coder agent (backend: run_shell_task in service.py) and the CLI
-            // stage is the only UI it drives — no chat session, no memory. Every
-            // other line of this send path is shared, so the composer, stop orb
-            // and completion teardown behave identically in both modes.
+            // Shell use bypasses the main agent: the task goes STRAIGHT to the
+            // coder agent (backend: run_shell_task in service.py) and the CLI
+            // stage is the UI it drives — but it IS a chat like the other modes:
+            // the backend mints/continues the session, seeds the coder with the
+            // chat's saved conversation, drives the memory bar, and returns
+            // session_id below. The composer, stop orb and completion teardown
+            // are shared between both endpoints.
             const endpoint = (agentMode === 'shell') ? '/api/start-shell' : '/api/start-agent';
 
             fetch(endpoint, {
@@ -132,10 +134,10 @@
                     // server-side) so the run-end save + future sends target it.
                     if (data.session_id) window.currentSessionId = data.session_id;
                     // First run commits the chat to this mode — lock the picker.
-                    // Shell use isn't part of a chat, so it never sets the lock.
-                    if (agentMode !== 'shell') {
-                        document.dispatchEvent(new CustomEvent('agentmode:lock', { detail: { mode: agentMode } }));
-                    }
+                    // Shell included: the lock fires only on a STARTED run (this
+                    // branch), so merely toggling to Shell use never locks — using
+                    // it does. New chat unlocks, same as the other modes.
+                    document.dispatchEvent(new CustomEvent('agentmode:lock', { detail: { mode: agentMode } }));
                     // Show the just-created chat in the sidebar immediately.
                     document.dispatchEvent(new CustomEvent('chats:refresh'));
                 } else if (data.error) {
@@ -244,6 +246,16 @@
             // tasks with a ✕ (so a spinner doesn't rotate forever). Stop-only —
             // normal completion leaves the ticks alone.
             if (window.markTodoInterrupted) window.markTodoInterrupted();
+
+            // Cap the tool-flow chain HERE, right now. The backend retires the
+            // run the instant Stop is pressed, so the agent's own ending (it may
+            // still be parked in an LLM call for seconds) is discarded and never
+            // arrives — waiting for it would leave the chain hanging, or worse,
+            // let it land on top of the next run the user starts.
+            if (window.toolFlow) {
+                window.toolFlow.onFlow('error', JSON.stringify({ text: 'agent interrupted' }));
+                window.toolFlow.onFlow('run_end');
+            }
 
             fetch('/api/stop-agent', { method: 'POST' })
                 .then(res => res.json())

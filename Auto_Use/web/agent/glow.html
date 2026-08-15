@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto Use — overlay preview</title>
+
+    <!-- The SAME two files browser.py injects into every page. Nothing here is
+         a copy, so what this page shows is exactly what the agent draws; edit
+         glow.css / glow.js and reload to see the change. -->
+    <link rel="stylesheet" href="glow.css">
+
+    <style>
+        /* Preview chrome only — none of this reaches a real page. */
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: #ffffff;
+            color: #1b1b1f;
+            font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 28px;
+        }
+        h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+        p  { margin: 0; max-width: 44ch; text-align: center; color: #5c5c66; line-height: 1.5; }
+        .row { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+        .target {
+            padding: 14px 22px;
+            font: inherit;
+            font-size: 15px;
+            color: #1b1b1f;
+            background: #f2f2f5;
+            border: 1px solid #d9d9e0;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+        input.target { min-width: 220px; cursor: text; }
+        @media (prefers-color-scheme: dark) {
+            body { background: #16161a; color: #ececf1; }
+            p { color: #a0a0ab; }
+            .target { background: #232329; color: #ececf1; border-color: #35353d; }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Auto Use overlay</h1>
+    <p>
+        The edges and hexagon wave are always on while the agent holds the
+        browser. Click or focus anything below to fire the bloom the agent
+        draws when it clicks or types.
+    </p>
+
+    <div class="row">
+        <button class="target">Click me</button>
+        <button class="target">And me</button>
+        <input class="target" placeholder="or type in here">
+    </div>
+
+    <script src="glow.js"></script>
+    <script>
+        // Stand-in for the controller: fire the same bloom the agent fires,
+        // on whatever gets clicked or focused, using the element's own rect.
+        function bloom(el) {
+            var r = el.getBoundingClientRect();
+            window.__autouseBox(r.left, r.top, r.width, r.height);
+        }
+        document.querySelectorAll('.target').forEach(function (el) {
+            el.addEventListener('click', function () { bloom(el); });
+            el.addEventListener('focus', function () { bloom(el); });
+        });
+    </script>
+
+</body>
+</html>

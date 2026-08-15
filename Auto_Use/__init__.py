@@ -1,21 +1,4 @@
-# Copyright 2026 Autouse AI — https://github.com/auto-use/Auto-Use
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-# If you build on this project, please keep this header and credit
-# Autouse AI (https://github.com/auto-use/Auto-Use) in forks and derivative works.
-# A small attribution goes a long way toward a healthy open-source
-# community — thank you for contributing.
+# Copyright 2026 Ashish Yadav — Auto-Use
 
 """Auto Use package root — and the single source of truth for WHERE the user's
 data lives.
@@ -35,7 +18,7 @@ one folder no installer owns:
     base = <repo root>   `python app.py`  -> <repo>/autouse_data
 
 This lives in the package root rather than in any one sub-package because six
-modules across windows_use, macOS_use and ios_use need the same answer, and two
+modules across windows, mac and ios need the same answer, and two
 definitions of "where is autouse_data" that drift apart would silently put user
 data back inside the install folder — the exact bug this exists to fix.
 
@@ -128,11 +111,14 @@ def install_dir() -> Path:
 # autouse_data/skills/windows/ and .../mac/, seeded once from the defaults that
 # ship in Auto_Use/<pkg>/agent/skills/. Seeding happens ONLY when the folder is
 # new, so a skill the user deletes in the UI stays deleted.
-_SKILL_PKG = {"windows": "windows_use", "mac": "macOS_use"}
+# NOTE: the platform key and the package directory used to differ ("mac" vs
+# "macOS_use"), so a lookup map sat here. Since the packages were renamed to
+# Auto_Use/{mac,windows,ios} the two are the same string — `plat` IS the
+# package name, and the map would just be an identity.
 
 
 def skills_platform(value=None) -> str:
-    """'windows' | 'mac'. Accepts sys.platform or a '<x>_use' package name."""
+    """'windows' | 'mac'. Accepts sys.platform or a package name."""
     key = str(sys.platform if value is None else value).lower()
     return "mac" if ("darwin" in key or "mac" in key) else "windows"
 
@@ -181,8 +167,8 @@ def _shipped_skills(plat: str) -> dict:
     older Auto_Use/<pkg>/agent/skills/ copies if the packed set is missing."""
     return (_skills_from_resources("autouse_data/skills/%s/" % plat)
             or _skills_from_dir(_REPO_ROOT / "autouse_data" / "skills" / plat)
-            or _skills_from_resources("%s/agent/skills/" % _SKILL_PKG[plat])
-            or _skills_from_dir(_REPO_ROOT / "Auto_Use" / _SKILL_PKG[plat] / "agent" / "skills"))
+            or _skills_from_resources("%s/agent/skills/" % plat)
+            or _skills_from_dir(_REPO_ROOT / "Auto_Use" / plat / "agent" / "skills"))
 
 
 def vault_file() -> Path:
@@ -224,8 +210,8 @@ def skills_dir(platform=None) -> Path:
 # =============================================================================
 # Every consumer must agree on this ONE path, or the Settings panel writes a key
 # the agent can't read. Before this moved there were three different answers in
-# the tree: frontend/service.py and windows_use/llm_provider walked up to
-# Auto_Use/api_key/ (right), while macOS_use and ios_use llm_provider stopped one
+# the tree: frontend/service.py and windows/llm_provider walked up to
+# Auto_Use/api_key/ (right), while mac and ios llm_provider stopped one
 # level short at <pkg>/api_key/ (a folder that never existed, so Vertex config
 # silently read back empty on those platforms). One function, one answer.
 _api_key_migrated = False
