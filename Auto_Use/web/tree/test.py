@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Ashish Yadav — Auto-Use
+
 """
 Manual browser scan runner for element.rs
 

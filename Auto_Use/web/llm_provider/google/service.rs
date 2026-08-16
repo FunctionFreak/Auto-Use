@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Map, Value};
 
 use super::view::get_thinking_level;
-use crate::llm_provider::{api_url, args_dict, extract_text_first, post_json};
+use crate::llm_provider::{api_url, args_dict, extract_text_first, post_json, SCREENSHOT_MEDIA_TYPE};
 
 /// Recursively remove 'additionalProperties', which the Gemini API doesn't
 /// support, and spell schema `type` values the way the genai SDK does — as
@@ -256,7 +256,7 @@ impl GoogleProvider {
                 if contents[last].get("role").and_then(Value::as_str) == Some("user") {
                     if let Some(Value::Array(parts)) = contents[last].get_mut("parts") {
                         parts.push(json!({
-                            "inlineData": {"mimeType": "image/png", "data": shot}
+                            "inlineData": {"mimeType": SCREENSHOT_MEDIA_TYPE, "data": shot}
                         }));
                     }
                 }

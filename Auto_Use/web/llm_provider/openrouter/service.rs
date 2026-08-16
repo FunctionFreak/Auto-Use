@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 
 use super::view::get_reasoning_params;
 use crate::agent::main_driver::view::dumps;
-use crate::llm_provider::{api_url, normalize_openai_tool_calls, post_json};
+use crate::llm_provider::{api_url, normalize_openai_tool_calls, post_json, SCREENSHOT_MEDIA_TYPE};
 
 /// True when OpenRouter will hand this request to Google's backend, where a
 /// tool result stops being a string and becomes a protobuf Struct.
@@ -100,7 +100,7 @@ impl OpenRouterProvider {
                 messages[last]["content"] = json!([
                     {"type": "text", "text": user_message},
                     {"type": "image_url",
-                     "image_url": {"url": format!("data:image/png;base64,{shot}")}},
+                     "image_url": {"url": format!("data:{SCREENSHOT_MEDIA_TYPE};base64,{shot}")}},
                 ]);
             }
         }

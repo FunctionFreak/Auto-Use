@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 
 use super::view::{get_sampling_params, get_thinking_params};
 use crate::agent::browser::truthy;
-use crate::llm_provider::{api_url, args_dict, post_json};
+use crate::llm_provider::{api_url, args_dict, post_json, SCREENSHOT_MEDIA_TYPE};
 
 /// Flatten a message content field (string, or list of content blocks) to
 /// plain text — used when translating the canonical OpenAI-shaped transcript
@@ -193,7 +193,7 @@ impl AnthropicProvider {
                     api_messages[last]["content"] = json!([
                         {"type": "text", "text": user_text},
                         {"type": "image",
-                         "source": {"type": "base64", "media_type": "image/png",
+                         "source": {"type": "base64", "media_type": SCREENSHOT_MEDIA_TYPE,
                                     "data": shot}},
                     ]);
                 }

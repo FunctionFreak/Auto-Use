@@ -7,7 +7,7 @@
 use serde_json::{json, Map, Value};
 
 use super::view::get_reasoning_effort;
-use crate::llm_provider::{api_url, normalize_openai_tool_calls, post_json};
+use crate::llm_provider::{api_url, normalize_openai_tool_calls, post_json, SCREENSHOT_MEDIA_TYPE};
 
 pub struct OpenAIProvider {
     pub api_key: String,
@@ -48,7 +48,7 @@ impl OpenAIProvider {
                 messages[last]["content"] = json!([
                     {"type": "text", "text": user_message},
                     {"type": "image_url",
-                     "image_url": {"url": format!("data:image/png;base64,{shot}")}},
+                     "image_url": {"url": format!("data:{SCREENSHOT_MEDIA_TYPE};base64,{shot}")}},
                 ]);
             }
         }

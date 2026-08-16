@@ -143,3 +143,6 @@ screen_record.py
 /Auto_Use/agent_conversation/chat_*/
 automation_grant.json
 Auto_Use/ios_connector/paired_devices.json
+/Auto_Use/web/target
+/Auto_Use/mac/scratchpad
+/Auto_Use/web/scratchpad

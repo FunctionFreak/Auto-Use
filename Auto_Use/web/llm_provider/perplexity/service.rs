@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 
 use super::view::get_reasoning_params;
 use crate::agent::main_driver::view::dumps;
-use crate::llm_provider::{api_url, args_dict, extract_text_first, post_json};
+use crate::llm_provider::{api_url, args_dict, extract_text_first, post_json, SCREENSHOT_MEDIA_TYPE};
 
 pub struct PerplexityProvider {
     pub api_key: String,
@@ -100,7 +100,7 @@ impl PerplexityProvider {
                     if let Some(Value::Array(content)) = input_messages[last].get_mut("content") {
                         content.push(json!({
                             "type": "input_image",
-                            "image_url": format!("data:image/png;base64,{shot}"),
+                            "image_url": format!("data:{SCREENSHOT_MEDIA_TYPE};base64,{shot}"),
                         }));
                     }
                 }

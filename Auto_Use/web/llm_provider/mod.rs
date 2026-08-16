@@ -36,6 +36,12 @@ pub mod perplexity {
     pub mod view;
 }
 
+/// MIME type of the screenshot every provider splices into the request. Must
+/// match what tree/element.rs actually captures (Page.captureScreenshot with
+/// format "jpeg", re-encoded by draw_marks as JPEG). Anthropic sniffs the
+/// bytes and rejects a mismatched media_type with HTTP 400.
+pub const SCREENSHOT_MEDIA_TYPE: &str = "image/jpeg";
+
 /// A provider endpoint, overridable with AUTOUSE_LLM_API_URL — a test hook so
 /// the differential/e2e suites can point every provider at a local mock
 /// server. Never set in normal runs.
