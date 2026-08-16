@@ -31,7 +31,7 @@ use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 /// Independent of `--out`, which keeps exactly one always-overwritten pair
 /// (`scans/tree.txt` + `scans/shot.jpg`) as the "latest scan" view the REPL
 /// prints; that pair is what test.py drives and is unaffected by this flag.
-const DEBUG: bool = true;
+const DEBUG: bool = false;
 
 /// Set to true when an agent/UI is driving this binary and wants an image to
 /// display. Mirrors mac's rule exactly: with DEBUG on, the annotated capture

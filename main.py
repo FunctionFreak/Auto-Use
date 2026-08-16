@@ -12,11 +12,9 @@ task = """
 what isthe price of nvdia share 
 """
 
-# Control conversation saving
-conversation = True  # Set to False to disable conversation.txt
-
-# Optional flags — speed ("quality"/"fast"), headless Chrome, and running
-# MULTIPLE tasks in parallel — are documented in agent_operation.md.
+# Optional flags — conversation saving, speed ("quality"/"fast"), headless
+# Chrome, and running MULTIPLE tasks in parallel — are documented in
+# agent_operation.md.
 
 # Run the agent
 run_agent(
@@ -24,7 +22,6 @@ run_agent(
     provider=PROVIDER,
     model=MODEL,
     task=task,
-    save_conversation=conversation,
     external_terminal=True,
 )
 

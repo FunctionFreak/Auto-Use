@@ -2,14 +2,15 @@
 
 Reference for anyone (human or AI agent) editing [main.py](main.py) who wants to
 use the agent's optional flags. `main.py` ships with only the essentials
-(`MODE`, `PROVIDER`, `MODEL`, `task`, `conversation`); everything below is
-opt-in — add it to `run_agent(...)` only when you need it.
+(`MODE`, `PROVIDER`, `MODEL`, `task`); everything below is opt-in — add it to
+`run_agent(...)` only when you need it.
 
 | Flag | Applies to | Default | Section |
 |---|---|---|---|
 | `headless` | `"web use"` only | `False` (visible Chrome) | Part 1 |
 | `extra_tasks` | `"web use"` only | none (single task) | Part 2 |
 | `speed` | `"computer use"` (mac + windows), `"mobile use, ios"` | `"quality"` | Part 3 |
+| `save_conversation` | every mode | `False` (nothing written) | Part 4 |
 
 > `headless` and `extra_tasks` apply to `"web use"` mode ONLY. Every other mode
 > ignores `headless` and runs exactly one task — passing extra tasks there raises
@@ -241,3 +242,85 @@ Each platform's `AgentService.__init__` (e.g.
 normalises `speed`, passes it to `LLMManager` (which selects the fast or full
 tool registry), picks `_MAIN_TRACK_PARAMS_FAST` vs `_MAIN_TRACK_PARAMS`, and
 loads `fast_system_prompt.md` vs `system_prompt.md` from the same folder.
+
+---
+
+# Part 4 — Conversation saving (all modes)
+
+## What it is
+
+`save_conversation` makes the agent write a readable log of **exactly what it
+sent to the LLM at every step** — the system prompt, the interleaved
+assistant/user turns, and the response it got back. It's the tool for
+debugging "why did the agent do that?" and for reviewing a run after the fact.
+
+Works in **every mode**: `"computer use"` (mac + windows), `"shell use"`,
+`"web use"`, and `"mobile use, ios"`.
+
+## Default
+
+**`save_conversation = False` — nothing is written to disk.** Every
+`AgentService` (mac, windows, iOS, web, and the shell/coder agent) declares
+`save_conversation: bool = False`. If you don't pass it, you get no log files.
+
+## What it writes (when `True`)
+
+Files land in the **current working directory** (wherever you ran
+`python main.py` from):
+
+```
+conversation/
+├── conversation.txt        # session header, started fresh each run
+├── conversation_1.txt      # step 1 — full payload sent + response received
+├── conversation_2.txt      # step 2 ...
+└── ...
+raw_reasoning/              # raw LLM outputs per step (cleared each run)
+```
+
+Each `conversation_N.txt` is a "memory snapshot" — a faithful peek at what the
+agent could see at step N. You'll also see
+`Memory snapshot saved: conversation_N.txt` in the terminal after each step.
+
+⚠️ Both folders are **reset at the start of every run** — copy anything you
+want to keep before running again.
+
+For **parallel web tasks** (Part 2) each task writes its own copy under
+`./parallel/task_N/conversation/`.
+
+## How to turn it on in main.py
+
+Add a `conversation` variable and pass it as `save_conversation`:
+
+```python
+# Control conversation saving — writes conversation/ + raw_reasoning/ to the
+# current directory. Set to False (the default) to write nothing.
+conversation = True
+
+run_agent(
+    mode=MODE,
+    provider=PROVIDER,
+    model=MODEL,
+    task=task,
+    save_conversation=conversation,   # ← add this
+    external_terminal=True,
+)
+```
+
+Set it to `False` (or remove the argument) to stop writing logs.
+
+## When to use which
+
+- **`False` (default)** — normal runs and demos; keeps your working directory
+  clean and skips the small per-step file writes.
+- **`True`** — debugging a task that goes wrong, tuning prompts, or when you
+  need an audit trail of what the agent saw and decided at each step.
+
+## Under the hood
+
+Each `AgentService.__init__` (e.g.
+[Auto_Use/mac/agent/main_driver/service.py](Auto_Use/mac/agent/main_driver/service.py))
+creates `conversation/` and `raw_reasoning/` when the flag is on, and calls
+`_save_conversation_snapshot()` after every LLM step to write
+`conversation_N.txt`. The web agent does the same in Rust
+(`save_conversation_snapshot` in
+[Auto_Use/web/agent/main_driver/service.rs](Auto_Use/web/agent/main_driver/service.rs)).
