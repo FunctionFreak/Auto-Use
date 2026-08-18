@@ -25,7 +25,8 @@ document.addEventListener('DOMContentLoaded', () => {
         groq: null,
         openai: null,
         anthropic: null,
-        perplexity: null
+        perplexity: null,
+        together: null
     };
 
 

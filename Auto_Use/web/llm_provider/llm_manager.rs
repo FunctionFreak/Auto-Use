@@ -24,7 +24,7 @@ use serde_json::{json, Map, Value};
 
 use crate::agent::browser::truthy;
 use crate::agent::main_driver::view::py_str_of;
-use crate::llm_provider::{anthropic, google, groq, openai, openrouter, perplexity};
+use crate::llm_provider::{anthropic, google, groq, openai, openrouter, perplexity, together};
 
 /// The transcript carries an optional per-turn `provider_meta` on assistant
 /// messages — the provider's OWN metadata for that turn. Only these providers
@@ -289,7 +289,7 @@ pub fn main_tool_names() -> &'static HashSet<String> {
 
 // -- dialect emitters --------------------------------------------------------
 
-/// OpenAI/OpenRouter/Groq chat-completions function format.
+/// OpenAI/OpenRouter/Groq/Together chat-completions function format.
 pub fn tools_openai(registry: &[Value]) -> Vec<Value> {
     registry
         .iter()
@@ -627,6 +627,7 @@ fn pick_cli_fallback(provider: &str, model: &str) -> Option<String> {
         "anthropic" => &["claude-haiku-4.5", "claude-sonnet-5"],
         "google" => &["gemini-3.6-flash", "gemini-3.1-pro"],
         "perplexity" => &["gemini-3.6-flash", "gpt-5.6-luna"],
+        "together" => &["minimax-m3", "inkling"],
         _ => &[],
     };
     // Vertex and AI-Studio are different clients — a vertex model may only
@@ -647,6 +648,7 @@ pub enum ProviderImpl {
     Anthropic(anthropic::service::AnthropicProvider),
     Google(google::service::GoogleProvider),
     Perplexity(perplexity::service::PerplexityProvider),
+    Together(together::service::TogetherProvider),
 }
 
 impl ProviderImpl {
@@ -663,6 +665,7 @@ impl ProviderImpl {
             ProviderImpl::Anthropic(p) => p.send_request(messages, model, shot),
             ProviderImpl::Google(p) => p.send_request(messages, model, shot),
             ProviderImpl::Perplexity(p) => p.send_request(messages, model, shot),
+            ProviderImpl::Together(p) => p.send_request(messages, model, shot),
         }
     }
 }
@@ -709,6 +712,7 @@ fn resolve_model_info(provider: &str, short_name: &str) -> Value {
         "anthropic" => anthropic::view::get_model_info(short_name),
         "google" => google::view::get_model_info(short_name),
         "perplexity" => perplexity::view::get_model_info(short_name),
+        "together" => together::view::get_model_info(short_name),
         _ => json!({"api_name": short_name, "vision": true, "display_name": short_name}),
     }
 }
@@ -834,6 +838,12 @@ impl LLMManager {
                 api_key: key_from_env(&runtime_api_key, "PERPLEXITY_API_KEY", "Perplexity")?,
                 cli_agent,
                 tools: native.then(|| tools_perplexity(registry)),
+            }),
+            "together" => ProviderImpl::Together(together::service::TogetherProvider {
+                api_key: key_from_env(&runtime_api_key, "TOGETHER_API_KEY", "Together")?,
+                cli_agent,
+                tools: native.then(|| tools_openai(registry)),
+                tool_choice_auto: std::sync::atomic::AtomicBool::new(false),
             }),
             other => {
                 return Err(PyValueError::new_err(format!("Unsupported provider: {other}")));

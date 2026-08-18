@@ -35,6 +35,10 @@ pub mod perplexity {
     pub mod service;
     pub mod view;
 }
+pub mod together {
+    pub mod service;
+    pub mod view;
+}
 
 /// MIME type of the screenshot every provider splices into the request. Must
 /// match what tree/element.rs actually captures (Page.captureScreenshot with

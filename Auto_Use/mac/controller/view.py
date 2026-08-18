@@ -566,7 +566,8 @@ class ControllerView:
                     loading_thread.start()
 
                     try:
-                        web_service = WebService(self.provider, self.model, self.api_key)
+                        web_service = WebService(self.provider, self.model, self.api_key,
+                                                 stop_event=self.stop_event)
                         web_result = web_service.search(query)
                     finally:
                         self._stop_loading = True
@@ -583,6 +584,12 @@ class ControllerView:
                             # Wait for CSS fade-out to complete before next action
                             time.sleep(0.7)
                         self._safe_cli_emit("web_loading_end")
+
+                    # The browser-agent fallback can run for minutes and honours
+                    # stop by returning early — take the normal stopped path.
+                    if self.stop_event and self.stop_event.is_set():
+                        self.controller_service.release_all_inputs()
+                        return {"status": "stopped", "action": "stop", "message": "Stopped by user"}
 
                     result = {
                         "status": "success",
@@ -1325,7 +1332,8 @@ class ControllerView:
                 loading_thread.start()
 
                 try:
-                    web_service = WebService(self.provider, self.model, self.api_key)
+                    web_service = WebService(self.provider, self.model, self.api_key,
+                                             stop_event=self.stop_event)
                     web_result = web_service.search(query)
                 finally:
                     self._stop_loading = True
@@ -1337,6 +1345,10 @@ class ControllerView:
                     if self.web_callback:
                         self.web_callback("end")
                     self._safe_cli_emit("web_loading_end")
+
+                if self.stop_event and self.stop_event.is_set():
+                    self.controller_service.release_all_inputs()
+                    return {"status": "stopped", "action": "stop", "message": "Stopped by user"}
 
                 return {
                     "status": "success",

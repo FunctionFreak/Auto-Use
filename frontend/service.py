@@ -750,6 +750,12 @@ def get_llm_providers():
         anthropic_models  = importlib.import_module(f"{base}.anthropic.view").MODEL_MAPPINGS
         google_models     = importlib.import_module(f"{base}.google.view").MODEL_MAPPINGS
         perplexity_models = importlib.import_module(f"{base}.perplexity.view").MODEL_MAPPINGS
+        # Registered on mac (and the web agent) only so far — a missing module
+        # must drop just this provider, not the whole list.
+        try:
+            together_models = importlib.import_module(f"{base}.together.view").MODEL_MAPPINGS
+        except ModuleNotFoundError:
+            together_models = None
 
         def format_models(mappings):
             return [{
@@ -757,7 +763,7 @@ def get_llm_providers():
                 'display_name': info.get('display_name', model_id)
             } for model_id, info in mappings.items() if not info.get('hidden', False)]
 
-        return [
+        providers = [
             {'id': 'openrouter', 'name': 'openrouter', 'models': format_models(openrouter_models)},
             {'id': 'groq',       'name': 'groq',       'models': format_models(groq_models)},
             {'id': 'openai',     'name': 'openai',     'models': format_models(openai_models)},
@@ -765,6 +771,9 @@ def get_llm_providers():
             {'id': 'google',     'name': 'google',     'models': format_models(google_models)},
             {'id': 'perplexity', 'name': 'perplexity', 'models': format_models(perplexity_models)},
         ]
+        if together_models:
+            providers.append({'id': 'together', 'name': 'together', 'models': format_models(together_models)})
+        return providers
     except Exception:
         debug_exception("get_llm_providers")
         return []
@@ -777,6 +786,7 @@ PROVIDER_KEY_MAP = {
     'anthropic': 'ANTHROPIC_API_KEY',
     'google': 'GOOGLE_API_KEY',
     'perplexity': 'PERPLEXITY_API_KEY',
+    'together': 'TOGETHER_API_KEY',
 }
 
 # Extra keys stored in the same api_key.txt

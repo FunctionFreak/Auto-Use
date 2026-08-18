@@ -40,7 +40,7 @@
 - **Native AppleScript runner** — full `osascript` execution with automatic TCC permission-dialog handling so first-run consent prompts don't stall the agent.
 - **Sandboxed Bash** — subprocess execution confined to a Desktop workspace, with path blocklists, 10-minute total / 15-second idle timeouts, and interactive-stdin detection.
 - **Web agent** — browser automation living alongside system control, not bolted on top of it.
-- **6 LLM providers** — Anthropic, Google, Groq, OpenAI, OpenRouter, Perplexity. Switch providers and models per task.
+- **7 LLM providers** — Anthropic, Google, Groq, OpenAI, OpenRouter, Perplexity, Together AI. Switch providers and models per task.
 
 ---
 
@@ -189,7 +189,7 @@ Just describe what you want — Auto Use picks the right tool for the job.
 
 ## 🧠 Supported Providers
 
-Auto Use supports **6 LLM providers**:
+Auto Use supports **7 LLM providers**:
 
 - **Anthropic**
 - **Google**
@@ -197,6 +197,7 @@ Auto Use supports **6 LLM providers**:
 - **OpenAI**
 - **OpenRouter**
 - **Perplexity**
+- **Together AI** — macOS + web agent; its `web` tool routes through the built-in browser agent
 
 ---
 

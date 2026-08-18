@@ -62,6 +62,16 @@ run_agent(
 
 Set it back to `False` (or remove the argument) to see the browser again.
 
+⚠️ **The flag only applies when Chrome is launched.** Chrome deliberately stays
+up after a run, and the next run **attaches** to whatever is already on port
+9222 — headless or not — ignoring the flag (you'll see "Attached to Chrome
+already on port 9222"). So if you switch between headless and headful, quit
+the old Chrome first:
+
+```
+pkill -f "remote-debugging-port=9222"
+```
+
 ## When to use which
 
 - **Headful (default)** — first runs, debugging, demos where you want to watch
@@ -324,3 +334,38 @@ creates `conversation/` and `raw_reasoning/` when the flag is on, and calls
 `conversation_N.txt`. The web agent does the same in Rust
 (`save_conversation_snapshot` in
 [Auto_Use/web/agent/main_driver/service.rs](Auto_Use/web/agent/main_driver/service.rs)).
+
+---
+
+# Part 5 — Together AI provider (`PROVIDER = "together"`)
+
+## What it is
+
+Together AI is an OpenAI-compatible provider with native tool calling and
+image input. Available in `"computer use"` (macOS) and `"web use"`; not on
+Windows/iOS yet. Set `TOGETHER_API_KEY` in `.env` (or save it in the app's
+Settings → API Keys).
+
+| `MODEL` (main.py) | Together model id |
+|---|---|
+| `inkling` | `thinkingmachines/Inkling` |
+| `muse-glimmer-30b` | `meta-models/Muse-Glimmer-30B` |
+| `minimax-m3` | `MiniMaxAI/MiniMax-M3` |
+
+## How the `web` tool works on Together
+
+Together has no native web search. When the mac agent calls its `web` tool
+under `PROVIDER = "together"`, the query is handed to the **browser agent**
+(`Auto_Use/web`) running **headless on the same model**, and its final
+`done` report comes back as the web result. Expect that step to take a few
+minutes rather than seconds.
+
+- Runs in its own headless Chrome on port **9333** (`AUTOUSE_WEB_FALLBACK_PORT`)
+  — never the visible one `"web use"` uses — so it can't disturb the desktop
+  agent's screen.
+- Wall-clock cap **15 min** (`AUTOUSE_WEB_FALLBACK_TIMEOUT`, seconds); the
+  Stop button / Ctrl+C interrupts it.
+- Each run's `result.json` + `agent.log` are kept under
+  `autouse_data/web_fallback/<run-id>/` for inspection.
+
+Implementation: [Auto_Use/mac/controller/tool/web/web_agent.py](Auto_Use/mac/controller/tool/web/web_agent.py).
