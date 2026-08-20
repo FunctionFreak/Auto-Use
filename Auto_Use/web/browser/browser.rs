@@ -18,7 +18,7 @@
 //! sockets onto one browser, two ideas of which tab was current, and a scan
 //! whose tree, geometry and screenshot were read back separately.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
@@ -41,9 +41,39 @@ pub const CHROME_PORT: u16 = 9222;
 // is painted into it afterwards with Page.setDocumentContent.
 const BLANK_URL: &str = "about:blank";
 
-// Ceiling on buffered CDP events. Deep enough for a navigation's worth of
-// chatter, shallow enough that a socket nobody is listening to cannot grow.
+// Ceiling on buffered CDP events, as a last-resort guard against a run that
+// buffers forever. It should not normally be reached: WAITED_METHODS below is
+// what actually keeps the buffer small.
+//
+// Reaching it must drop the OLDEST event, never the newest. A cap that drops
+// the newest is a trap: once full, the very event a caller is waiting for is
+// the one thrown away, and because take_events only removes the method it was
+// asked for, a buffer full of anything else never drains — so the wait stays
+// deaf until the next clear_events. That turned every navigation on a
+// subresource-heavy page into a silent 30-second timeout.
 const EVENT_CAP: usize = 2000;
+
+// The only CDP events anything in this crate ever waits on:
+//   Page.loadEventFired        - navigation, reload and history waits
+//   Network.requestWillBeSent  - settle()'s in-flight set
+//   Network.loadingFinished    -   "
+//   Network.loadingFailed      -   "
+//   Target.attachedToTarget    - discovering cross-origin iframe sessions
+//
+// Everything else Chrome sends is never read by anyone. Buffering it only
+// crowded out the events that matter: with Network.enable on, Chrome emits
+// roughly eight events per request, so a page with a few hundred subresources
+// used to bury the load event under its own noise.
+const WAITED_METHODS: [&str; 6] = [
+    "Page.loadEventFired",
+    // Not waited on directly — it is what tells us a tab STARTED loading, so
+    // switching to that tab knows to wait for it. See `loading`.
+    "Page.frameNavigated",
+    "Network.requestWillBeSent",
+    "Network.loadingFinished",
+    "Network.loadingFailed",
+    "Target.attachedToTarget",
+];
 
 // Relative install paths under Program Files / Program Files (x86) /
 // LOCALAPPDATA, in the same browser preference order as the macOS list below.
@@ -437,7 +467,7 @@ pub struct Cdp {
     /// Events seen while waiting for a reply. CDP interleaves them with
     /// answers, and an action that has to wait for one (a navigation's
     /// loadEventFired) would never see it if they were dropped on the floor.
-    events: Vec<Value>,
+    events: VecDeque<Value>,
     /// Answers that arrived for a request other than the one being waited on.
     /// One call is in flight at a time, so this only ever holds a reply the
     /// event drain happened to read first — but dropping it would strand the
@@ -445,6 +475,16 @@ pub struct Cdp {
     replies: HashMap<u64, Value>,
     /// targetId -> sessionId (flatten mode)
     sessions: HashMap<String, String>,
+    /// Sessions whose MAIN frame has started navigating and has not reported
+    /// its load event yet.
+    ///
+    /// This is the only way to answer "is that tab still loading?" without
+    /// running JavaScript in it. It matters on switch_tab: binding to a tab
+    /// that is mid-load and scanning it immediately hands the model half a
+    /// page with no hint that the rest is still coming. `settle()` cannot
+    /// cover this — it only knows about requests whose start it witnessed
+    /// itself, and a navigation begun before the scan is invisible to it.
+    loading: HashSet<String>,
     /// Bumped on every hang-up. Sessions and anything registered inside them
     /// die with the connection, so a caller holding session-keyed state
     /// watches this to know its state is stale.
@@ -457,9 +497,10 @@ impl Cdp {
             port,
             ws: None,
             id: 0,
-            events: Vec::new(),
+            events: VecDeque::new(),
             replies: HashMap::new(),
             sessions: HashMap::new(),
+            loading: HashSet::new(),
             generation: 0,
         }
     }
@@ -508,24 +549,87 @@ impl Cdp {
     fn drop_conn(&mut self) {
         self.ws = None; // dropping the WebSocket closes the TcpStream
         self.sessions.clear();
+        self.loading.clear();
         self.events.clear();
         self.replies.clear();
         self.generation += 1;
     }
 
-    /// Keep an event for whoever is waiting on one. Capped: an idle socket
-    /// must never grow a buffer for the life of the run.
+    /// Keep an event for whoever is waiting on one.
+    ///
+    /// Anything nobody waits on is dropped here rather than buffered — see
+    /// WAITED_METHODS. If the cap is somehow still reached, the OLDEST event
+    /// goes, so the event that just arrived is always kept.
     fn stash(&mut self, m: Value) {
-        if self.events.len() < EVENT_CAP {
-            self.events.push(m);
+        let waited = m
+            .get("method")
+            .and_then(Value::as_str)
+            .is_some_and(|name| WAITED_METHODS.contains(&name));
+        if !waited {
+            return;
+        }
+        self.note_load_state(&m);
+        while self.events.len() >= EVENT_CAP {
+            self.events.pop_front();
+        }
+        self.events.push_back(m);
+    }
+
+    /// Follow a session's main-frame navigation so `is_loading` can answer.
+    ///
+    /// Only the MAIN frame counts: a sub-frame navigating (an ad, an embed)
+    /// does not mean the page the model is about to read is unfinished.
+    fn note_load_state(&mut self, m: &Value) {
+        let sess = match m.get("sessionId").and_then(Value::as_str) {
+            Some(s) => s.to_string(),
+            None => return,
+        };
+        match m.get("method").and_then(Value::as_str) {
+            Some("Page.frameNavigated") => {
+                let is_main = m
+                    .get("params")
+                    .and_then(|p| p.get("frame"))
+                    .map(|f| f.get("parentId").is_none())
+                    .unwrap_or(false);
+                if is_main {
+                    self.loading.insert(sess);
+                }
+            }
+            Some("Page.loadEventFired") => {
+                self.loading.remove(&sess);
+            }
+            _ => {}
         }
     }
 
+    /// True while this tab's main frame has a navigation in flight.
+    pub fn is_loading(&mut self, session: &str) -> bool {
+        // Read whatever is already on the wire first, so the answer reflects
+        // the browser now rather than the last time somebody happened to drain.
+        self.drain(0);
+        self.loading.contains(session)
+    }
+
     /// Take every buffered event with this method name, oldest first.
-    pub fn take_events(&mut self, method: &str) -> Vec<Value> {
+    ///
+    /// `session` scopes the take to ONE page. This socket is shared by every
+    /// tab the agent has ever touched, so without it a sibling tab's event
+    /// answers a wait meant for this one: another tab's `Page.loadEventFired`
+    /// ends this tab's navigation wait early, and another tab's network
+    /// chatter keeps `settle` from ever going quiet.
+    ///
+    /// `None` means "from any session", which is what cross-session discovery
+    /// (`Target.attachedToTarget`, whose envelope names the PARENT session)
+    /// actually wants.
+    pub fn take_events(&mut self, method: &str, session: Option<&str>) -> Vec<Value> {
         let mut hit = Vec::new();
         self.events.retain(|e| {
-            if e.get("method").and_then(Value::as_str) == Some(method) {
+            let matches = e.get("method").and_then(Value::as_str) == Some(method)
+                && match session {
+                    None => true,
+                    Some(want) => e.get("sessionId").and_then(Value::as_str) == Some(want),
+                };
+            if matches {
                 hit.push(e.clone());
                 false
             } else {
@@ -589,17 +693,17 @@ impl Cdp {
     /// Block until one `method` event arrives, or `timeout` runs out. True if
     /// it arrived. Used by navigation, which is the one action whose result
     /// the caller genuinely has to wait for.
-    pub fn wait_event(&mut self, method: &str, timeout: f64) -> bool {
+    pub fn wait_event(&mut self, method: &str, session: Option<&str>, timeout: f64) -> bool {
         let deadline = Instant::now() + Duration::from_secs_f64(timeout);
         loop {
-            if !self.take_events(method).is_empty() {
+            if !self.take_events(method, session).is_empty() {
                 return true;
             }
             if Instant::now() >= deadline || self.ws.is_none() {
                 return false;
             }
             self.drain(250);
-            if !self.take_events(method).is_empty() {
+            if !self.take_events(method, session).is_empty() {
                 return true;
             }
             sleep_s(0.02);
@@ -801,6 +905,55 @@ fn port_open(port: u16) -> bool {
     }
 }
 
+/// How long Chrome gets to become driveable before we give up on it.
+const READY_TIMEOUT: f64 = 30.0;
+
+/// Viewport for a headless run, where there is no screen to maximise to.
+const HEADLESS_WINDOW: &str = "1920,1080";
+
+/// Whether Chrome can actually be DRIVEN, not merely dialled.
+///
+/// `port_open` does not answer the question it looks like it answers. Chrome
+/// binds the debug port and accepts connections on it well before the DevTools
+/// HTTP endpoint will serve anything — measured at ~3.1s on a cold headful
+/// start, and longer on a cold disk. Returning on `port_open` alone hands that
+/// gap to whoever speaks first, which is the first scan: it sits inside
+/// `chrome_http` waiting on a socket that is accepting but silent, and the wait
+/// gets reported to the user as scan time.
+///
+/// The honest gate is the two things every caller after this needs: a socket
+/// url to connect to, and a page to attach to. Nothing further is worth
+/// waiting for — the tab Chrome starts on is about:blank, which is already
+/// loaded by the time it is listed.
+fn browser_ready(port: u16) -> bool {
+    let Ok(ver) = chrome_http(port, "/json/version", "GET") else {
+        return false;
+    };
+    ver.get("webSocketDebuggerUrl")
+        .and_then(Value::as_str)
+        .is_some_and(|u| !u.is_empty())
+        && !page_targets(port).is_empty()
+}
+
+/// Block until `browser_ready`, or `secs` runs out. True if it came up.
+///
+/// A deadline, not a try count: `chrome_http` blocks for up to its own 5s read
+/// timeout against a port that is accepting but silent, so counting attempts
+/// would bound this at minutes rather than seconds.
+fn await_browser_ready(port: u16, secs: f64) -> SResult<bool> {
+    let end = Instant::now() + Duration::from_secs_f64(secs);
+    loop {
+        if browser_ready(port) {
+            return Ok(true);
+        }
+        if Instant::now() >= end {
+            return Ok(false);
+        }
+        check_py_signals()?;
+        sleep_s(0.05);
+    }
+}
+
 /// Every place a Chrome-family browser may be installed, most preferred first.
 fn chrome_candidates() -> Vec<PathBuf> {
     if !cfg!(windows) {
@@ -836,6 +989,14 @@ fn find_chrome() -> SResult<PathBuf> {
 
 pub fn launch_chrome_impl(port: u16, headless: bool) -> SResult<bool> {
     if port_open(port) {
+        // Attached, not launched — but a browser someone started a moment ago
+        // is in exactly the state `browser_ready` describes, so this path has
+        // to wait it out too rather than assume an open port means a usable one.
+        if !await_browser_ready(port, READY_TIMEOUT)? {
+            return Err(ScanErr::s(format!(
+                "Chrome holds port {port} but its DevTools endpoint never answered"
+            )));
+        }
         println!("Attached to Chrome already on port {port}");
         return Ok(false);
     }
@@ -852,6 +1013,16 @@ pub fn launch_chrome_impl(port: u16, headless: bool) -> SResult<bool> {
         .arg("--disable-backgrounding-occluded-windows")
         .arg("--disable-renderer-backgrounding")
         .arg("--disable-background-timer-throttling");
+    // The window is not just where the agent works — it IS what the model
+    // sees. The screenshot is the viewport, so Chrome's default restore size
+    // costs the model page area and elements on every single scan. Ask for
+    // the whole screen rather than accept it.
+    if headless {
+        // Nothing to maximise against without a display, so name a size.
+        cmd.arg(format!("--window-size={HEADLESS_WINDOW}"));
+    } else {
+        cmd.arg("--start-maximized");
+    }
     if headless {
         cmd.arg("--headless=new");
     }
@@ -862,14 +1033,10 @@ pub fn launch_chrome_impl(port: u16, headless: bool) -> SResult<bool> {
     cmd.spawn()
         .map_err(|e| ScanErr::s(format!("could not launch Chrome: {e}")))?;
 
-    for _ in 0..60 {
-        if port_open(port) {
-            let mode = if headless { "headless" } else { "headful" };
-            println!("Chrome launched on port {port} ({mode})");
-            return Ok(true);
-        }
-        check_py_signals()?;
-        sleep_s(0.25);
+    if await_browser_ready(port, READY_TIMEOUT)? {
+        let mode = if headless { "headless" } else { "headful" };
+        println!("Chrome launched on port {port} ({mode})");
+        return Ok(true);
     }
     Err(ScanErr::s(format!("Chrome did not open the debug port {port}")))
 }

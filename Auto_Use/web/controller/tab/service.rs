@@ -32,21 +32,21 @@ const LOAD_TIMEOUT: f64 = 30.0;
 /// navigation on the same session leaves them behind, and one of those would
 /// otherwise satisfy this wait instantly and hand back a tab still showing
 /// the old page.
-fn await_load(cdp: &mut Cdp) {
-    cdp.wait_event("Page.loadEventFired", LOAD_TIMEOUT);
+fn await_load(cdp: &mut Cdp, sess: &str) {
+    cdp.wait_event("Page.loadEventFired", Some(sess), LOAD_TIMEOUT);
 }
 
 fn navigate_to(cdp: &mut Cdp, sess: &str, url: &str) -> Result<(), CdpFail> {
-    cdp.take_events("Page.loadEventFired");
+    cdp.take_events("Page.loadEventFired", Some(sess));
     cdp.rpc("Page.navigate", json!({"url": url}), Some(sess), 10.0)?;
-    await_load(cdp);
+    await_load(cdp, sess);
     Ok(())
 }
 
 fn reload_tab(cdp: &mut Cdp, sess: &str) -> Result<(), CdpFail> {
-    cdp.take_events("Page.loadEventFired");
+    cdp.take_events("Page.loadEventFired", Some(sess));
     cdp.rpc("Page.reload", json!({}), Some(sess), 10.0)?;
-    await_load(cdp);
+    await_load(cdp, sess);
     Ok(())
 }
 
@@ -78,9 +78,9 @@ fn step_history(cdp: &mut Cdp, sess: &str, delta: i64) -> Result<(), CdpFail> {
         .get("id")
         .and_then(Value::as_i64)
         .ok_or_else(|| CdpFail::Clean("history entry has no id".into()))?;
-    cdp.take_events("Page.loadEventFired");
+    cdp.take_events("Page.loadEventFired", Some(sess));
     cdp.rpc("Page.navigateToHistoryEntry", json!({"entryId": id}), Some(sess), 10.0)?;
-    await_load(cdp);
+    await_load(cdp, sess);
     Ok(())
 }
 
@@ -250,7 +250,17 @@ pub fn switch(
     }
     scan_op(py, scanner, move |s| {
         let target = s.tab_target(idx)?;
-        s.bind_tab(&target)
+        s.bind_tab(&target)?;
+        // A tab can be mid-load when we arrive — the human opened it a moment
+        // ago, or it navigated itself. Scanning it now would hand the model
+        // half a page and no way to tell. Waiting costs nothing on a tab that
+        // has already finished: is_loading is false and this returns at once.
+        s.with_tab(|cdp, sess| {
+            if cdp.is_loading(sess) {
+                await_load(cdp, sess);
+            }
+            Ok(())
+        })
     })?;
     Ok(json!({"status": "success", "tool": "switch_tab", "id": idx,
               "message": format!("switched to tab [{idx}]")}))

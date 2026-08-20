@@ -452,6 +452,10 @@ impl<'a> Scanner<'a> {
         // never reaches zero, and every scan after a redirect serves out the
         // full ceiling. A set is idempotent, so the redirect is a no-op.
         let mut inflight: HashSet<String> = HashSet::new();
+        // Only THIS page's requests count. The socket carries every tab the
+        // agent has touched, and a sibling tab fetching on a timer would
+        // otherwise hold this scan at its ceiling forever.
+        let page = self.page.clone();
 
         let id_of = |e: &Value| -> Option<String> {
             e.get("params")?
@@ -463,14 +467,14 @@ impl<'a> Scanner<'a> {
         loop {
             self.cdp.drain_for(60);
             let mut saw = false;
-            for e in self.cdp.take_events("Network.requestWillBeSent") {
+            for e in self.cdp.take_events("Network.requestWillBeSent", Some(&page)) {
                 saw = true;
                 if let Some(id) = id_of(&e) {
                     inflight.insert(id);
                 }
             }
             for m in ["Network.loadingFinished", "Network.loadingFailed"] {
-                for e in self.cdp.take_events(m) {
+                for e in self.cdp.take_events(m, Some(&page)) {
                     saw = true;
                     if let Some(id) = id_of(&e) {
                         inflight.remove(&id);
@@ -541,7 +545,7 @@ impl<'a> Scanner<'a> {
             }
             self.cdp.drain_for(500);
             let mut next = Vec::new();
-            for e in self.cdp.take_events("Target.attachedToTarget") {
+            for e in self.cdp.take_events("Target.attachedToTarget", None) {
                 // envelope sessionId is the PARENT session
                 let parent = e
                     .get("sessionId")
