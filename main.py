@@ -9,7 +9,8 @@ PROVIDER = "together"
 MODEL = "minimax-m3" #refer to the model name correctly from model_list.txt.
 # Your task here
 task = """
-what isthe price of nvdia share 
+
+open three tab with different  url then switch between them
 """
 conversation=True
 # Optional flags — conversation saving, speed ("quality"/"fast"), headless

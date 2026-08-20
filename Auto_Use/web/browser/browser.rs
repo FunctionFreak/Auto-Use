@@ -913,6 +913,16 @@ pub struct ScannerInner {
     /// its own in a browser shared with other agents. Tab listing, cosmetics
     /// and the current-target lookup are all scoped to that tab.
     single_tab: bool,
+    /// The tabs of the CURRENT listing, in the order `<all_tabs>` shows them.
+    ///
+    /// Filled by `read_tabs`, so the ids and the text the model reads come out
+    /// of ONE listing. `[n]` resolves against this and never against a fresh
+    /// /json/list: Chrome orders that most-recently-USED and `bring_to_front`
+    /// reorders it, so re-reading it between the scan and the action can hand
+    /// back a different tab than the one the model picked. Bounds-checking the
+    /// old list and then indexing the new one is how `close_tab` could close a
+    /// tab nobody asked to close.
+    tab_ids: Vec<String>,
     /// The tab this agent is driving, by CDP target id.
     ///
     /// Tracked in BOTH modes, and authoritative: the scanner is bound to it by
@@ -968,6 +978,7 @@ impl ScannerInner {
             glow_armed: HashMap::new(),
             glow_gen: 0,
             single_tab,
+            tab_ids: Vec::new(),
             tab_id: None,
         }
     }
@@ -1167,6 +1178,9 @@ impl ScannerInner {
     pub fn read_tabs(&mut self) -> String {
         let current = self.tab_id.clone().unwrap_or_default();
         let targets = self.open_tabs();
+        // The ids behind the lines, captured in the same pass that renders
+        // them. This is the whole point: one listing, two views of it.
+        self.tab_ids = targets.iter().map(|t| target_id_of(t).to_string()).collect();
         if self.single_tab {
             // One dedicated tab: the model always sees exactly its own tab as
             // [1]. Other agents' tabs in the shared browser never appear.
@@ -1183,6 +1197,62 @@ impl ScannerInner {
             .join("\n")
     }
 
+    /// The tab `[n]` from the listing the model was shown.
+    ///
+    /// Three different failures, each worth telling apart: a number that is not
+    /// a tab number at all, one that was never on the list, and one that was on
+    /// it but whose tab has closed since.
+    pub fn tab_target(&self, index: i64) -> SResult<String> {
+        if index < 1 {
+            return Err(ScanErr::s(format!(
+                "tab numbers start at [1] - there is no tab [{index}]"
+            )));
+        }
+        let id = self.tab_ids.get((index - 1) as usize).ok_or_else(|| {
+            ScanErr::s(format!(
+                "no tab [{index}] - the tab list has {} tab(s)",
+                self.tab_ids.len()
+            ))
+        })?;
+        if !tab_exists(self.port, id) {
+            return Err(ScanErr::s(format!(
+                "tab [{index}] has been closed since that list was made - read \
+                 the fresh <all_tabs> in the next input before acting on a tab"
+            )));
+        }
+        Ok(id.clone())
+    }
+
+    /// How many tabs that listing showed.
+    pub fn tab_count(&self) -> usize {
+        self.tab_ids.len()
+    }
+
+    /// Where to go when the driven tab is closed: the neighbour that now holds
+    /// its slot in the listing, else the nearest tab still open on either side
+    /// of it, else anything at all.
+    pub fn neighbour_tab(&self, index: i64, closed: &str) -> Option<String> {
+        let i = ((index - 1).max(0) as usize).min(self.tab_ids.len());
+        let after = self.tab_ids.iter().skip(i + 1);
+        let before = self.tab_ids[..i].iter().rev();
+        after
+            .chain(before)
+            .find(|id| id.as_str() != closed && tab_exists(self.port, id))
+            .cloned()
+            .or_else(|| {
+                page_targets(self.port)
+                    .iter()
+                    .map(|t| target_id_of(t).to_string())
+                    .find(|id| id != closed)
+            })
+    }
+
+    /// Re-read the listing, so `<all_tabs>` and the ids `[n]` resolves against
+    /// both reflect a tab that was just opened or closed.
+    pub fn refresh_tabs(&mut self) {
+        self.all_tabs = self.read_tabs();
+    }
+
     /// The tabs this agent may see and act on, in Chrome's own order. In
     /// single-tab mode that is exactly one tab: its own.
     pub fn open_tabs(&self) -> Vec<Value> {
@@ -1194,10 +1264,13 @@ impl ScannerInner {
         targets
     }
 
-    /// Url of the tab this agent is driving, straight from Chrome's list.
+    /// Url of the tab this agent is driving, read live from Chrome's list.
+    ///
+    /// Live, not `self.url`: that one is the url as of the last SCAN, and an
+    /// action that navigates between scans leaves it a step behind.
     /// It used to be recovered by regex out of the rendered `<all_tabs>`
     /// text — parsing a string this side had just formatted.
-    fn current_tab_url(&self) -> String {
+    pub fn current_tab_url(&self) -> String {
         let Ok(id) = self.current_target_id() else {
             return String::new();
         };
@@ -1535,6 +1608,9 @@ impl ScannerInner {
     pub fn create_tab(&mut self) -> SResult<String> {
         let id = create_tab_impl(self.port)?;
         self.adopt_tab(&id)?;
+        // The listing changed under the model's feet — re-take it now rather
+        // than leaving `[n]` pointing into a list that predates this tab.
+        self.refresh_tabs();
         Ok(id)
     }
 
@@ -1907,13 +1983,9 @@ impl BrowserScanner {
     /// The agent uses the switch_tab TOOL, which does this and reports it to
     /// the model. This is the same move without the reporting, for driving the
     /// scanner by hand.
-    fn bind_tab(&self, py: Python<'_>, index: usize) -> PyResult<String> {
+    fn bind_tab(&self, py: Python<'_>, index: i64) -> PyResult<String> {
         self.locked(py, move |s| {
-            let tabs = s.open_tabs();
-            let target = tabs
-                .get(index.saturating_sub(1))
-                .map(|t| target_id_of(t).to_string())
-                .ok_or_else(|| ScanErr::s(format!("no tab [{index}]")))?;
+            let target = s.tab_target(index)?;
             s.bind_tab(&target)?;
             Ok(target)
         })

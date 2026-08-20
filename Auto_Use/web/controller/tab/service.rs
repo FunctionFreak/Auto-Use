@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use pyo3::prelude::*;
 use serde_json::{json, Value};
 
-use crate::browser::{close_target, target_id_of, Cdp, CdpFail, ScanErr, ScannerInner};
+use crate::browser::{close_target, Cdp, CdpFail, ScanErr, ScannerInner};
 use crate::controller::service::{err, py_int_value, scan_op, ActResult};
 use crate::agent::main_driver::view::py_str_of;
 
@@ -82,6 +82,33 @@ fn step_history(cdp: &mut Cdp, sess: &str, delta: i64) -> Result<(), CdpFail> {
     cdp.rpc("Page.navigateToHistoryEntry", json!({"entryId": id}), Some(sess), 10.0)?;
     await_load(cdp);
     Ok(())
+}
+
+/// `[n]` against the listing the model was actually shown. `Some(message)`
+/// when it is not a tab the model could have picked.
+///
+/// The check and the tab it guards now come from the SAME listing. They used
+/// to come from two: this checked the rendered `<all_tabs>` text from the last
+/// scan, and the caller then indexed a fresh /json/list. Chrome orders that
+/// most-recently-used, so a tab merely being brought to the front reordered it
+/// — and `[2]` could be bounds-checked against one tab and acted on another.
+fn out_of_range(
+    py: Python<'_>,
+    scanner: &Arc<Mutex<ScannerInner>>,
+    idx: i64,
+) -> ActResult<Option<String>> {
+    let n = scan_op(py, scanner, |s| Ok(s.tab_count()))? as i64;
+    if n == 0 {
+        // Nothing listed yet — let the resolve give the sharper error.
+        return Ok(None);
+    }
+    if idx < 1 || idx > n {
+        return Ok(Some(format!(
+            "no tab [{idx}] — <all_tabs> lists {n} tab(s), 1-{n}. Use the [n] \
+             from <all_tabs>, not an [id] from <element_tree>."
+        )));
+    }
+    Ok(None)
 }
 
 /// The three ways to move the CURRENT tab without naming a destination.
@@ -174,7 +201,10 @@ pub fn navigate(
             MOVES.join(", ")
         ));
     }
-    let current = scan_op(py, scanner, |s| Ok(s.url.clone()))?;
+    // The page being LEFT, read live. `s.url` is the url as of the last scan,
+    // so after an update_tab in the same turn it names the page before that
+    // one — and the model would read "went back from A" while sitting on A.
+    let current = scan_op(py, scanner, |s| Ok(s.current_tab_url()))?;
     let before = if current.is_empty() {
         "the current tab".to_string()
     } else {
@@ -215,24 +245,11 @@ pub fn switch(
             return err(format!("'{}' is not a valid tab number", py_str_of(index)));
         }
     };
-    let all_tabs = scan_op(py, scanner, |s| Ok(s.all_tabs.clone()))?;
-    let tabs: Vec<&str> = all_tabs.lines().filter(|ln| !ln.trim().is_empty()).collect();
-    if !tabs.is_empty() && !(1 <= idx && idx <= tabs.len() as i64) {
-        return err(format!(
-            "no tab [{idx}] — <all_tabs> lists {n} tab(s), \
-             1-{n}. Use the [n] from <all_tabs>, not an [id] \
-             from <element_tree>.",
-            n = tabs.len()
-        ));
+    if let Some(msg) = out_of_range(py, scanner, idx)? {
+        return err(msg);
     }
     scan_op(py, scanner, move |s| {
-        // Index into the SAME list <all_tabs> was rendered from, so the [n]
-        // the model read and the tab bound here cannot be different tabs.
-        let tabs = s.open_tabs();
-        let target = tabs
-            .get((idx - 1).max(0) as usize)
-            .map(|t| target_id_of(t).to_string())
-            .ok_or_else(|| ScanErr::s(format!("no tab [{idx}]")))?;
+        let target = s.tab_target(idx)?;
         s.bind_tab(&target)
     })?;
     Ok(json!({"status": "success", "tool": "switch_tab", "id": idx,
@@ -257,29 +274,20 @@ pub fn close(
             return err(format!("'{}' is not a valid tab number", py_str_of(index)));
         }
     };
-    let all_tabs = scan_op(py, scanner, |s| Ok(s.all_tabs.clone()))?;
-    let tabs: Vec<&str> = all_tabs.lines().filter(|ln| !ln.trim().is_empty()).collect();
-    if !tabs.is_empty() && !(1 <= idx && idx <= tabs.len() as i64) {
-        return err(format!(
-            "no tab [{idx}] — <all_tabs> lists {n} tab(s), \
-             1-{n}. Use the [n] from <all_tabs>, not an [id] \
-             from <element_tree>.",
-            n = tabs.len()
-        ));
+    if let Some(msg) = out_of_range(py, scanner, idx)? {
+        return err(msg);
     }
     scan_op(py, scanner, move |s| {
-        let tabs = s.open_tabs();
+        // Resolve BEFORE anything is closed, against the listing the model
+        // read — closing is not undoable, so the one tab this may touch has to
+        // be the one the model named.
+        let victim = s.tab_target(idx)?;
         // The LAST tab is refused rather than closed: a browser with zero page
         // targets leaves the scanner nothing to bind to, and "close the last
         // tab" almost always means "navigate it".
-        if tabs.len() <= 1 {
+        if s.open_tabs().len() <= 1 {
             return Err(ScanErr::s("cannot close the last tab - navigate it instead"));
         }
-        let i = (idx - 1).max(0) as usize;
-        let victim = tabs
-            .get(i)
-            .map(|t| target_id_of(t).to_string())
-            .ok_or_else(|| ScanErr::s("no such tab"))?;
         let was_current = s.current_target_id().map(|id| id == victim).unwrap_or(false);
         if !close_target(s.port, &victim)? {
             return Err(ScanErr::s("tab did not close"));
@@ -287,14 +295,15 @@ pub fn close(
         // The session died with the tab.
         s.forget_tab(&victim);
         if was_current {
-            // Re-bind the way a browser does: to the neighbour now holding
-            // this slot, or the new last tab when the closed one was last.
-            let remaining = s.open_tabs();
-            let j = i.min(remaining.len().saturating_sub(1));
-            if let Some(id) = remaining.get(j).map(|t| target_id_of(t).to_string()) {
+            // Re-bind the way a browser does: to the neighbour that held the
+            // next slot in the list the model was shown.
+            if let Some(id) = s.neighbour_tab(idx, &victim) {
                 s.bind_tab(&id)?;
             }
         }
+        // Closing RE-NUMBERS the list, so re-take it now: `[n]` must not keep
+        // resolving against a listing that still contains the closed tab.
+        s.refresh_tabs();
         Ok(())
     })?;
     Ok(json!({"status": "success", "tool": "close_tab", "id": idx,
