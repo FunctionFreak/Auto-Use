@@ -6,22 +6,83 @@
 //! Underneath they are the same concern: which tab the agent is pointed at,
 //! and what that tab is showing.
 //!
-//! All of them reach Chrome through the scanner, which owns the CDP session:
-//!     new_tab       -> the binary's `n <url>` command
-//!     switch_tab    -> the binary's `u <n>` command
-//!     close_tab     -> Chrome's /json/close endpoint (the scanner
-//!                      re-binds itself when its current tab was the one closed)
-//!     update_tab    -> the binary's `g <url>` command
-//!     navigate_tab  -> `r` (reload), `bk` (back), `fw` (forward)
+//! Two wires, both owned by the browser side and borrowed here:
+//!   - the CDP session, for moving a tab (navigate, reload, history);
+//!   - Chrome's HTTP endpoint, for tab lifecycle (open, close). Tabs are
+//!     created and closed over /json/* and nowhere else, so one list — the one
+//!     <all_tabs> is rendered from — decides what [n] means.
 
 use std::sync::{Arc, Mutex};
 
 use pyo3::prelude::*;
 use serde_json::{json, Value};
 
-use crate::browser::ScannerInner;
+use crate::browser::{close_target, target_id_of, Cdp, CdpFail, ScanErr, ScannerInner};
 use crate::controller::service::{err, py_int_value, scan_op, ActResult};
 use crate::agent::main_driver::view::py_str_of;
+
+/// How long a navigation waits for the page's load event. A lapse is not an
+/// error: the scanner settles the page again before the next scan, so a slow
+/// site costs a wait, never a wrong tree.
+const LOAD_TIMEOUT: f64 = 30.0;
+
+/// Wait out the navigation just asked for.
+///
+/// Buffered load events are cleared FIRST. They are not ours: an earlier
+/// navigation on the same session leaves them behind, and one of those would
+/// otherwise satisfy this wait instantly and hand back a tab still showing
+/// the old page.
+fn await_load(cdp: &mut Cdp) {
+    cdp.wait_event("Page.loadEventFired", LOAD_TIMEOUT);
+}
+
+fn navigate_to(cdp: &mut Cdp, sess: &str, url: &str) -> Result<(), CdpFail> {
+    cdp.take_events("Page.loadEventFired");
+    cdp.rpc("Page.navigate", json!({"url": url}), Some(sess), 10.0)?;
+    await_load(cdp);
+    Ok(())
+}
+
+fn reload_tab(cdp: &mut Cdp, sess: &str) -> Result<(), CdpFail> {
+    cdp.take_events("Page.loadEventFired");
+    cdp.rpc("Page.reload", json!({}), Some(sess), 10.0)?;
+    await_load(cdp);
+    Ok(())
+}
+
+/// Step through this tab's session history: -1 is back, +1 is forward.
+///
+/// Page.navigateToHistoryEntry rather than a synthetic Alt+Left: the key only
+/// works when the page has focus and nothing on it swallows the shortcut,
+/// while the history API is the browser's own move and reports honestly when
+/// there is nowhere to go.
+///
+/// Refusing at the end of the history is deliberate. Silently doing nothing
+/// would leave the model unable to tell "went back" from "was already at the
+/// first page" — the same blindness the scroll tool had to solve, except here
+/// the answer is known up front.
+fn step_history(cdp: &mut Cdp, sess: &str, delta: i64) -> Result<(), CdpFail> {
+    let unreadable = || CdpFail::Clean("could not read the tab's history".into());
+    let h = cdp.rpc("Page.getNavigationHistory", json!({}), Some(sess), 5.0)?;
+    let cur = h.get("currentIndex").and_then(Value::as_i64).ok_or_else(unreadable)?;
+    let entries = h.get("entries").and_then(Value::as_array).ok_or_else(unreadable)?;
+    let want = cur + delta;
+    if want < 0 || want as usize >= entries.len() {
+        return Err(CdpFail::Clean(format!(
+            "no page to go {} to - this tab is at the {} of its history",
+            if delta < 0 { "back" } else { "forward" },
+            if delta < 0 { "start" } else { "end" }
+        )));
+    }
+    let id = entries[want as usize]
+        .get("id")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| CdpFail::Clean("history entry has no id".into()))?;
+    cdp.take_events("Page.loadEventFired");
+    cdp.rpc("Page.navigateToHistoryEntry", json!({"entryId": id}), Some(sess), 10.0)?;
+    await_load(cdp);
+    Ok(())
+}
 
 /// The three ways to move the CURRENT tab without naming a destination.
 pub const MOVES: [&str; 3] = ["back", "forward", "reload"];
@@ -51,7 +112,19 @@ pub fn open_new(
     let url = normalize_url(value);
     {
         let url = url.clone();
-        scan_op(py, scanner, move |s| s.new_tab(&url))?;
+        scan_op(py, scanner, move |s| {
+            // Blank-first, even when there IS a destination: the tab is
+            // created empty and armed with the glow before anything
+            // navigates, so its first real page glows from its first paint
+            // instead of arriving bare and being dressed a beat later.
+            s.create_tab()?;
+            if url.is_empty() {
+                s.show_blank_page()?;
+                Ok(())
+            } else {
+                s.with_tab(|cdp, sess| navigate_to(cdp, sess, &url))
+            }
+        })?;
     }
     // Report what the model asked for. Saying "opened a new tab on
     // file:///.../logo.html" would read as a navigation it did not request.
@@ -72,7 +145,9 @@ pub fn update(
     }
     {
         let url = url.clone();
-        scan_op(py, scanner, move |s| s.goto(&url))?;
+        scan_op(py, scanner, move |s| {
+            s.with_tab(|cdp, sess| navigate_to(cdp, sess, &url))
+        })?;
     }
     let message = format!("navigated the current tab to {url}");
     Ok(json!({"status": "success", "tool": "update_tab", "url": url, "message": message}))
@@ -107,17 +182,13 @@ pub fn navigate(
     };
 
     let message = if mv == "reload" {
-        scan_op(py, scanner, |s| s.reload())?;
+        scan_op(py, scanner, |s| s.with_tab(reload_tab))?;
         format!("reloaded {before}")
     } else {
         {
-            let mv = mv.clone();
+            let delta = if mv == "back" { -1 } else { 1 };
             scan_op(py, scanner, move |s| {
-                if mv == "back" {
-                    s.back()
-                } else {
-                    s.forward()
-                }
+                s.with_tab(|cdp, sess| step_history(cdp, sess, delta))
             })?;
         }
         format!(
@@ -154,7 +225,16 @@ pub fn switch(
             n = tabs.len()
         ));
     }
-    scan_op(py, scanner, move |s| s.switch_tab(idx))?;
+    scan_op(py, scanner, move |s| {
+        // Index into the SAME list <all_tabs> was rendered from, so the [n]
+        // the model read and the tab bound here cannot be different tabs.
+        let tabs = s.open_tabs();
+        let target = tabs
+            .get((idx - 1).max(0) as usize)
+            .map(|t| target_id_of(t).to_string())
+            .ok_or_else(|| ScanErr::s(format!("no tab [{idx}]")))?;
+        s.bind_tab(&target)
+    })?;
     Ok(json!({"status": "success", "tool": "switch_tab", "id": idx,
               "message": format!("switched to tab [{idx}]")}))
 }
@@ -187,7 +267,36 @@ pub fn close(
             n = tabs.len()
         ));
     }
-    scan_op(py, scanner, move |s| s.close_tab(idx))?;
+    scan_op(py, scanner, move |s| {
+        let tabs = s.open_tabs();
+        // The LAST tab is refused rather than closed: a browser with zero page
+        // targets leaves the scanner nothing to bind to, and "close the last
+        // tab" almost always means "navigate it".
+        if tabs.len() <= 1 {
+            return Err(ScanErr::s("cannot close the last tab - navigate it instead"));
+        }
+        let i = (idx - 1).max(0) as usize;
+        let victim = tabs
+            .get(i)
+            .map(|t| target_id_of(t).to_string())
+            .ok_or_else(|| ScanErr::s("no such tab"))?;
+        let was_current = s.current_target_id().map(|id| id == victim).unwrap_or(false);
+        if !close_target(s.port, &victim)? {
+            return Err(ScanErr::s("tab did not close"));
+        }
+        // The session died with the tab.
+        s.forget_tab(&victim);
+        if was_current {
+            // Re-bind the way a browser does: to the neighbour now holding
+            // this slot, or the new last tab when the closed one was last.
+            let remaining = s.open_tabs();
+            let j = i.min(remaining.len().saturating_sub(1));
+            if let Some(id) = remaining.get(j).map(|t| target_id_of(t).to_string()) {
+                s.bind_tab(&id)?;
+            }
+        }
+        Ok(())
+    })?;
     Ok(json!({"status": "success", "tool": "close_tab", "id": idx,
               "message": format!(
                   "closed tab [{idx}]. The remaining tabs are re-numbered — \

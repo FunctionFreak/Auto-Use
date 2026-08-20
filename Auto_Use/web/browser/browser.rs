@@ -1,20 +1,29 @@
 // Copyright 2026 Ashish Yadav — Auto-Use
 
-//! Browser session — opening Chrome and keeping the CDP link alive.
+//! Browser session — opening Chrome, owning the CDP link, and lending it out.
 //!
-//! THIS side owns Chrome: it launches the browser with the remote-debugging
-//! port open, and Auto_Use/web/tree/element.rs simply ATTACHES to that port.
-//! The scanner binary is spawned as a subprocess REPL — commands are the same
-//! one-liners test.py's REPL takes:
-//!   s | n <url> | g <url> | t | u <n> | cl <id> | hd <id> <s> | in <id> <text> | ie <id> <text>
+//! THIS side owns the browser. It launches Chrome with the remote-debugging
+//! port open, opens and closes tabs over Chrome's HTTP endpoint, and holds the
+//! ONE CDP session per tab that everything else borrows: the glow rides on it,
+//! and every controller tool takes it for the length of a single operation to
+//! click, type, scroll or navigate.
+//!
+//! Auto_Use/web/tree/element.rs is a SCANNER, not a driver, and not a process:
+//! `scan_core` below calls it with the session and the tab to read, and gets
+//! back a tree, its geometry and a screenshot. It cannot navigate, click,
+//! type, open a tab or launch Chrome, and it holds no connection of its own.
+//!
+//! It used to be a second binary driven as a subprocess REPL, answering over
+//! stdin/stdout with its results left in three files on disk. That meant two
+//! sockets onto one browser, two ideas of which tab was current, and a scan
+//! whose tree, geometry and screenshot were read back separately.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::thread;
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -24,16 +33,17 @@ use pyo3::prelude::*;
 use regex::Regex;
 use serde_json::{json, Value};
 
+use crate::tree::element;
 use crate::ScannerError;
 
 pub const CHROME_PORT: u16 = 9222;
-const PROMPT: &[u8] = b"autouse> ";
-// A cold scan of a heavy page plus its settle legitimately takes seconds, and
-// element.rs has its own 30s navigation ceiling inside.
-const SCANNER_TIMEOUT: f64 = 90.0;
 // A blank tab is always about:blank — the URL the ADDRESS BAR shows. The logo
 // is painted into it afterwards with Page.setDocumentContent.
 const BLANK_URL: &str = "about:blank";
+
+// Ceiling on buffered CDP events. Deep enough for a navigation's worth of
+// chatter, shallow enough that a socket nobody is listening to cannot grow.
+const EVENT_CAP: usize = 2000;
 
 // Relative install paths under Program Files / Program Files (x86) /
 // LOCALAPPDATA, in the same browser preference order as the macOS list below.
@@ -94,9 +104,17 @@ pub type SResult<T> = Result<T, ScanErr>;
 /// Cosmetics callers swallow both, so the messages are never surfaced —
 /// they exist to keep the two paths legible.
 #[allow(dead_code)]
-enum CdpFail {
+pub enum CdpFail {
     Clean(String),
     Lost(String),
+}
+
+impl From<CdpFail> for ScanErr {
+    fn from(e: CdpFail) -> ScanErr {
+        match e {
+            CdpFail::Clean(m) | CdpFail::Lost(m) => ScanErr::Scanner(m),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -129,28 +147,6 @@ fn home_dir() -> PathBuf {
     match std::env::var_os("HOME").filter(|h| !h.is_empty()) {
         Some(h) => PathBuf::from(h),
         None => PathBuf::from(std::env::var_os("USERPROFILE").unwrap_or_default()),
-    }
-}
-
-/// Last `n` characters of a byte buffer, decoded lossily — Python's
-/// `buf.decode('utf-8', 'replace')[-n:]`.
-fn lossy_tail(buf: &[u8], n: usize) -> String {
-    let s = String::from_utf8_lossy(buf);
-    let count = s.chars().count();
-    if count <= n {
-        s.into_owned()
-    } else {
-        s.chars().skip(count - n).collect()
-    }
-}
-
-/// Python `str(float)` — "2.0" for a whole number, not "2".
-fn py_float_repr(v: f64) -> String {
-    let s = format!("{}", v);
-    if s.contains('.') || s.contains('e') || s.contains("inf") || s.contains("nan") {
-        s
-    } else {
-        format!("{s}.0")
     }
 }
 
@@ -253,6 +249,33 @@ fn page_targets(port: u16) -> Vec<Value> {
             .collect(),
         _ => Vec::new(),
     }
+}
+
+/// A tab's CDP target id, or "" — every caller wants the same field out of
+/// the Value /json/list hands back.
+pub fn target_id_of(target: &Value) -> &str {
+    target.get("id").and_then(Value::as_str).unwrap_or("")
+}
+
+/// Whether that tab is still open.
+pub fn tab_exists(port: u16, target_id: &str) -> bool {
+    page_targets(port)
+        .iter()
+        .any(|t| target_id_of(t) == target_id)
+}
+
+/// Close one tab by target id, and report whether it actually left Chrome's
+/// list. /json/close answers with plain text ("Target is closing"), so the
+/// only thing worth judging is the target going away.
+pub fn close_target(port: u16, target_id: &str) -> SResult<bool> {
+    chrome_http(port, &format!("/json/close/{target_id}"), "GET")?;
+    for _ in 0..20 {
+        if !tab_exists(port, target_id) {
+            return Ok(true);
+        }
+        sleep_s(0.1);
+    }
+    Ok(false)
 }
 
 /// True for the surfaces that carry no page of their own — including Chrome's
@@ -407,10 +430,19 @@ fn glow_source(glow_css: &PathBuf, glow_js: &PathBuf) -> &'static str {
 // every failure, and a dead socket just gets dropped and lazily redialed.
 // ---------------------------------------------------------------------------
 
-struct Cdp {
+pub struct Cdp {
     port: u16,
     ws: Option<tungstenite::WebSocket<TcpStream>>,
     id: u64,
+    /// Events seen while waiting for a reply. CDP interleaves them with
+    /// answers, and an action that has to wait for one (a navigation's
+    /// loadEventFired) would never see it if they were dropped on the floor.
+    events: Vec<Value>,
+    /// Answers that arrived for a request other than the one being waited on.
+    /// One call is in flight at a time, so this only ever holds a reply the
+    /// event drain happened to read first — but dropping it would strand the
+    /// caller waiting for an answer already off the wire.
+    replies: HashMap<u64, Value>,
     /// targetId -> sessionId (flatten mode)
     sessions: HashMap<String, String>,
     /// Bumped on every hang-up. Sessions and anything registered inside them
@@ -421,7 +453,15 @@ struct Cdp {
 
 impl Cdp {
     fn new(port: u16) -> Self {
-        Cdp { port, ws: None, id: 0, sessions: HashMap::new(), generation: 0 }
+        Cdp {
+            port,
+            ws: None,
+            id: 0,
+            events: Vec::new(),
+            replies: HashMap::new(),
+            sessions: HashMap::new(),
+            generation: 0,
+        }
     }
 
     fn connect(&mut self) -> Result<(), CdpFail> {
@@ -468,10 +508,105 @@ impl Cdp {
     fn drop_conn(&mut self) {
         self.ws = None; // dropping the WebSocket closes the TcpStream
         self.sessions.clear();
+        self.events.clear();
+        self.replies.clear();
         self.generation += 1;
     }
 
-    fn rpc(
+    /// Keep an event for whoever is waiting on one. Capped: an idle socket
+    /// must never grow a buffer for the life of the run.
+    fn stash(&mut self, m: Value) {
+        if self.events.len() < EVENT_CAP {
+            self.events.push(m);
+        }
+    }
+
+    /// Take every buffered event with this method name, oldest first.
+    pub fn take_events(&mut self, method: &str) -> Vec<Value> {
+        let mut hit = Vec::new();
+        self.events.retain(|e| {
+            if e.get("method").and_then(Value::as_str) == Some(method) {
+                hit.push(e.clone());
+                false
+            } else {
+                true
+            }
+        });
+        hit
+    }
+
+    /// Drop every buffered event. Whatever is left after a wait is stale by
+    /// definition, and left in place it grows for the life of the run.
+    pub fn clear_events(&mut self) {
+        self.events.clear();
+    }
+
+    /// Read what is waiting, stopping once the socket has been quiet for IDLE
+    /// or `ms` total has elapsed — `ms` is a cap, not a sleep.
+    ///
+    /// The count-based `drain` above never blocks, which is right for a
+    /// cosmetics pass tidying an idle socket. A loop WAITING for events (the
+    /// scanner's settle) needs the opposite: give the wire a moment to speak,
+    /// then come back. Spinning on a non-blocking drain would burn a core and
+    /// still see nothing.
+    pub fn drain_for(&mut self, ms: u64) {
+        const IDLE: Duration = Duration::from_millis(60);
+        let end = Instant::now() + Duration::from_millis(ms);
+        loop {
+            let left = end.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            let Some(ws) = self.ws.as_mut() else { return };
+            if ws
+                .get_ref()
+                .set_read_timeout(Some(IDLE.min(left)))
+                .is_err()
+            {
+                self.drop_conn();
+                return;
+            }
+            match ws.read() {
+                Ok(tungstenite::Message::Text(t)) => {
+                    match serde_json::from_str::<Value>(t.as_ref()) {
+                        Ok(m) if m.get("method").is_some() => self.stash(m),
+                        Ok(m) => {
+                            if let Some(id) = m.get("id").and_then(Value::as_u64) {
+                                if self.replies.len() < EVENT_CAP {
+                                    self.replies.insert(id, m);
+                                }
+                            }
+                        }
+                        Err(_) => continue,
+                    }
+                }
+                Ok(_) => continue,
+                Err(_) => break, // read timeout: the socket has gone quiet
+            }
+        }
+    }
+
+    /// Block until one `method` event arrives, or `timeout` runs out. True if
+    /// it arrived. Used by navigation, which is the one action whose result
+    /// the caller genuinely has to wait for.
+    pub fn wait_event(&mut self, method: &str, timeout: f64) -> bool {
+        let deadline = Instant::now() + Duration::from_secs_f64(timeout);
+        loop {
+            if !self.take_events(method).is_empty() {
+                return true;
+            }
+            if Instant::now() >= deadline || self.ws.is_none() {
+                return false;
+            }
+            self.drain(250);
+            if !self.take_events(method).is_empty() {
+                return true;
+            }
+            sleep_s(0.02);
+        }
+    }
+
+    pub fn rpc(
         &mut self,
         method: &str,
         params: Value,
@@ -496,6 +631,14 @@ impl Cdp {
             self.drop_conn();
             return Err(CdpFail::Lost(format!("{method}: connection lost")));
         }
+        // The answer may already be in hand: a drain reads whatever is on the
+        // wire, and that can include the reply to this very call.
+        if let Some(m) = self.replies.remove(&mid) {
+            if let Some(err) = m.get("error") {
+                return Err(CdpFail::Clean(format!("{method} -> {err}")));
+            }
+            return Ok(m.get("result").cloned().unwrap_or(json!({})));
+        }
         let deadline = Instant::now() + Duration::from_secs_f64(timeout);
         while Instant::now() < deadline {
             let ws = self.ws.as_mut().expect("still connected in loop");
@@ -505,6 +648,12 @@ impl Cdp {
                         Ok(v) => v,
                         Err(_) => continue,
                     };
+                    // Anything carrying a `method` is an event, not our
+                    // answer — keep it for a caller that is waiting on one.
+                    if m.get("method").is_some() {
+                        self.stash(m);
+                        continue;
+                    }
                     // Flatten-mode ids are scoped per session; ours are
                     // globally unique AND used strictly one-in-flight, so
                     // id+session matches exactly one reply.
@@ -517,6 +666,12 @@ impl Cdp {
                             return Err(CdpFail::Clean(format!("{method} -> {err}")));
                         }
                         return Ok(m.get("result").cloned().unwrap_or(json!({})));
+                    }
+                    // Someone else's answer — hold it rather than drop it.
+                    if let Some(other) = m.get("id").and_then(Value::as_u64) {
+                        if self.replies.len() < EVENT_CAP {
+                            self.replies.insert(other, m);
+                        }
                     }
                 }
                 Ok(tungstenite::Message::Close(_)) => {
@@ -538,16 +693,24 @@ impl Cdp {
         Err(CdpFail::Lost(format!("{method} timed out")))
     }
 
-    /// Discard whatever events are already waiting, so an idle socket can
-    /// never back up between cosmetics passes.
-    fn drain(&mut self, cap: usize) {
+    /// Read whatever is already waiting, so an idle socket can never back up
+    /// between passes. Events are buffered, not dropped.
+    pub fn drain(&mut self, cap: usize) {
         let Some(ws) = self.ws.as_mut() else { return };
         if ws.get_ref().set_nonblocking(true).is_err() {
             self.drop_conn();
             return;
         }
+        let mut seen: Vec<Value> = Vec::new();
         for _ in 0..cap {
             match ws.read() {
+                Ok(tungstenite::Message::Text(t)) => {
+                    if let Ok(v) = serde_json::from_str::<Value>(t.as_ref()) {
+                        if v.get("method").is_some() {
+                            seen.push(v);
+                        }
+                    }
+                }
                 Ok(_) => continue,
                 Err(tungstenite::Error::Io(e))
                     if e.kind() == std::io::ErrorKind::WouldBlock =>
@@ -560,13 +723,19 @@ impl Cdp {
                 }
             }
         }
+        for v in seen {
+            self.stash(v);
+        }
         if let Some(ws) = self.ws.as_mut() {
             ws.get_ref().set_nonblocking(false).ok();
         }
     }
 
     /// SessionId for a tab, dialing and attaching only when needed.
-    fn attach(&mut self, target_id: &str) -> Result<String, CdpFail> {
+    ///
+    /// This is THE session for that tab: the glow rides on it and every tool
+    /// borrows it to act. Nothing else opens one.
+    pub fn attach(&mut self, target_id: &str) -> Result<String, CdpFail> {
         if let Some(s) = self.sessions.get(target_id) {
             return Ok(s.clone());
         }
@@ -582,10 +751,40 @@ impl Cdp {
             .ok_or_else(|| CdpFail::Lost("attach returned no sessionId".into()))?
             .to_string();
         self.sessions.insert(target_id.to_string(), s.clone());
+        // Page.enable is what makes navigation events (loadEventFired) arrive
+        // at all, and the glow's document-start script fire. Focus emulation
+        // keeps a backgrounded tab believing it is focused, which matters the
+        // moment several agents share one browser: only one tab can really be
+        // in front, and pages that gate on focus would misbehave for the rest.
+        // Both are best-effort — a session that refuses either is still
+        // perfectly usable for reading and clicking.
+        let _ = self.rpc("Page.enable", json!({}), Some(&s), 5.0);
+        let _ = self.rpc(
+            "Emulation.setFocusEmulationEnabled",
+            json!({"enabled": true}),
+            Some(&s),
+            5.0,
+        );
         Ok(s)
     }
 
-    fn forget(&mut self, target_id: &str) {
+    /// Evaluate an expression in the tab and hand back its value. The only
+    /// things evaluated this way are the overlay's own entry points, which
+    /// answer `undefined` on a page that has no overlay.
+    pub fn eval(&mut self, session: &str, expression: String) -> Result<Value, CdpFail> {
+        let r = self.rpc(
+            "Runtime.evaluate",
+            json!({"expression": expression, "returnByValue": true}),
+            Some(session),
+            5.0,
+        )?;
+        Ok(r.get("result")
+            .and_then(|v| v.get("value"))
+            .cloned()
+            .unwrap_or(Value::Null))
+    }
+
+    pub fn forget(&mut self, target_id: &str) {
         self.sessions.remove(target_id);
     }
 }
@@ -680,68 +879,23 @@ pub fn launch_chrome_impl(port: u16, headless: bool) -> SResult<bool> {
 // the pyclass wrapper below releases the GIL around every call in here.
 // ---------------------------------------------------------------------------
 
-/// The scanner's stdout and stderr, merged into one byte buffer — Python's
-/// `stderr=subprocess.STDOUT`.
-///
-/// This used to be a hand-built POSIX pipe read with `poll()`, but
-/// pipe/fcntl/dup/poll are Unix-only and the web agent has to build on Windows
-/// too. One pump thread per stream plus a condvar gives the same contract with
-/// nothing platform-specific: bytes land the instant they arrive (the prompt
-/// carries no trailing newline, so anything line-buffered deadlocks), and a
-/// reader can wait with a deadline.
-struct ScannerOut {
-    state: Mutex<ScannerOutState>,
-    data: Condvar,
-}
-
-struct ScannerOutState {
-    buf: Vec<u8>,
-    /// Pump threads still running. 0 means every stream hit EOF.
-    open: usize,
-}
-
-impl ScannerOut {
-    fn new(streams: usize) -> Arc<Self> {
-        Arc::new(Self {
-            state: Mutex::new(ScannerOutState { buf: Vec::new(), open: streams }),
-            data: Condvar::new(),
-        })
-    }
-
-    /// Drain one stream into the shared buffer until it closes.
-    fn pump(self: &Arc<Self>, mut src: impl Read + Send + 'static) {
-        let me = Arc::clone(self);
-        thread::spawn(move || {
-            let mut tmp = [0u8; 65536];
-            loop {
-                match src.read(&mut tmp) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        let mut st = me.state.lock().unwrap();
-                        st.buf.extend_from_slice(&tmp[..n]);
-                        me.data.notify_all();
-                    }
-                }
-            }
-            let mut st = me.state.lock().unwrap();
-            st.open = st.open.saturating_sub(1);
-            me.data.notify_all();
-        });
-    }
-}
-
 pub struct ScannerInner {
     pub port: u16,
-    out_dir: PathBuf,
-    web_dir: PathBuf,
-    tree_dir: PathBuf,
+    pub out_dir: PathBuf,
     logo_page: PathBuf,
     glow_css: PathBuf,
     glow_js: PathBuf,
-    proc: Option<Child>,
-    stdin: Option<ChildStdin>,
-    /// The child's stdout+stderr, merged (like Python's stderr=subprocess.STDOUT).
-    out: Option<Arc<ScannerOut>>,
+    /// Scan tuning: the embedded defaults with tree/element.config.json
+    /// merged over them, loaded once and reloadable by hand.
+    cfg: Value,
+    cfg_path: PathBuf,
+    /// Sessions whose scan domains are already on. A session is long-lived and
+    /// enabling them is a round trip, so it happens once per tab.
+    prepared: HashSet<String>,
+    /// Whether scans come back with numbered marks painted on.
+    marks: bool,
+    /// Scans so far, for DEBUG's per-scan folders.
+    scan_count: usize,
     pub tree_text: String,
     pub image_b64: Option<String>,
     pub all_tabs: String,
@@ -759,9 +913,14 @@ pub struct ScannerInner {
     /// its own in a browser shared with other agents. Tab listing, cosmetics
     /// and the current-target lookup are all scoped to that tab.
     single_tab: bool,
-    /// The dedicated tab's CDP target id (single-tab mode only). Re-created
-    /// if the tab dies; never pointed at another agent's tab.
-    my_tab_id: Option<String>,
+    /// The tab this agent is driving, by CDP target id.
+    ///
+    /// Tracked in BOTH modes, and authoritative: the scanner is bound to it by
+    /// id, every tool acts on it, and the glow decorates it. It used to be
+    /// single-tab-only, with multi-tab runs guessing "whichever target
+    /// /json/list puts first" — a guess that was only ever right because the
+    /// scanner had just called bringToFront on its own tab.
+    tab_id: Option<String>,
 }
 
 // No Drop impl: the pump threads own the read ends now, and they exit on EOF
@@ -772,7 +931,7 @@ impl ScannerInner {
         // web/browser -> parent=web; web/tree holds the scanner crate, and
         // parent.parent=Auto_Use holds the shared logo.
         let web_dir = browser_dir.parent().map(|p| p.to_path_buf()).unwrap_or_default();
-        let tree_dir = web_dir.join("tree");
+        let cfg_path = web_dir.join("tree").join("element.config.json");
         let logo_page = web_dir
             .parent()
             .map(|p| p.to_path_buf())
@@ -790,14 +949,14 @@ impl ScannerInner {
                     .join("debug")
                     .join("scans")
             }),
-            web_dir,
-            tree_dir,
             logo_page,
             glow_css: browser_dir.join("glow").join("glow.css"),
             glow_js: browser_dir.join("glow").join("glow.js"),
-            proc: None,
-            stdin: None,
-            out: None,
+            cfg: element::load_config(&cfg_path.display().to_string()),
+            cfg_path,
+            prepared: HashSet::new(),
+            marks: true,
+            scan_count: 0,
             tree_text: String::new(),
             image_b64: None,
             all_tabs: String::new(),
@@ -809,133 +968,37 @@ impl ScannerInner {
             glow_armed: HashMap::new(),
             glow_gen: 0,
             single_tab,
-            my_tab_id: None,
+            tab_id: None,
         }
     }
 
-    // -- process -----------------------------------------------------------
+    // -- the scanned tab ---------------------------------------------------
 
-    fn element_bin(&self) -> PathBuf {
-        // Built as a second target of the web crate — one target/ for the
-        // whole web side.
-        self.web_dir.join("target").join("release").join(exe_name("element"))
-    }
-
-    /// Build element.rs on first use — a minute once, then never again.
-    fn ensure_binary(&self) -> SResult<PathBuf> {
-        let bin = self.element_bin();
-        if bin.exists() {
-            return Ok(bin);
-        }
-        let cargo = which("cargo")
-            .unwrap_or_else(|| home_dir().join(".cargo").join("bin").join(exe_name("cargo")));
-        if !cargo.exists() {
-            return Err(ScanErr::s(
-                "cargo not found — the page scanner is a Rust binary and needs \
-                 Rust installed (https://rustup.rs) to build once.",
-            ));
-        }
-        println!("Building the element scanner (first run, ~1 min)...");
-        let status = Command::new(&cargo)
-            .args(["build", "--release", "--manifest-path"])
-            .arg(self.web_dir.join("Cargo.toml"))
-            .current_dir(&self.web_dir)
-            .status()
-            .map_err(|e| ScanErr::s(format!("cargo build failed to start: {e}")))?;
-        if !status.success() {
-            return Err(ScanErr::s(format!("cargo build failed with {status}")));
-        }
-        if !bin.exists() {
-            return Err(ScanErr::s(format!("build succeeded but {} is missing", bin.display())));
-        }
-        Ok(bin)
-    }
-
-    fn proc_alive(&mut self) -> bool {
-        match self.proc.as_mut() {
-            Some(child) => matches!(child.try_wait(), Ok(None)),
-            None => false,
-        }
-    }
-
+    /// Make sure there IS a tab to read, and that this agent is bound to it.
+    ///
+    /// There is no process to start any more: scanning is a call on the
+    /// session below, so "start" means only "have somewhere to point it".
     pub fn start(&mut self) -> SResult<()> {
-        if self.proc_alive() {
-            return Ok(());
+        let alive = self.tab_id.as_deref().is_some_and(|id| tab_exists(self.port, id));
+        if !alive {
+            self.tab_id = if self.single_tab {
+                // Parallel mode: this agent drives ONE tab of its own. Create
+                // it (or re-create it if it died) and never point at another
+                // agent's tab.
+                Some(create_tab_impl(self.port)?)
+            } else {
+                // Shared with the human: adopt the tab the browser is already
+                // showing rather than opening another one on top of it.
+                ensure_tab_impl(self.port)?;
+                page_targets(self.port)
+                    .first()
+                    .map(|t| target_id_of(t).to_string())
+                    .filter(|id| !id.is_empty())
+            };
+            self.prepared.clear();
         }
-        let binary = self.ensure_binary()?;
         std::fs::create_dir_all(&self.out_dir)
             .map_err(|e| ScanErr::s(format!("could not create {}: {e}", self.out_dir.display())))?;
-        // element.rs binds to an existing target and errors if there is none,
-        // so the tab has to exist before it starts.
-        if self.single_tab {
-            // Parallel mode: this agent drives ONE tab of its own. Create it
-            // (or re-create it if it died along with the binary) and bind the
-            // scanner to it by exact target id — never to whatever tab another
-            // agent has in front.
-            let alive = self.my_tab_id.as_deref().is_some_and(|id| {
-                page_targets(self.port)
-                    .iter()
-                    .any(|t| t.get("id").and_then(Value::as_str) == Some(id))
-            });
-            if !alive {
-                self.my_tab_id = Some(create_tab_impl(self.port)?);
-            }
-        } else {
-            ensure_tab_impl(self.port)?;
-        }
-
-        // stdout AND stderr are pumped into one buffer (Python's stderr=STDOUT)
-        // by ScannerOut, so the prompt shows up the moment it is written — it
-        // has no trailing newline, so anything line-buffered deadlocks on it.
-        self.out = None;
-        let mut cmd = Command::new(&binary);
-        cmd.arg("--port")
-            .arg(self.port.to_string())
-            .arg("--out")
-            .arg(&self.out_dir)
-            .arg("--config")
-            .arg(self.tree_dir.join("element.config.json"))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        if let Some(id) = &self.my_tab_id {
-            // Bind by exact target id; the binary refuses to fall back to
-            // another tab if this one is gone.
-            cmd.arg("--target-id").arg(id);
-        }
-        // element is a console binary, so Windows gives it a console window of
-        // its own and the user watches a REPL banner they are not meant to
-        // drive. Everything it prints is already piped and consumed by
-        // read_until_prompt (which deliberately swallows that banner), so the
-        // window carries no information. Same flag the Python side passes on
-        // every spawn - see windows/controller/view.py. Nothing to do on Unix.
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-        let spawned = cmd.spawn();
-        let mut child = match spawned {
-            Ok(c) => c,
-            Err(e) => return Err(ScanErr::s(format!("could not start the scanner: {e}"))),
-        };
-        let (child_out, child_err) = (child.stdout.take(), child.stderr.take());
-        let out = ScannerOut::new(child_out.is_some() as usize + child_err.is_some() as usize);
-        if let Some(s) = child_out {
-            out.pump(s);
-        }
-        if let Some(s) = child_err {
-            out.pump(s);
-        }
-        self.stdin = child.stdin.take();
-        self.out = Some(out);
-        self.proc = Some(child);
-
-        // Consume the startup banner WITHOUT printing it — it is 18 lines of
-        // noise before every run. The text is still captured, so a failed
-        // start reports it in the error.
-        self.read_until_prompt()?;
 
         // If the surface we landed on is blank, put our own page on it. Only a
         // BLANK surface is replaced; a real page someone left open is never
@@ -955,294 +1018,195 @@ impl ScannerInner {
         Ok(())
     }
 
-    /// Quit the scanner. Chrome stays up — the browser outlives the run.
+    /// Let the tab go. Chrome stays up — the browser outlives the run — and so
+    /// does the tab; only this side's session is dropped.
     pub fn stop(&mut self) {
-        // Hanging up unregisters the glow script with its session, so nothing
-        // the user opens afterwards glows.
+        self.prepared.clear();
         self.cdp.drop_conn();
-        let Some(mut child) = self.proc.take() else {
-            self.stdin = None;
-            self.out = None;
-            return;
-        };
-        let alive = matches!(child.try_wait(), Ok(None));
-        if alive {
-            let quit_sent = self
-                .stdin
-                .as_mut()
-                .map(|w| w.write_all(b"q\n").and_then(|_| w.flush()).is_ok())
-                .unwrap_or(false);
-            let mut exited = false;
-            if quit_sent {
-                let deadline = Instant::now() + Duration::from_secs(10);
-                while Instant::now() < deadline {
-                    if !matches!(child.try_wait(), Ok(None)) {
-                        exited = true;
-                        break;
-                    }
-                    sleep_s(0.05);
-                }
-            }
-            if !exited {
-                child.kill().ok();
-                child.wait().ok();
-            }
-        }
-        self.stdin = None;
-        self.out = None;
     }
 
-    // -- protocol ----------------------------------------------------------
-
-    /// Read stdout up to the next `autouse> `. The prompt carries no trailing
-    /// newline; the deadline bounds the wait so a wedged binary surfaces as an
-    /// error instead of hanging the whole agent.
-    fn read_until_prompt(&mut self) -> SResult<String> {
-        let out = match self.out.as_ref() {
-            Some(o) => Arc::clone(o),
-            None => return Err(ScanErr::s("scanner has no output pipe")),
-        };
-        let mut buf: Vec<u8> = Vec::new();
-        let deadline = Instant::now() + Duration::from_secs_f64(SCANNER_TIMEOUT);
-        loop {
-            // Take everything the pumps have produced. Bytes move out of the
-            // shared buffer, so they are consumed exactly once — same contract
-            // as the raw read() this replaced.
-            let closed = {
-                let mut st = out.state.lock().unwrap();
-                buf.append(&mut st.buf);
-                st.open == 0
-            };
-            if buf.ends_with(PROMPT) {
-                let body = &buf[..buf.len() - PROMPT.len()];
-                return Ok(String::from_utf8_lossy(body).into_owned());
-            }
-            let exited = match self.proc.as_mut() {
-                None => true,
-                Some(child) => !matches!(child.try_wait(), Ok(None)),
-            };
-            if exited {
-                let code = self
-                    .proc
-                    .as_mut()
-                    .and_then(|c| c.try_wait().ok().flatten())
-                    .map(|st| {
-                        st.code()
-                            .map(|c| c.to_string())
-                            .unwrap_or_else(|| st.to_string())
-                    })
-                    .unwrap_or_else(|| "?".to_string());
-                return Err(ScanErr::s(format!(
-                    "scanner exited (code {code}): {}",
-                    lossy_tail(&buf, 400)
-                )));
-            }
-            if closed {
-                return Err(ScanErr::s(format!(
-                    "scanner closed its output: {}",
-                    lossy_tail(&buf, 400)
-                )));
-            }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Err(ScanErr::s(format!(
-                    "scanner did not respond within {SCANNER_TIMEOUT:.0}s: {}",
-                    lossy_tail(&buf, 400)
-                )));
-            }
-            check_py_signals()?;
-            // Cap the sleep at a second so Ctrl-C stays responsive, exactly as
-            // the old poll() timeout did.
-            let wait = remaining.min(Duration::from_secs(1));
-            let st = out.state.lock().unwrap();
-            if st.buf.is_empty() && st.open > 0 {
-                let _ = out.data.wait_timeout(st, wait);
-            }
-        }
+    /// Reload tree/element.config.json over the embedded defaults.
+    pub fn reload_config(&mut self) {
+        self.cfg = element::load_config(&self.cfg_path.display().to_string());
     }
 
-    fn cmd(&mut self, line: &str) -> SResult<String> {
-        if !self.proc_alive() {
-            self.start()?;
-        }
-        let payload = format!("{}\n", line.trim_end_matches('\n'));
-        let write_ok = self
-            .stdin
-            .as_mut()
-            .map(|w| w.write_all(payload.as_bytes()).and_then(|_| w.flush()))
-            .transpose();
-        if write_ok.is_err() || self.stdin.is_none() {
-            return Err(ScanErr::s("scanner stdin is closed"));
-        }
-        let out = self.read_until_prompt()?;
-        for ln in out.lines() {
-            if let Some(rest) = ln.strip_prefix("! ") {
-                // element.rs's failure convention
-                return Err(ScanErr::s(rest.trim().to_string()));
-            }
-        }
-        Ok(out)
+    /// Numbered marks on the screenshot, on or off.
+    pub fn set_marks(&mut self, on: bool) {
+        self.marks = on;
     }
 
     // -- scan --------------------------------------------------------------
 
+    /// Borrow the session for a read of the driven tab.
+    ///
+    /// The scan domains go on the first time a given tab is read: a session
+    /// outlives any one scan, so enabling them per scan would be a round trip
+    /// paid over and over for nothing.
+    fn on_page<T>(
+        &mut self,
+        f: impl FnOnce(&mut Cdp, &str) -> Result<T, String>,
+    ) -> SResult<T> {
+        let tid = self.current_target_id()?;
+        let sess = self.cdp.attach(&tid)?;
+        if !self.prepared.contains(&sess) {
+            element::prepare_session(&mut self.cdp, &sess).map_err(ScanErr::s)?;
+            self.prepared.insert(sess.clone());
+        }
+        // Whatever is buffered predates this scan and says nothing about it —
+        // and `settle` is about to count events to decide the page is quiet.
+        self.cdp.clear_events();
+        f(&mut self.cdp, &sess).map_err(ScanErr::s)
+    }
+
     /// Everything scan_elements does except the frontend callback, the glow
     /// pass and the timing stamp — those run in the pyclass wrapper so the
     /// callback fires without this lock held.
+    ///
+    /// The scan is a CALL now, on the session this side already holds. It used
+    /// to be a line written to a subprocess whose answer came back through
+    /// three files on disk, which meant the tree, the geometry and the
+    /// screenshot could each be from a different moment if anything went wrong
+    /// between writing and reading them.
     pub fn scan_core(&mut self) -> SResult<String> {
         self.start()?;
         // The click box is per-action and must not be frozen into the scan's
         // screenshot. The glow stays up: it is a thin, blurred edge the model
         // can ignore.
         self.unflash();
-        let out = self.cmd("s")?;
 
-        let raw = std::fs::read_to_string(self.out_dir.join("tree.txt")).unwrap_or_default();
-        // The binary stamps two `# ` header lines (url, then counters) ahead
-        // of the tree. The url is worth keeping; neither belongs in the
-        // model's <element_tree>.
-        self.url = String::new();
-        let body: &str = if raw.starts_with('#') {
-            let (head, rest) = match raw.find("\n\n") {
-                Some(i) => (&raw[..i], &raw[i + 2..]),
-                None => (raw.as_str(), ""),
-            };
-            // FIRST `# ` line is the url, second is the counters.
-            for ln in head.lines() {
-                if let Some(u) = ln.strip_prefix("# ") {
-                    self.url = u.trim().to_string();
-                    break;
-                }
-            }
-            if rest.is_empty() {
-                &raw
-            } else {
-                rest
-            }
-        } else {
-            &raw
-        };
-        self.tree_text = prune_empty_containers(body.trim());
+        let (marks, cfg) = (self.marks, self.cfg.clone());
+        let out = self.on_page(|cdp, sess| element::scan_page(cdp, sess, &cfg, marks))?;
 
-        self.image_b64 = std::fs::read(self.out_dir.join("shot.jpg"))
-            .ok()
+        self.url = out.url.clone();
+        self.tree_text = prune_empty_containers(out.tree.trim());
+        self.image_b64 = out
+            .screenshot
+            .as_deref()
             .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes));
-
         self.mapping = parse_mapping(&self.tree_text);
-        self.load_hits();
+        self.load_hits(&out);
         self.all_tabs = self.read_tabs();
-        Ok(out)
+
+        self.scan_count += 1;
+        let summary = format!(
+            "{} interactive, {} ms settle, {} sessions, {} frames skipped, \
+             {} occluded, {} noise",
+            out.count, out.settled_ms, out.sessions, out.skipped, out.occluded, out.noise
+        );
+        self.write_scan_files(&out, &summary);
+        Ok(summary)
     }
 
-    /// Fold the scan's geometry (hits.json, DEVICE px) into the element
-    /// mapping, converted to CSS px exactly once, here.
-    fn load_hits(&mut self) {
-        self.dpr = 1.0;
-        let data: Value = match std::fs::read_to_string(self.out_dir.join("hits.json"))
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-        {
-            Some(v) => v,
-            None => return,
-        };
-        let dpr = data.get("dpr").and_then(Value::as_f64).unwrap_or(1.0);
-        self.dpr = if dpr == 0.0 { 1.0 } else { dpr };
-        let Some(hits) = data.get("hits").and_then(Value::as_object) else { return };
-        for (key, rect) in hits {
-            let Some(entry) = self.mapping.get_mut(key.as_str()) else { continue };
-            let Some(vals) = rect.as_array() else { continue };
-            if vals.len() != 4 {
-                continue;
-            }
-            let mut css = [0.0f64; 4];
-            let mut ok = true;
-            for (i, v) in vals.iter().enumerate() {
-                match v.as_f64() {
-                    Some(f) => css[i] = f / self.dpr,
-                    None => {
-                        ok = false;
-                        break;
-                    }
-                }
-            }
-            if !ok {
-                continue;
-            }
-            let [x, y, w, h] = css;
+    /// This scan on disk: one always-overwritten set under `out_dir`.
+    ///
+    /// Nothing reads it back — the scan's results are already in hand. It is
+    /// written to be LOOKED at, which is why a failure here is swallowed: a
+    /// full disk must not cost the agent a step.
+    fn write_scan_files(&self, out: &element::ScanOut, summary: &str) {
+        let header = format!("# {}\n# {summary}\n\n", out.url);
+        let _ = std::fs::write(
+            self.out_dir.join("tree.txt"),
+            format!("{header}{}\n", out.tree),
+        );
+        // Geometry beside the tree, NOT inside it: tree.txt goes to the model
+        // verbatim and coordinates would be noise there.
+        let mut hits = serde_json::Map::new();
+        for (i, r) in &out.hits {
+            hits.insert(i.to_string(), json!([r[0], r[1], r[2], r[3]]));
+        }
+        let _ = std::fs::write(
+            self.out_dir.join("hits.json"),
+            serde_json::to_string(&json!({"dpr": out.dpr, "hits": hits})).unwrap_or_default(),
+        );
+        if let Some(bytes) = out.screenshot.as_deref() {
+            let _ = std::fs::write(self.out_dir.join("shot.jpg"), bytes);
+        }
+        if element::DEBUG {
+            let _ = element::write_debug(
+                self.scan_count,
+                &header,
+                &out.tree,
+                out.screenshot.as_deref(),
+            );
+        }
+    }
+
+    /// Fold the scan's geometry (DEVICE px) into the element mapping,
+    /// converted to CSS px exactly once, here.
+    fn load_hits(&mut self, out: &element::ScanOut) {
+        self.dpr = if out.dpr == 0.0 { 1.0 } else { out.dpr };
+        for (idx, rect) in &out.hits {
+            let Some(entry) = self.mapping.get_mut(&idx.to_string()) else { continue };
+            let [x, y, w, h] = rect.map(|v| v / self.dpr);
             entry["rect"] = json!([x, y, w, h]);
             entry["point"] = json!([x + w / 2.0, y + h / 2.0]);
         }
     }
 
-    /// `<all_tabs>` body: one line per open tab, current one marked. The
-    /// binary numbers tabs from 0; the model-facing list is 1-based.
-    fn read_tabs(&mut self) -> String {
+    /// One `<all_tabs>` line for a tab: `[n] url (current) - title`.
+    fn tab_line(&self, n: usize, target: &Value, current: bool) -> String {
+        let url = target.get("url").and_then(Value::as_str).unwrap_or("");
+        let title = target.get("title").and_then(Value::as_str).unwrap_or("");
+        let mut line = format!("[{n}] {}", if url.is_empty() { BLANK_URL } else { url });
+        if current {
+            line.push_str(" (current)");
+        }
+        if !title.is_empty() {
+            line.push_str(&format!(" - {title}"));
+        }
+        line
+    }
+
+    /// `<all_tabs>` body: one line per open tab, the driven one marked.
+    ///
+    /// Read straight from Chrome's /json/list — the SAME list close_tab and
+    /// switch_tab index into, so the model-facing [n] and the tab those tools
+    /// act on cannot drift apart. It used to come from the scanner
+    /// subprocess's own `t` command and get regex-parsed back out of its
+    /// stdout — a second listing of the same thing that only agreed by luck.
+    pub fn read_tabs(&mut self) -> String {
+        let current = self.tab_id.clone().unwrap_or_default();
+        let targets = self.open_tabs();
         if self.single_tab {
             // One dedicated tab: the model always sees exactly its own tab as
             // [1]. Other agents' tabs in the shared browser never appear.
-            let Some(id) = self.my_tab_id.clone() else {
-                return String::new();
+            return match targets.first() {
+                Some(t) => self.tab_line(1, t, true),
+                None => String::new(),
             };
-            for t in page_targets(self.port) {
-                if t.get("id").and_then(Value::as_str) == Some(id.as_str()) {
-                    let url = t.get("url").and_then(Value::as_str).unwrap_or("");
-                    let title = t.get("title").and_then(Value::as_str).unwrap_or("");
-                    let mut line = format!(
-                        "[1] {}",
-                        if url.is_empty() { "about:blank" } else { url }
-                    );
-                    line.push_str(" (current)");
-                    if !title.is_empty() {
-                        line.push_str(&format!(" - {title}"));
-                    }
-                    return line;
-                }
-            }
-            return String::new();
         }
-        let out = match self.cmd("t") {
-            Ok(o) => o,
-            Err(ScanErr::Scanner(_)) => return String::new(),
-            Err(_) => return String::new(),
-        };
-        let re = re_tab_line();
-        let mut lines: Vec<String> = Vec::new();
-        for ln in out.lines() {
-            let Some(m) = re.captures(ln) else { continue };
-            let current = m.get(1).map(|g| g.as_str()).unwrap_or("");
-            let idx: i64 = m
-                .get(2)
-                .and_then(|g| g.as_str().parse().ok())
-                .unwrap_or(0);
-            let title = m.get(3).map(|g| g.as_str()).unwrap_or("");
-            let url = m.get(4).map(|g| g.as_str()).unwrap_or("");
-            let mut line = format!(
-                "[{}] {}",
-                idx + 1,
-                if url.is_empty() { "about:blank" } else { url }
-            );
-            if current == "*" {
-                line.push_str(" (current)");
-            }
-            if !title.is_empty() {
-                line.push_str(&format!(" - {title}"));
-            }
-            lines.push(line);
-        }
-        lines.join("\n")
+        targets
+            .iter()
+            .enumerate()
+            .map(|(i, t)| self.tab_line(i + 1, t, target_id_of(t) == current))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
-    /// Url of the tab the scanner is bound to, from its own tab listing.
-    fn current_tab_url(&mut self) -> String {
-        let tabs = self.read_tabs();
-        for ln in tabs.lines() {
-            if ln.contains("(current)") {
-                if let Some(m) = re_cur_tab().captures(ln) {
-                    return m.get(1).map(|g| g.as_str().to_string()).unwrap_or_default();
-                }
-            }
+    /// The tabs this agent may see and act on, in Chrome's own order. In
+    /// single-tab mode that is exactly one tab: its own.
+    pub fn open_tabs(&self) -> Vec<Value> {
+        let mut targets = page_targets(self.port);
+        if self.single_tab {
+            let mine = self.tab_id.clone().unwrap_or_default();
+            targets.retain(|t| target_id_of(t) == mine);
         }
-        String::new()
+        targets
+    }
+
+    /// Url of the tab this agent is driving, straight from Chrome's list.
+    /// It used to be recovered by regex out of the rendered `<all_tabs>`
+    /// text — parsing a string this side had just formatted.
+    fn current_tab_url(&self) -> String {
+        let Ok(id) = self.current_target_id() else {
+            return String::new();
+        };
+        page_targets(self.port)
+            .iter()
+            .find(|t| target_id_of(t) == id)
+            .and_then(|t| t.get("url").and_then(Value::as_str))
+            .unwrap_or("")
+            .to_string()
     }
 
     /// Current page's host — the browser's answer to macOS's app name.
@@ -1341,27 +1305,18 @@ impl ScannerInner {
         Ok(())
     }
 
-    /// Target id of the tab the scanner is bound to. Chrome's /json/list is
-    /// ordered most-recently-USED and the scanner calls Page.bringToFront on
-    /// its own tab, so the first page target is the one being driven. In
-    /// single-tab mode that heuristic would point at OTHER agents' tabs, so
-    /// the tracked dedicated-tab id is authoritative instead.
-    fn current_target_id(&self) -> Result<String, CdpFail> {
-        if self.single_tab {
-            return self
-                .my_tab_id
-                .clone()
-                .ok_or_else(|| CdpFail::Lost("no dedicated tab yet".into()));
-        }
-        let targets = page_targets(self.port);
-        if targets.is_empty() {
-            return Err(CdpFail::Lost("no page target".into()));
-        }
-        Ok(targets[0]
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string())
+    /// Target id of the tab this agent is driving.
+    ///
+    /// The tracked id, in both modes. This used to guess in multi-tab runs —
+    /// "whichever target /json/list puts first", which is Chrome's
+    /// most-recently-USED order and was only ever right because the scanner
+    /// had just called bringToFront on its own tab. A user clicking another
+    /// tab between steps was enough to break it.
+    pub fn current_target_id(&self) -> Result<String, CdpFail> {
+        self.tab_id
+            .clone()
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| CdpFail::Lost("no tab bound yet".into()))
     }
 
     /// Bloom over `rect` (CSS px) — the neon mark on whatever was clicked or
@@ -1463,7 +1418,7 @@ impl ScannerInner {
         if self.single_tab {
             // Decorate only this agent's own tab — never inject scripts into
             // (or hold sessions on) tabs that belong to parallel agents.
-            let mine = self.my_tab_id.clone().unwrap_or_default();
+            let mine = self.tab_id.clone().unwrap_or_default();
             targets.retain(|t| t.get("id").and_then(Value::as_str) == Some(mine.as_str()));
         }
         self.cdp.drain(500);
@@ -1520,148 +1475,104 @@ impl ScannerInner {
         self.cdp.drop_conn();
     }
 
-    // -- actions -----------------------------------------------------------
+    // -- the shared session --------------------------------------------------
+    //
+    // ONE CDP session per tab, dialled by this side and lent out. Every tool
+    // that acts on the page borrows it for the length of a single operation
+    // and does its own protocol work; the scanner borrows the same one to
+    // read. Nothing else opens a connection to Chrome — there is exactly one
+    // socket, and this side owns it.
 
-    /// Paint the logo into the current tab, leaving the address bar alone.
+    /// Borrow this agent's session, attached to the tab it is driving.
+    ///
+    /// The closure gets the live `Cdp` and the tab's sessionId. Failures come
+    /// back as ordinary scanner errors, so a tool can report "the tab went
+    /// away" the same way it reports anything else.
+    pub fn with_tab<T>(
+        &mut self,
+        f: impl FnOnce(&mut Cdp, &str) -> Result<T, CdpFail>,
+    ) -> SResult<T> {
+        let tid = self.current_target_id()?;
+        let sess = self.cdp.attach(&tid)?;
+        Ok(f(&mut self.cdp, &sess)?)
+    }
+
+    /// Point this agent at another tab: the scanner re-binds to it, the
+    /// window follows, and the glow is re-armed on it.
+    pub fn bind_tab(&mut self, target_id: &str) -> SResult<()> {
+        if !tab_exists(self.port, target_id) {
+            return Err(ScanErr::s("that tab is no longer open"));
+        }
+        self.tab_id = Some(target_id.to_string());
+        // Nothing to tell a subprocess any more: the next scan reads whatever
+        // tab this points at, over the session already open on it.
+        self.bring_to_front();
+        self.glow_tabs();
+        Ok(())
+    }
+
+    /// Bring the driven tab to the front of the browser window, so a headful
+    /// run visibly follows the agent. Best-effort: a tab that refuses to come
+    /// forward is still perfectly readable and clickable.
+    pub fn bring_to_front(&mut self) {
+        let _ = self.with_tab(|cdp, sess| {
+            cdp.rpc("Page.bringToFront", json!({}), Some(sess), 5.0)
+        });
+    }
+
+    /// Forget a tab's session — it closed, and everything inside it died.
+    pub fn forget_tab(&mut self, target_id: &str) {
+        self.cdp.forget(target_id);
+    }
+
+    /// Adopt a freshly created tab: bind to it and dress it before anything
+    /// navigates, so its first real page glows from its first paint.
+    pub fn adopt_tab(&mut self, target_id: &str) -> SResult<()> {
+        self.bind_tab(target_id)
+    }
+
+    /// Open a tab and drive it. The caller navigates it afterwards.
+    pub fn create_tab(&mut self) -> SResult<String> {
+        let id = create_tab_impl(self.port)?;
+        self.adopt_tab(&id)?;
+        Ok(id)
+    }
+
+    // -- page dressing ---------------------------------------------------
+
+    /// Paint the logo into the driven tab, leaving the address bar alone.
+    ///
+    /// Page.setDocumentContent, not a navigation and not script execution: a
+    /// file:// url would show its whole path in the address bar, while this
+    /// swaps only the content and leaves about:blank in the bar.
     pub fn show_blank_page(&mut self) -> SResult<String> {
         let html = blank_html_impl(&self.logo_page);
         if html.is_empty() {
             return Ok(String::new());
         }
-        let out = self.cmd(&format!("bl {html}"))?;
+        self.with_tab(|cdp, sess| {
+            let fid = cdp
+                .rpc("Page.getFrameTree", json!({}), Some(sess), 5.0)?
+                .get("frameTree")
+                .and_then(|f| f.get("frame"))
+                .and_then(|f| f.get("id"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if fid.is_empty() {
+                return Err(CdpFail::Lost("no frame to render into".into()));
+            }
+            cdp.rpc(
+                "Page.setDocumentContent",
+                json!({"frameId": fid, "html": html}),
+                Some(sess),
+                5.0,
+            )
+        })?;
         // The paint carries the icon link but Chrome dropped its announcement
         // mid-rewrite — glow_tabs re-fires it.
         self.glow_tabs();
-        Ok(out)
-    }
-
-    pub fn new_tab(&mut self, url: &str) -> SResult<String> {
-        // An empty value means "a blank tab". A DESTINATION also goes
-        // blank-first: the tab is created empty, armed with the glow script,
-        // and only then navigated — its first real page glows from its first
-        // paint instead of arriving bare and getting dressed a beat later.
-        let target = url.trim().to_string();
-        let out = self.cmd(&format!("n {BLANK_URL}"))?;
-        self.glow_tabs(); // arm the tab that was just created
-        if !target.is_empty() {
-            return self.goto(&target);
-        }
-        self.show_blank_page()?;
-        Ok(out)
-    }
-
-    pub fn switch_tab(&mut self, index: i64) -> SResult<String> {
-        // Model-facing tab numbers are 1-based; the binary's `u` is 0-based.
-        // This is the only place the shift is undone.
-        self.cmd(&format!("u {}", index - 1))
-    }
-
-    pub fn close_tab(&mut self, index: i64) -> SResult<String> {
-        // Tab LIFECYCLE is this side's business — the same side that creates
-        // tabs over Chrome's HTTP endpoint (ensure_tab) closes them there
-        // too; element.rs only ever PICKS a target from what exists. Both
-        // sides read the same /json/list, so the model-facing [n] (1-based)
-        // maps straight onto that ordering.
-        let idx = index - 1;
-        let targets = page_targets(self.port);
-        if idx < 0 || idx as usize >= targets.len() {
-            return Err(ScanErr::s("no such tab"));
-        }
-        // The LAST tab is refused rather than closed: a browser with zero
-        // page targets leaves the scanner nothing to bind to, and "close the
-        // last tab" almost always means "navigate it".
-        if targets.len() <= 1 {
-            return Err(ScanErr::s("cannot close the last tab - navigate it instead"));
-        }
-        let victim_id = targets[idx as usize]
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        let was_current = self
-            .current_target_id()
-            .map(|id| id == victim_id)
-            .unwrap_or(false);
-        // /json/close answers with plain text ("Target is closing");
-        // chrome_http tolerates that, and success is judged by the only
-        // thing that matters — the target leaving the list.
-        chrome_http(self.port, &format!("/json/close/{victim_id}"), "GET")?;
-        let mut gone = false;
-        for _ in 0..20 {
-            let still_there = page_targets(self.port)
-                .iter()
-                .any(|t| t.get("id").and_then(Value::as_str) == Some(victim_id.as_str()));
-            if !still_there {
-                gone = true;
-                break;
-            }
-            sleep_s(0.1);
-        }
-        if !gone {
-            return Err(ScanErr::s("tab did not close"));
-        }
-        // The cosmetics session died with the tab.
-        self.cdp.forget(&victim_id);
-        if was_current {
-            // The scanner's bound tab is gone, and its session with it —
-            // re-bind the way a browser does, to the neighbour now holding
-            // this slot (or the new last tab when the closed one was last).
-            let remaining = page_targets(self.port);
-            let j = (idx as usize).min(remaining.len().saturating_sub(1));
-            return self.cmd(&format!("u {j}"));
-        }
         Ok(String::new())
-    }
-
-    pub fn goto(&mut self, url: &str) -> SResult<String> {
-        self.cmd(&format!("g {url}"))
-    }
-
-    pub fn reload(&mut self) -> SResult<String> {
-        self.cmd("r")
-    }
-
-    pub fn back(&mut self) -> SResult<String> {
-        self.cmd("bk")
-    }
-
-    pub fn forward(&mut self) -> SResult<String> {
-        self.cmd("fw")
-    }
-
-    pub fn click_point(&mut self, rect: &[f64; 4], hold_seconds: f64, times: i64) -> SResult<String> {
-        let [x, y, w, h] = rect;
-        let ms = (hold_seconds.max(0.0) * 1000.0) as i64;
-        let n = times.clamp(1, 2);
-        self.cmd(&format!("cx {x:.1} {y:.1} {w:.1} {h:.1} {ms} {n}"))
-    }
-
-    pub fn scroll_point(&mut self, rect: &[f64; 4], dx: f64, dy: f64) -> SResult<String> {
-        let [x, y, w, h] = rect;
-        let (cx, cy) = (x + w / 2.0, y + h / 2.0);
-        self.cmd(&format!("sx {cx:.1} {cy:.1} {dx:.1} {dy:.1}"))
-    }
-
-    pub fn input_point(&mut self, rect: &[f64; 4], value: &str, enter: bool) -> SResult<String> {
-        let [x, y, w, h] = rect;
-        let value = value.replace('\r', " ").replace('\n', " ");
-        let flag = if enter { 1 } else { 0 };
-        self.cmd(&format!("ix {x:.1} {y:.1} {w:.1} {h:.1} {flag} {value}"))
-    }
-
-    pub fn click(&mut self, index: i64) -> SResult<String> {
-        self.cmd(&format!("cl {index}"))
-    }
-
-    pub fn hold_click(&mut self, index: i64, seconds: f64) -> SResult<String> {
-        self.cmd(&format!("hd {index} {}", py_float_repr(seconds)))
-    }
-
-    pub fn input(&mut self, index: i64, value: &str, enter: bool) -> SResult<String> {
-        // A newline would end the command line itself; the model means
-        // "submit", which is exactly what `enter` is for.
-        let value = value.replace('\r', " ").replace('\n', " ");
-        self.cmd(&format!("{} {index} {value}", if enter { "ie" } else { "in" }))
     }
 }
 
@@ -1699,16 +1610,6 @@ fn re_name() -> &'static Regex {
 fn re_role() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r#"role="([^"]*)""#).unwrap())
-}
-
-fn re_tab_line() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"^\s*(\*?)\s*\[(\d+)\]\s*(.*?)\s*\|\s*(\S*)\s*$").unwrap())
-}
-
-fn re_cur_tab() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"^\[\d+\]\s+(\S+)").unwrap())
 }
 
 /// `[N] <tag ...>name</tag>` lines -> {"N": {...}}. Only ids the model was
@@ -1752,19 +1653,6 @@ fn parse_mapping(tree_text: &str) -> serde_json::Map<String, Value> {
 
 fn py_str(v: &Bound<'_, PyAny>) -> PyResult<String> {
     v.str()?.extract()
-}
-
-fn py_int(v: &Bound<'_, PyAny>) -> PyResult<i64> {
-    if let Ok(i) = v.extract::<i64>() {
-        return Ok(i);
-    }
-    if v.extract::<f64>().is_ok() && !v.is_instance_of::<pyo3::types::PyString>() {
-        return Ok(v.extract::<f64>()? as i64);
-    }
-    let s: String = py_str(v)?;
-    s.trim()
-        .parse::<i64>()
-        .map_err(|_| PyValueError::new_err(format!("invalid literal for int() with base 10: '{s}'")))
 }
 
 fn py_float(v: &Bound<'_, PyAny>) -> PyResult<f64> {
@@ -1957,79 +1845,6 @@ impl BrowserScanner {
         self.locked(py, |s| s.show_blank_page())
     }
 
-    #[pyo3(signature = (url=""))]
-    fn new_tab(&self, py: Python<'_>, url: &str) -> PyResult<String> {
-        let url = url.to_string();
-        self.locked(py, move |s| s.new_tab(&url))
-    }
-
-    fn switch_tab(&self, py: Python<'_>, index: &Bound<'_, PyAny>) -> PyResult<String> {
-        let idx = py_int(index)?;
-        self.locked(py, move |s| s.switch_tab(idx))
-    }
-
-    fn close_tab(&self, py: Python<'_>, index: &Bound<'_, PyAny>) -> PyResult<String> {
-        let idx = py_int(index)?;
-        self.locked(py, move |s| s.close_tab(idx))
-    }
-
-    fn goto(&self, py: Python<'_>, url: &str) -> PyResult<String> {
-        let url = url.to_string();
-        self.locked(py, move |s| s.goto(&url))
-    }
-
-    fn reload(&self, py: Python<'_>) -> PyResult<String> {
-        self.locked(py, |s| s.reload())
-    }
-
-    /// Step back one page in this tab's history. Raises when there is nowhere
-    /// to go — "already at the first page" is an answer, not a silent no-op.
-    fn back(&self, py: Python<'_>) -> PyResult<String> {
-        self.locked(py, |s| s.back())
-    }
-
-    /// Step forward one page in this tab's history. Raises at the end.
-    fn forward(&self, py: Python<'_>) -> PyResult<String> {
-        self.locked(py, |s| s.forward())
-    }
-
-    /// Click the centre of `rect` (CSS px, [x, y, w, h]).
-    #[pyo3(signature = (rect, hold_seconds=None, times=None))]
-    fn click_point(
-        &self,
-        py: Python<'_>,
-        rect: &Bound<'_, PyAny>,
-        hold_seconds: Option<&Bound<'_, PyAny>>,
-        times: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<String> {
-        let r = rect4(rect)?;
-        let hold = match hold_seconds {
-            Some(v) if !v.is_none() => py_float(v)?,
-            _ => 0.0,
-        };
-        let n = match times {
-            Some(v) if !v.is_none() && v.is_truthy()? => py_int(v)?,
-            _ => 1,
-        };
-        self.locked(py, move |s| s.click_point(&r, hold, n))
-    }
-
-    /// Turn a wheel by (dx, dy) CSS px over the centre of `rect`. Which
-    /// surface moves is decided by the browser: the scroller under that point
-    /// takes the delta.
-    fn scroll_point(
-        &self,
-        py: Python<'_>,
-        rect: &Bound<'_, PyAny>,
-        dx: &Bound<'_, PyAny>,
-        dy: &Bound<'_, PyAny>,
-    ) -> PyResult<String> {
-        let r = rect4(rect)?;
-        let dx = py_float(dx)?;
-        let dy = py_float(dy)?;
-        self.locked(py, move |s| s.scroll_point(&r, dx, dy))
-    }
-
     /// Where the surfaces under `rect`'s centre currently sit, as
     /// [innerX, innerY, pageX, pageY]; None when it cannot be read.
     fn scroll_probe<'py>(
@@ -2046,57 +1861,6 @@ impl BrowserScanner {
             Some(v) => Ok(Some(pythonize::pythonize(py, &v)?)),
             None => Ok(None),
         }
-    }
-
-    /// Type into the element at `rect` (CSS px), optionally submitting.
-    #[pyo3(signature = (rect, value, enter=None))]
-    fn input_point(
-        &self,
-        py: Python<'_>,
-        rect: &Bound<'_, PyAny>,
-        value: &Bound<'_, PyAny>,
-        enter: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<String> {
-        let r = rect4(rect)?;
-        let text = py_str(value)?;
-        let submit = match enter {
-            Some(v) => v.is_truthy()?,
-            None => false,
-        };
-        self.locked(py, move |s| s.input_point(&r, &text, submit))
-    }
-
-    fn click(&self, py: Python<'_>, index: &Bound<'_, PyAny>) -> PyResult<String> {
-        let idx = py_int(index)?;
-        self.locked(py, move |s| s.click(idx))
-    }
-
-    fn hold_click(
-        &self,
-        py: Python<'_>,
-        index: &Bound<'_, PyAny>,
-        seconds: &Bound<'_, PyAny>,
-    ) -> PyResult<String> {
-        let idx = py_int(index)?;
-        let secs = py_float(seconds)?;
-        self.locked(py, move |s| s.hold_click(idx, secs))
-    }
-
-    #[pyo3(signature = (index, value, enter=None))]
-    fn input(
-        &self,
-        py: Python<'_>,
-        index: &Bound<'_, PyAny>,
-        value: &Bound<'_, PyAny>,
-        enter: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<String> {
-        let idx = py_int(index)?;
-        let text = py_str(value)?;
-        let submit = match enter {
-            Some(v) => v.is_truthy()?,
-            None => false,
-        };
-        self.locked(py, move |s| s.input(idx, &text, submit))
     }
 
     /// Bloom over `rect` — returns whether it drew, and never raises.
@@ -2131,6 +1895,44 @@ impl BrowserScanner {
     #[getter]
     fn viewport_rect(&self, py: Python<'_>) -> PyResult<Option<Vec<f64>>> {
         self.locked(py, |s| Ok(s.viewport_rect().map(|r| r.to_vec())))
+    }
+
+    /// The open tabs as `<all_tabs>` would show them, read fresh.
+    fn tabs(&self, py: Python<'_>) -> PyResult<String> {
+        self.locked(py, |s| Ok(s.read_tabs()))
+    }
+
+    /// Read tab [n] from `tabs()` instead of the current one.
+    ///
+    /// The agent uses the switch_tab TOOL, which does this and reports it to
+    /// the model. This is the same move without the reporting, for driving the
+    /// scanner by hand.
+    fn bind_tab(&self, py: Python<'_>, index: usize) -> PyResult<String> {
+        self.locked(py, move |s| {
+            let tabs = s.open_tabs();
+            let target = tabs
+                .get(index.saturating_sub(1))
+                .map(|t| target_id_of(t).to_string())
+                .ok_or_else(|| ScanErr::s(format!("no tab [{index}]")))?;
+            s.bind_tab(&target)?;
+            Ok(target)
+        })
+    }
+
+    /// Numbered marks painted on the screenshot, on or off.
+    fn set_marks(&self, py: Python<'_>, on: bool) -> PyResult<()> {
+        self.locked(py, move |s| {
+            s.set_marks(on);
+            Ok(())
+        })
+    }
+
+    /// Re-read tree/element.config.json without restarting.
+    fn reload_config(&self, py: Python<'_>) -> PyResult<()> {
+        self.locked(py, |s| {
+            s.reload_config();
+            Ok(())
+        })
     }
 
     #[getter("_all_tabs")]

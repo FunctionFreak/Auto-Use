@@ -13,8 +13,8 @@ use pyo3::prelude::*;
 
 // One crate for the whole web side — every subdirectory's .rs files compile
 // into this single cdylib (one target/, one agent_native.so, both at web/).
-// web/tree's element binary can fold in as a second build target when it
-// converts.
+// Nothing here builds a second binary: the page scanner used to, and is a
+// module now.
 pub mod agent {
     pub mod main_driver;
 }
@@ -23,13 +23,19 @@ pub mod agent {
 #[path = "browser/browser.rs"]
 pub mod browser;
 pub mod controller;
+// The page scanner. It used to build as a second binary of this package and
+// run as a subprocess; it is a plain module now, reading pages over the one
+// CDP session browser.rs owns.
+pub mod tree {
+    pub mod element;
+}
 pub mod llm_provider;
 
 pyo3::create_exception!(
     agent_native,
     ScannerError,
     pyo3::exceptions::PyRuntimeError,
-    "The scanner binary failed, refused a command, or stopped answering."
+    "The page scanner failed, or the browser stopped answering."
 );
 
 /// Auto_Use/web — the directory holding this extension module, resolved

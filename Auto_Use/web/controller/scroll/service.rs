@@ -16,13 +16,39 @@ use std::time::Duration;
 use pyo3::prelude::*;
 use serde_json::{json, Map, Value};
 
-use crate::browser::ScannerInner;
+use crate::browser::{Cdp, CdpFail, ScannerInner};
 use crate::controller::service::{
     label_for, rect_for, resolve_element_id, scan_op, with_box, ActErr, ActResult, VIEWPORT_ID,
 };
 use crate::agent::main_driver::view::py_str_of;
 
 pub const DIRECTIONS: [&str; 4] = ["up", "down", "left", "right"];
+
+/// Turn a wheel by (dx, dy) over the centre of `rect`, in CSS pixels.
+///
+/// The pointer is moved first: a scroller that has never seen the pointer may
+/// ignore the wheel, and hover-driven panels need the move anyway to be the
+/// thing under it. Dispatched over the session the browser side lends out —
+/// no JavaScript in the page, and nothing here has to know WHICH surface will
+/// take the delta.
+fn wheel(cdp: &mut Cdp, sess: &str, rect: &[f64; 4], dx: f64, dy: f64) -> Result<(), CdpFail> {
+    let [x, y, w, h] = *rect;
+    let (x, y) = (x + w / 2.0, y + h / 2.0);
+    cdp.rpc(
+        "Input.dispatchMouseEvent",
+        json!({"type": "mouseMoved", "x": x, "y": y, "buttons": 0}),
+        Some(sess),
+        5.0,
+    )?;
+    cdp.rpc(
+        "Input.dispatchMouseEvent",
+        json!({"type": "mouseWheel", "x": x, "y": y,
+               "deltaX": dx, "deltaY": dy, "buttons": 0}),
+        Some(sess),
+        5.0,
+    )?;
+    Ok(())
+}
 
 /// A step is a fraction of the visible surface rather than a pixel count, so
 /// it means the same thing on a laptop and on a tall monitor. Less than a
@@ -107,9 +133,13 @@ pub fn scroll(
     if idx == VIEWPORT_ID {
         // No bloom for the page: it would be a full-screen flash, which says
         // nothing about what moved.
-        scan_op(py, scanner, |s| s.scroll_point(&rect, dx, dy))?;
+        scan_op(py, scanner, |s| {
+            s.with_tab(|cdp, sess| wheel(cdp, sess, &rect, dx, dy))
+        })?;
     } else {
-        with_box(py, scanner, &rect, |s| s.scroll_point(&rect, dx, dy))?;
+        with_box(py, scanner, &rect, |s| {
+            s.with_tab(|cdp, sess| wheel(cdp, sess, &rect, dx, dy))
+        })?;
     }
     py.detach(|| std::thread::sleep(Duration::from_secs_f64(SETTLE_SECONDS)));
 

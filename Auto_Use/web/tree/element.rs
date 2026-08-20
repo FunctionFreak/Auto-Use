@@ -1,5 +1,18 @@
 // AutoUse - browser element scanner (pure CDP, Rust)
 //
+// SCANNING ONLY, and not even its own connection.
+//
+// This module reads a page and says what is on it. It does not own a socket,
+// a tab, or a browser: the caller hands it the CDP session the browser side
+// holds (Auto_Use/web/browser) plus the tab to read, and gets back a tree, the
+// geometry behind it, and a screenshot. Launching Chrome, opening and closing
+// tabs, clicking, typing, scrolling and navigating all happen on that side,
+// over that same one session.
+//
+// It used to be a separate binary with a CDP socket of its own, driven as a
+// subprocess REPL. Two connections to one browser meant two things that could
+// disagree about which tab was current; now there is one.
+//
 // No JavaScript is executed in the page. Everything comes from:
 //   DOMSnapshot.captureSnapshot  -> tree, geometry, paint order, computed styles
 //   Accessibility.getFullAXTree  -> role, accessible name, state
@@ -13,15 +26,27 @@
 use base64::Engine;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::io::{BufRead, Read, Write};
-use std::net::TcpStream;
 use std::time::{Duration, Instant};
-use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
+
+use crate::browser::{Cdp, CdpFail};
+
+/// Ceiling on one CDP call. A cold DOMSnapshot of a heavy page is seconds of
+/// real work, so this is generous by design — it is a guard against a wedged
+/// socket, not a performance budget.
+const RPC_TIMEOUT: f64 = 30.0;
+
+/// Cosmetic failures are swallowed by their callers; a scan's are not, so the
+/// message has to survive the trip.
+fn fail_msg(e: CdpFail) -> String {
+    match e {
+        CdpFail::Clean(m) | CdpFail::Lost(m) => m,
+    }
+}
 
 // ============================================================ toggles
-// Same switches, same semantics, as mac/tree/element.py's DEBUG / FRONTEND.
-// Compile-time consts rather than runtime flags: the branches they gate are
-// pure I/O, so a `false` here costs nothing at all in the scan path.
+// Same switch, same semantics, as mac/tree/element.py's DEBUG. A compile-time
+// const rather than a runtime flag: the branches it gates are pure I/O, so a
+// `false` here costs nothing at all in the scan path.
 
 /// Set to true to keep a per-scan record on disk, false for direct-LLM only.
 ///
@@ -31,16 +56,7 @@ use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 /// Independent of `--out`, which keeps exactly one always-overwritten pair
 /// (`scans/tree.txt` + `scans/shot.jpg`) as the "latest scan" view the REPL
 /// prints; that pair is what test.py drives and is unaffected by this flag.
-const DEBUG: bool = false;
-
-/// Set to true when an agent/UI is driving this binary and wants an image to
-/// display. Mirrors mac's rule exactly: with DEBUG on, the annotated capture
-/// IS the frontend image (you want to see the marks you are debugging), so
-/// nothing extra is produced. With DEBUG off, the marks are noise to a human,
-/// so a PLAIN un-annotated copy is written alongside as `<out>/shot_plain.jpg`
-/// for the UI. Costs no second capture — the plain frame already exists in
-/// memory before the marks are painted onto it.
-const FRONTEND: bool = true;
+pub const DEBUG: bool = false;
 
 /// Per-scan debug folder root, relative to the process CWD — same layout and
 /// the same relative anchor as macOS, so the agent's `debug/` wipe at startup
@@ -155,7 +171,7 @@ fn merge(base: &mut Value, over: &Value) {
     }
 }
 
-fn load_config(path: &str) -> Value {
+pub fn load_config(path: &str) -> Value {
     let mut cfg: Value = serde_json::from_str(DEFAULT_CONFIG).expect("bad embedded config");
     if let Ok(txt) = std::fs::read_to_string(path) {
         match serde_json::from_str::<Value>(&txt) {
@@ -218,314 +234,6 @@ fn cfg_f64(c: &Value, group: &str, key: &str, d: f64) -> f64 {
         .and_then(|g| g.get(key))
         .and_then(|v| v.as_f64())
         .unwrap_or(d)
-}
-
-// ============================================================ cdp
-
-type Sock = WebSocket<MaybeTlsStream<TcpStream>>;
-
-struct Cdp {
-    ws: Sock,
-    id: i64,
-    events: Vec<Value>,
-    replies: HashMap<i64, Value>,
-}
-
-impl Cdp {
-    fn connect(ws_url: &str) -> Result<Self, String> {
-        let (ws, _) = tungstenite::connect(ws_url).map_err(|e| format!("ws connect: {}", e))?;
-        Ok(Cdp {
-            ws,
-            id: 0,
-            events: Vec::new(),
-            replies: HashMap::new(),
-        })
-    }
-
-    fn set_timeout(&self, d: Option<Duration>) {
-        if let MaybeTlsStream::Plain(s) = self.ws.get_ref() {
-            let _ = s.set_read_timeout(d);
-        }
-    }
-
-    fn recv(&mut self) -> Result<Value, String> {
-        loop {
-            match self.ws.read().map_err(|e| format!("ws read: {}", e))? {
-                Message::Text(t) => {
-                    return serde_json::from_str(&t).map_err(|e| format!("bad json: {}", e))
-                }
-                Message::Close(_) => return Err("socket closed".into()),
-                _ => continue,
-            }
-        }
-    }
-
-    fn rpc(&mut self, method: &str, params: Value, session: Option<&str>) -> Result<Value, String> {
-        self.id += 1;
-        let mid = self.id;
-        let mut msg = json!({ "id": mid, "method": method, "params": params });
-        if let Some(s) = session {
-            msg["sessionId"] = json!(s);
-        }
-        self.set_timeout(Some(Duration::from_secs(30)));
-        self.ws
-            .send(Message::Text(msg.to_string()))
-            .map_err(|e| format!("ws send: {}", e))?;
-
-        loop {
-            let m = if let Some(v) = self.replies.remove(&mid) {
-                v
-            } else {
-                self.recv()?
-            };
-            if m.get("method").is_some() {
-                self.events.push(m);
-                continue;
-            }
-            if m.get("id").and_then(|v| v.as_i64()) == Some(mid) {
-                if let Some(e) = m.get("error") {
-                    return Err(format!("{} -> {}", method, e));
-                }
-                return Ok(m.get("result").cloned().unwrap_or(json!({})));
-            }
-            if let Some(other) = m.get("id").and_then(|v| v.as_i64()) {
-                self.replies.insert(other, m);
-            }
-        }
-    }
-
-    /// collect events that arrive with no request in flight
-    /// Read what is waiting, stopping once the socket has been quiet for IDLE
-    /// or `ms` total has elapsed — `ms` is a cap, not a sleep.
-    ///
-    /// This used to arm the read timeout with the whole remaining budget, so a
-    /// quiet socket blocked for the entire window every time. attach_all calls
-    /// it once per round, which put ~1s of dead waiting into every scan.
-    fn drain(&mut self, ms: u64) {
-        const IDLE: Duration = Duration::from_millis(60);
-        let end = Instant::now() + Duration::from_millis(ms);
-        loop {
-            let left = end.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                break;
-            }
-            self.set_timeout(Some(IDLE.min(left)));
-            match self.recv() {
-                Ok(m) => {
-                    if m.get("method").is_some() {
-                        self.events.push(m);
-                    } else if let Some(id) = m.get("id").and_then(|v| v.as_i64()) {
-                        self.replies.insert(id, m);
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-        self.set_timeout(Some(Duration::from_secs(30)));
-    }
-
-    fn clear_events(&mut self) {
-        self.events.clear();
-    }
-
-    fn take_events(&mut self, method: &str) -> Vec<Value> {
-        let (out, keep): (Vec<Value>, Vec<Value>) = self
-            .events
-            .drain(..)
-            .partition(|e| e.get("method").and_then(|m| m.as_str()) == Some(method));
-        self.events = keep;
-        out
-    }
-}
-
-// ============================================================ chrome
-
-fn chrome_paths() -> Vec<String> {
-    let mut v: Vec<String> = Vec::new();
-    if cfg!(target_os = "windows") {
-        v.push(r"C:\Program Files\Google\Chrome\Application\chrome.exe".into());
-        v.push(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe".into());
-        if let Ok(la) = std::env::var("LOCALAPPDATA") {
-            v.push(format!(r"{}\Google\Chrome\Application\chrome.exe", la));
-        }
-    } else if cfg!(target_os = "macos") {
-        v.push("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".into());
-    } else {
-        v.push("/usr/bin/google-chrome".into());
-        v.push("/usr/bin/chromium".into());
-        v.push("/usr/bin/chromium-browser".into());
-    }
-    v
-}
-
-fn find_chrome() -> Result<String, String> {
-    for p in chrome_paths() {
-        if std::path::Path::new(&p).exists() {
-            return Ok(p);
-        }
-    }
-    Err("chrome not found".into())
-}
-
-fn port_open(port: u16) -> bool {
-    let addr = format!("127.0.0.1:{}", port).parse().unwrap();
-    TcpStream::connect_timeout(&addr, Duration::from_millis(400)).is_ok()
-}
-
-/// Chrome keeps DevTools HTTP connections alive, so read exactly Content-Length
-/// bytes — do not wait for EOF (that times out as EAGAIN / os error 35 on macOS).
-fn http_json(port: u16, path: &str, method: &str) -> Result<Value, String> {
-    let mut s = TcpStream::connect(("127.0.0.1", port)).map_err(|e| e.to_string())?;
-    s.set_read_timeout(Some(Duration::from_secs(5))).ok();
-    s.set_write_timeout(Some(Duration::from_secs(5))).ok();
-    let req = format!(
-        "{} {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
-        method, path, port
-    );
-    s.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
-
-    let mut buf = Vec::new();
-    let mut tmp = [0u8; 4096];
-    let header_end = loop {
-        let n = s.read(&mut tmp).map_err(|e| e.to_string())?;
-        if n == 0 {
-            return Err("connection closed before http headers".into());
-        }
-        buf.extend_from_slice(&tmp[..n]);
-        if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-            break i + 4;
-        }
-        if buf.len() > 64 * 1024 {
-            return Err("http headers too large".into());
-        }
-    };
-
-    let headers = String::from_utf8_lossy(&buf[..header_end]);
-    let content_len = headers
-        .lines()
-        .find_map(|l| {
-            let (k, v) = l.split_once(':')?;
-            if k.eq_ignore_ascii_case("content-length") {
-                v.trim().parse::<usize>().ok()
-            } else {
-                None
-            }
-        })
-        .ok_or("missing Content-Length")?;
-
-    while buf.len() < header_end + content_len {
-        let n = s.read(&mut tmp).map_err(|e| e.to_string())?;
-        if n == 0 {
-            return Err("connection closed before full body".into());
-        }
-        buf.extend_from_slice(&tmp[..n]);
-    }
-
-    let body = std::str::from_utf8(&buf[header_end..header_end + content_len])
-        .map_err(|e| e.to_string())?;
-    serde_json::from_str(body.trim()).map_err(|e| format!("{} ({})", e, path))
-}
-
-fn browser_info(port: u16) -> Result<Value, String> {
-    http_json(port, "/json/version", "GET")
-}
-
-fn targets(port: u16) -> Result<Vec<Value>, String> {
-    let v = http_json(port, "/json/list", "GET")?;
-    Ok(v.as_array()
-        .map(|a| {
-            a.iter()
-                .filter(|t| t.get("type").and_then(|x| x.as_str()) == Some("page"))
-                .cloned()
-                .collect()
-        })
-        .unwrap_or_default())
-}
-
-fn urlencode(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
-            _ => out.push_str(&format!("%{:02X}", b)),
-        }
-    }
-    out
-}
-
-/// GET on /json/new was dropped around Chrome 111; it is PUT only now.
-fn new_tab(port: u16, url: &str) -> Result<Value, String> {
-    http_json(port, &format!("/json/new?{}", urlencode(url)), "PUT")
-}
-
-fn launch_chrome(port: u16, headless: bool, offscreen: bool) -> Result<bool, String> {
-    if port_open(port) {
-        return Ok(false);
-    }
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".into());
-    let profile = format!("{}/.autouse/chrome-{}", home, port);
-    std::fs::create_dir_all(&profile).ok();
-
-    let mut cmd = std::process::Command::new(find_chrome()?);
-    cmd.arg(format!("--remote-debugging-port={}", port))
-        // required since Chrome 136: the default profile ignores the debug port
-        .arg(format!("--user-data-dir={}", profile))
-        .arg("--no-first-run")
-        .arg("--no-default-browser-check")
-        .arg("--disable-backgrounding-occluded-windows")
-        .arg("--disable-renderer-backgrounding")
-        .arg("--disable-background-timer-throttling");
-    // deliberately NOT --enable-automation (that is what sets navigator.webdriver)
-    if headless {
-        cmd.arg("--headless=new");
-    } else if offscreen {
-        cmd.arg("--window-position=-32000,-32000")
-            .arg("--window-size=1280,900");
-    }
-    cmd.stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    cmd.spawn().map_err(|e| format!("spawn chrome: {}", e))?;
-
-    for _ in 0..60 {
-        if port_open(port) {
-            return Ok(true);
-        }
-        std::thread::sleep(Duration::from_millis(250));
-    }
-    Err(format!("chrome did not open debug port {}", port))
-}
-
-fn pick_target(port: u16, matching: Option<&str>) -> Result<Value, String> {
-    // PICKS a target; never creates one. Whose tabs exist is the caller's
-    // business — this binary scans and acts on what it is pointed at.
-    // (macOS note for callers: closing every window leaves Chrome running with
-    // zero page targets, so "attached successfully" does not imply "has a tab".)
-    let ts = targets(port)?;
-    if ts.is_empty() {
-        return Err(format!(
-            "no page targets on port {} - open a tab first",
-            port
-        ));
-    }
-    if let Some(m) = matching {
-        let m = m.to_lowercase();
-        for t in &ts {
-            let hay = format!(
-                "{}{}",
-                t.get("url").and_then(|v| v.as_str()).unwrap_or(""),
-                t.get("title").and_then(|v| v.as_str()).unwrap_or("")
-            )
-            .to_lowercase();
-            if hay.contains(&m) {
-                return Ok(t.clone());
-            }
-        }
-    }
-    Ok(ts[0].clone())
 }
 
 // ============================================================ snapshot decoding
@@ -657,43 +365,60 @@ struct Signals {
 
 type AxEntry = (String, String, HashMap<String, Value>, bool);
 
-struct Scanner {
-    cdp: Cdp,
+/// A scan in progress: the borrowed session, the tab being read, and the
+/// config that decides what counts as interactive.
+///
+/// Borrowed, not owned — the session outlives any one scan and belongs to the
+/// browser side, which is also using it to drive the page.
+struct Scanner<'a> {
+    cdp: &'a mut Cdp,
+    /// CDP sessionId of the tab being scanned. Sub-frames get their own
+    /// sessions; `None` anywhere below means "this tab".
+    page: String,
     cfg: Value,
-    /// [id] -> viewport rect from the MOST RECENT scan, in device pixels (the
-    /// space DOMSnapshot bounds and the screenshot share). Input events are
-    /// dispatched in CSS pixels, so `point()` divides by `dpr`.
-    ///
-    /// Rebuilt every scan, which is what makes the prompt's "ids are
-    /// re-assigned on every scan" rule safe to act on: an id can only ever
-    /// resolve against the tree the model was actually shown.
-    hits: HashMap<usize, [f64; 4]>,
-    /// device px per CSS px, measured on the last scan.
-    dpr: f64,
 }
 
-impl Scanner {
-    fn new(ws_url: &str, cfg: Value) -> Result<Self, String> {
-        let mut s = Scanner {
-            cdp: Cdp::connect(ws_url)?,
-            cfg,
-            hits: HashMap::new(),
-            dpr: 1.0,
+/// Turn on the domains a scan reads from.
+///
+/// Separate from scanning because a session is long-lived and this is a round
+/// trip: the caller does it once, when it first scans a given tab.
+///
+/// Runtime.enable is intentionally never called, and focus emulation is set by
+/// the browser side on the same session — one owner for one page-wide switch.
+pub fn prepare_session(cdp: &mut Cdp, page: &str) -> Result<(), String> {
+    let mut go = |method: &str| {
+        cdp.rpc(method, json!({}), Some(page), RPC_TIMEOUT)
+            .map(|_| ())
+            .map_err(fail_msg)
+    };
+    go("Page.enable")?;
+    go("DOM.enable")?;
+    // Best-effort: a page that refuses either is still readable, just with
+    // less to say. Network events are what `settle` counts — reporting only,
+    // no interception and no request modification.
+    let _ = go("Accessibility.enable");
+    let _ = go("Network.enable");
+    Ok(())
+}
+
+/// Read `page` and return everything the caller needs to show a model: the
+/// tree, the geometry behind it, and the screenshot.
+pub fn scan_page(cdp: &mut Cdp, page: &str, cfg: &Value, marks: bool) -> Result<ScanOut, String> {
+    Scanner { cdp, page: page.to_string(), cfg: cfg.clone() }.scan(marks, true)
+}
+
+impl<'a> Scanner<'a> {
+    /// One CDP call against this tab, or against one of its sub-frame
+    /// sessions. `None` means the tab itself — which is what lets every walk
+    /// below treat the root frame and an OOPIF the same way.
+    fn rpc(&mut self, method: &str, params: Value, session: Option<&str>) -> Result<Value, String> {
+        let target = match session {
+            Some(s) => s.to_string(),
+            None => self.page.clone(),
         };
-        s.cdp.rpc("Page.enable", json!({}), None)?;
-        s.cdp.rpc("DOM.enable", json!({}), None)?;
-        let _ = s.cdp.rpc("Accessibility.enable", json!({}), None);
-        // Network events are what `settle` counts. Enabling the domain is
-        // reporting only — no interception, no request modification.
-        let _ = s.cdp.rpc("Network.enable", json!({}), None);
-        // A backgrounded tab must still believe it is focused: when several
-        // agents share one browser, only one tab can be foreground, and pages
-        // that gate behavior on focus (autofocus, visibility timers) would
-        // otherwise misbehave for the rest. Best-effort; session-scoped.
-        let _ = s.cdp.rpc("Emulation.setFocusEmulationEnabled", json!({"enabled": true}), None);
-        // Runtime.enable intentionally never called
-        s.activate();
-        Ok(s)
+        self.cdp
+            .rpc(method, params, Some(&target), RPC_TIMEOUT)
+            .map_err(fail_msg)
     }
 
     /// Block until the page stops fetching, or the ceiling runs out.
@@ -736,7 +461,7 @@ impl Scanner {
         };
 
         loop {
-            self.cdp.drain(60);
+            self.cdp.drain_for(60);
             let mut saw = false;
             for e in self.cdp.take_events("Network.requestWillBeSent") {
                 saw = true;
@@ -768,23 +493,8 @@ impl Scanner {
         start.elapsed().as_millis() as u64
     }
 
-    /// Bring this target's tab to the foreground of the browser window.
-    ///
-    /// Pointing the WebSocket at another target changes which page we READ and
-    /// ACT on, but does nothing to the window — it keeps showing whatever tab
-    /// it showed before. Reading and acting were always correct without this;
-    /// what was broken is that a headful browser never visibly followed the
-    /// agent, so `switch_tab` looked like it had done nothing at all.
-    ///
-    /// Best-effort: a target that refuses to come forward is still perfectly
-    /// readable and clickable, so a failure here must not abort the switch.
-    fn activate(&mut self) {
-        let _ = self.cdp.rpc("Page.bringToFront", json!({}), None);
-    }
-
     fn url(&mut self) -> String {
-        self.cdp
-            .rpc("Page.getFrameTree", json!({}), None)
+        self.rpc("Page.getFrameTree", json!({}), None)
             .ok()
             .and_then(|v| {
                 v.get("frameTree")?
@@ -794,301 +504,6 @@ impl Scanner {
                     .map(|s| s.to_string())
             })
             .unwrap_or_default()
-    }
-
-    // ---------------------------------------------------------------- input
-    //
-    // Trusted input through Input.dispatchMouseEvent / dispatchKeyEvent — the
-    // same pipeline a physical mouse and keyboard feed. Still no JavaScript in
-    // the page, no Runtime.enable, no injected handlers: the scanner's core
-    // promise holds for acting as well as for reading.
-
-    /// Centre of [id] in CSS pixels, resolved against the LAST scan.
-    ///
-    /// `hits` holds device pixels (what DOMSnapshot bounds and the screenshot
-    /// share) while input events are dispatched in CSS pixels, so the divide by
-    /// `dpr` is the whole reason this is a function and not a field read. Get it
-    /// wrong on a 2x display and every click lands at half the intended offset.
-    fn point(&self, idx: usize) -> Result<(f64, f64), String> {
-        let r = self
-            .hits
-            .get(&idx)
-            .ok_or_else(|| format!("no [{}] in the last scan - rescan first", idx))?;
-        let d = if self.dpr > 0.0 { self.dpr } else { 1.0 };
-        Ok(((r[0] + r[2] / 2.0) / d, (r[1] + r[3] / 2.0) / d))
-    }
-
-    fn mouse(&mut self, kind: &str, x: f64, y: f64) -> Result<(), String> {
-        self.mouse_n(kind, x, y, 1)
-    }
-
-    /// Turn a wheel by (dx, dy) over a CSS-pixel point.
-    ///
-    /// A wheel event is delivered to whatever scroller sits UNDER the point,
-    /// which is what makes one command cover both cases the agent needs: a
-    /// point over the document scrolls the page, a point inside a scrollable
-    /// panel scrolls that panel and leaves the page where it was. Nothing
-    /// here has to know which is which, and no JS runs in the page to find
-    /// out.
-    ///
-    /// The pointer is moved first: a scroller that has never seen the pointer
-    /// may ignore the wheel, and hover-driven panels need the move anyway to
-    /// be the thing under it.
-    fn scroll_at(&mut self, x: f64, y: f64, dx: f64, dy: f64) -> Result<(), String> {
-        self.cdp.rpc(
-            "Input.dispatchMouseEvent",
-            json!({ "type": "mouseMoved", "x": x, "y": y, "buttons": 0 }),
-            None,
-        )?;
-        self.cdp.rpc(
-            "Input.dispatchMouseEvent",
-            json!({
-                "type": "mouseWheel",
-                "x": x,
-                "y": y,
-                "deltaX": dx,
-                "deltaY": dy,
-                "buttons": 0
-            }),
-            None,
-        )?;
-        Ok(())
-    }
-
-    fn mouse_n(&mut self, kind: &str, x: f64, y: f64, count: u32) -> Result<(), String> {
-        self.cdp.rpc(
-            "Input.dispatchMouseEvent",
-            json!({
-                "type": kind,
-                "x": x,
-                "y": y,
-                "button": "left",
-                "clickCount": count,
-                "buttons": if kind == "mousePressed" { 1 } else { 0 },
-            }),
-            None,
-        )?;
-        Ok(())
-    }
-
-    /// Press and release at a CSS-pixel point the CALLER resolved.
-    ///
-    /// The id-based `click` below stays for the REPL, where a human types an
-    /// id. The agent uses this: it already holds the scan's geometry, so
-    /// resolving there keeps the tree the model saw and the point acted on
-    /// provably from the same scan.
-    fn click_at(&mut self, x: f64, y: f64, w: f64, h: f64, hold_ms: u64, times: u32)
-        -> Result<(), String> {
-        // Centre is derived HERE from the rect, so there is exactly one
-        // argument shape on the wire and no way to pass a point where a rect
-        // is expected (or the reverse).
-        let (x, y) = (x + w / 2.0, y + h / 2.0);
-        self.cdp.rpc(
-            "Input.dispatchMouseEvent",
-            json!({ "type": "mouseMoved", "x": x, "y": y, "buttons": 0 }),
-            None,
-        )?;
-        // A double click is ONE gesture with a rising clickCount, not two
-        // independent clicks: the page distinguishes them by that count, and
-        // dblclick only fires when the second press reports 2.
-        let times = times.clamp(1, 2);
-        for n in 1..=times {
-            self.mouse_n("mousePressed", x, y, n)?;
-            if hold_ms > 0 {
-                std::thread::sleep(Duration::from_millis(hold_ms));
-            }
-            self.mouse_n("mouseReleased", x, y, n)?;
-        }
-        Ok(())
-    }
-
-    /// Focus a point, clear the field, type, optionally submit.
-    fn input_at(&mut self, x: f64, y: f64, w: f64, h: f64, text: &str, enter: bool)
-        -> Result<(), String> {
-        self.click_at(x, y, w, h, 0, 1)?;
-        self.type_into_focused(text, enter)
-    }
-
-    /// Press and release on [id]. `hold_ms` > 0 keeps the button down, which is
-    /// what "hold to confirm" controls and human-verification holds need.
-    fn click(&mut self, idx: usize, hold_ms: u64) -> Result<(), String> {
-        // Membership check: point() resolves the same id, but a miss must
-        // read as "rescan first" rather than whatever point() would say.
-        self.hits
-            .get(&idx)
-            .ok_or_else(|| format!("no [{}] in the last scan - rescan first", idx))?;
-        let (x, y) = self.point(idx)?;
-        // Move first. Hover handlers open the menus and tooltips the press is
-        // then meant to land inside, and some widgets ignore a press that
-        // arrives with no prior movement over them.
-        self.cdp.rpc(
-            "Input.dispatchMouseEvent",
-            json!({ "type": "mouseMoved", "x": x, "y": y, "buttons": 0 }),
-            None,
-        )?;
-        self.mouse("mousePressed", x, y)?;
-        if hold_ms > 0 {
-            std::thread::sleep(Duration::from_millis(hold_ms));
-        }
-        self.mouse("mouseReleased", x, y)?;
-        Ok(())
-    }
-
-    fn key(&mut self, key: &str, code: &str, vk: i64, text: &str) -> Result<(), String> {
-        for kind in ["keyDown", "keyUp"] {
-            let mut p = json!({
-                "type": kind,
-                "key": key,
-                "code": code,
-                "windowsVirtualKeyCode": vk,
-                "nativeVirtualKeyCode": vk,
-            });
-            if kind == "keyDown" && !text.is_empty() {
-                p["text"] = json!(text);
-            }
-            self.cdp.rpc("Input.dispatchKeyEvent", p, None)?;
-        }
-        Ok(())
-    }
-
-    /// Focus [id], clear it, type `text`, optionally submit with Enter.
-    fn input(&mut self, idx: usize, text: &str, enter: bool) -> Result<(), String> {
-        self.click(idx, 0)?; // focus the field
-        self.type_into_focused(text, enter)
-    }
-
-    /// Clear whatever is focused and type into it.
-    fn type_into_focused(&mut self, text: &str, enter: bool) -> Result<(), String> {
-
-        // `commands` is Chrome's editing-command channel. selectAll through it
-        // works whatever the platform modifier is, so there is no cmd-vs-ctrl
-        // branch here and no dependence on the page honouring a synthetic
-        // ctrl+a that a JS keydown handler may well swallow.
-        self.cdp.rpc(
-            "Input.dispatchKeyEvent",
-            json!({"type": "keyDown", "key": "a", "code": "KeyA",
-                   "windowsVirtualKeyCode": 65, "nativeVirtualKeyCode": 65,
-                   "commands": ["selectAll"]}),
-            None,
-        )?;
-        self.cdp.rpc(
-            "Input.dispatchKeyEvent",
-            json!({"type": "keyUp", "key": "a", "code": "KeyA",
-                   "windowsVirtualKeyCode": 65, "nativeVirtualKeyCode": 65}),
-            None,
-        )?;
-
-        if text.is_empty() {
-            // insertText("") is a no-op, so an explicit clear needs a real
-            // Backspace against the selection.
-            self.key("Backspace", "Backspace", 8, "")?;
-        } else {
-            // insertText replaces the selection in ONE event. Per-character key
-            // events are both far slower and far less reliable on
-            // React-style inputs, which re-render between keystrokes.
-            self.cdp
-                .rpc("Input.insertText", json!({ "text": text }), None)?;
-        }
-
-        if enter {
-            self.key("Enter", "Enter", 13, "\r")?;
-        }
-        Ok(())
-    }
-
-    /// Replace the current document with `html`, without navigating.
-    ///
-    /// Page.setDocumentContent, not a navigation and not script execution — so
-    /// the no-JS-in-the-page promise holds. The point is the address bar: a
-    /// file:// URL shows its whole path there, while this leaves whatever the
-    /// caller already put in the bar (about:blank) and only swaps the content.
-    /// The caller decides WHAT to render and WHEN; this only performs it.
-    fn set_content(&mut self, html: &str) -> Result<(), String> {
-        let fid = self
-            .cdp
-            .rpc("Page.getFrameTree", json!({}), None)?
-            .get("frameTree")
-            .and_then(|f| f.get("frame"))
-            .and_then(|f| f.get("id"))
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
-        if fid.is_empty() {
-            return Err("no frame to render into".into());
-        }
-        self.cdp.rpc(
-            "Page.setDocumentContent",
-            json!({ "frameId": fid, "html": html }),
-            None,
-        )?;
-        Ok(())
-    }
-
-    fn goto(&mut self, url: &str, settle_ms: u64) -> Result<(), String> {
-        self.cdp.rpc("Page.navigate", json!({ "url": url }), None)?;
-        let end = Instant::now() + Duration::from_secs(30);
-        while Instant::now() < end {
-            self.cdp.drain(250);
-            if !self.cdp.take_events("Page.loadEventFired").is_empty() {
-                break;
-            }
-        }
-        std::thread::sleep(Duration::from_millis(settle_ms));
-        Ok(())
-    }
-
-    fn reload(&mut self, settle_ms: u64) -> Result<(), String> {
-        self.cdp.rpc("Page.reload", json!({}), None)?;
-        std::thread::sleep(Duration::from_millis(settle_ms));
-        Ok(())
-    }
-
-    /// Step through this tab's session history: -1 is back, +1 is forward.
-    ///
-    /// Page.navigateToHistoryEntry rather than a synthetic Alt+Left: the key
-    /// only works when the page has focus and nothing on it swallows the
-    /// shortcut, while the history API is the browser's own move and reports
-    /// honestly when there is nowhere to go.
-    ///
-    /// Refusing at the end of the history is deliberate. Silently doing
-    /// nothing would leave the caller unable to tell "went back" from "was
-    /// already at the first page", which is the same blindness the scroll
-    /// tool had to solve — here the answer is simply known up front.
-    fn history(&mut self, delta: i64, settle_ms: u64) -> Result<(), String> {
-        let h = self.cdp.rpc("Page.getNavigationHistory", json!({}), None)?;
-        let cur = h
-            .get("currentIndex")
-            .and_then(|v| v.as_i64())
-            .ok_or("could not read the tab's history")?;
-        let entries = h
-            .get("entries")
-            .and_then(|v| v.as_array())
-            .ok_or("could not read the tab's history")?;
-        let want = cur + delta;
-        if want < 0 || want as usize >= entries.len() {
-            return Err(format!(
-                "no page to go {} to - this tab is at the {} of its history",
-                if delta < 0 { "back" } else { "forward" },
-                if delta < 0 { "start" } else { "end" }
-            ));
-        }
-        let id = entries[want as usize]
-            .get("id")
-            .and_then(|v| v.as_i64())
-            .ok_or("history entry has no id")?;
-        self.cdp
-            .rpc("Page.navigateToHistoryEntry", json!({ "entryId": id }), None)?;
-        // Same wait as goto: a history move is a navigation like any other,
-        // and the caller's next scan must not land mid-load.
-        let end = Instant::now() + Duration::from_secs(30);
-        while Instant::now() < end {
-            self.cdp.drain(250);
-            if !self.cdp.take_events("Page.loadEventFired").is_empty() {
-                break;
-            }
-        }
-        std::thread::sleep(Duration::from_millis(settle_ms));
-        Ok(())
     }
 
     // -- sessions (OOPIF) -------------------------------------------------
@@ -1114,7 +529,7 @@ impl Scanner {
                 break;
             }
             for sess in &pending {
-                let _ = self.cdp.rpc(
+                let _ = self.rpc(
                     "Target.setAutoAttach",
                     json!({
                         "autoAttach": true,
@@ -1124,7 +539,7 @@ impl Scanner {
                     sess.as_deref(),
                 );
             }
-            self.cdp.drain(500);
+            self.cdp.drain_for(500);
             let mut next = Vec::new();
             for e in self.cdp.take_events("Target.attachedToTarget") {
                 // envelope sessionId is the PARENT session
@@ -1161,7 +576,7 @@ impl Scanner {
 
         // Chrome often does not re-emit attachedToTarget for OOPIFs that already
         // exist; pull them explicitly. targetId == frameId for out-of-process frames.
-        if let Ok(tg) = self.cdp.rpc("Target.getTargets", json!({}), None) {
+        if let Ok(tg) = self.rpc("Target.getTargets", json!({}), None) {
             for info in tg
                 .get("targetInfos")
                 .and_then(|v| v.as_array())
@@ -1179,7 +594,7 @@ impl Scanner {
                 if !seen_tid.insert(tid.clone()) {
                     continue;
                 }
-                let sid_ = match self.cdp.rpc(
+                let sid_ = match self.rpc(
                     "Target.attachToTarget",
                     json!({ "targetId": tid, "flatten": true }),
                     None,
@@ -1200,13 +615,13 @@ impl Scanner {
     }
 
     fn prepare(&mut self, sess: Option<&str>) {
-        let _ = self.cdp.rpc("Page.enable", json!({}), sess);
-        let _ = self.cdp.rpc("DOM.enable", json!({}), sess);
-        let _ = self.cdp.rpc("Accessibility.enable", json!({}), sess);
+        let _ = self.rpc("Page.enable", json!({}), sess);
+        let _ = self.rpc("DOM.enable", json!({}), sess);
+        let _ = self.rpc("Accessibility.enable", json!({}), sess);
     }
 
     fn snapshot(&mut self, sess: Option<&str>) -> Result<Value, String> {
-        self.cdp.rpc(
+        self.rpc(
             "DOMSnapshot.captureSnapshot",
             json!({
                 "computedStyles": STYLE_PROPS,
@@ -1220,9 +635,7 @@ impl Scanner {
     /// backendDOMNodeId -> (role, name, state, ignored)
     fn axmap(&mut self, sess: Option<&str>) -> HashMap<i64, AxEntry> {
         let mut out = HashMap::new();
-        let nodes = match self
-            .cdp
-            .rpc("Accessibility.getFullAXTree", json!({}), sess)
+        let nodes = match self.rpc("Accessibility.getFullAXTree", json!({}), sess)
         {
             Ok(v) => v.get("nodes").cloned().unwrap_or(json!([])),
             Err(_) => return out,
@@ -1975,7 +1388,7 @@ impl Scanner {
             margin: cfg_f64(&cfg, "limits", "viewport_margin", 0.0),
         };
 
-        let metrics = self.cdp.rpc("Page.getLayoutMetrics", json!({}), None)?;
+        let metrics = self.rpc("Page.getLayoutMetrics", json!({}), None)?;
         // DOMSnapshot layout.bounds are in device pixels (same as layoutViewport).
         // cssLayoutViewport is CSS pixels — using it clips everything below ~vh/dpr
         // (e.g. buttons at y=770 dropped when css vh=733 on a 2x display).
@@ -1992,7 +1405,6 @@ impl Scanner {
             .and_then(|v| v.as_f64())
             .unwrap_or(vw);
         let dpr = if css_vw > 0.0 { vw / css_vw } else { 1.0 };
-        self.dpr = dpr;
 
         let sessions = self.attach_all();
         let n_sessions = sessions.len();
@@ -2015,8 +1427,7 @@ impl Scanner {
                 self.prepare(Some(s));
                 // locate this OOPIF's <iframe> box inside its parent session
                 let owner = frame_id.as_ref().and_then(|f| {
-                    self.cdp
-                        .rpc(
+                    self.rpc(
                             "DOM.getFrameOwner",
                             json!({ "frameId": f }),
                             parent.as_deref(),
@@ -2030,9 +1441,7 @@ impl Scanner {
                 };
                 // Prefer content box (CSS → device). Border-box from the snapshot
                 // is a few device-px too large and shifts every OOPIF mark.
-                let content = self
-                    .cdp
-                    .rpc(
+                let content = self.rpc(
                         "DOM.getBoxModel",
                         json!({ "backendNodeId": oid }),
                         parent.as_deref(),
@@ -2183,29 +1592,19 @@ impl Scanner {
             }
         }
 
-        // Freeze this scan's [id] -> rect map — the ONLY thing a later
-        // click/input may resolve an id against. Replaced wholesale rather
-        // than merged, which is what makes the prompt's "ids are re-assigned
-        // on EVERY scan" rule safe: a stale id from an earlier tree misses
-        // instead of silently landing on whatever now occupies that slot.
-        self.hits = recs
-            .iter()
-            .filter_map(|r| r.idx.map(|i| (i, r.rect)))
-            .collect();
+        // This scan's [id] -> rect map, published to the caller and kept
+        // nowhere: the browser side resolves ids to points against the tree it
+        // was handed, so the tree the model saw and the point acted on are
+        // provably from one scan. Holding a copy here would be a second
+        // answer to the same question, one scan out of date the moment the
+        // page moves.
+        let mut hits: Vec<(usize, [f64; 4])> =
+            recs.iter().filter_map(|r| r.idx.map(|i| (i, r.rect))).collect();
+        hits.sort_by_key(|(k, _)| *k);
 
         let mut shot: Option<Vec<u8>> = None;
-        let mut plain: Option<Vec<u8>> = None;
         if screenshot {
-            // Keep the visible window on the tab we are actually working in.
-            // captureScreenshot targets this session and is correct either way
-            // — the point is the human watching a headful run, who otherwise
-            // sees a window frozen on some other tab while the agent works. It
-            // also re-asserts the agent's tab if a user clicked away between
-            // steps. One cheap CDP call.
-            self.activate();
-            let b64 = self
-                .cdp
-                .rpc(
+            let b64 = self.rpc(
                     "Page.captureScreenshot",
                     json!({ "format": "jpeg", "quality": 75, "captureBeyondViewport": false }),
                     None,
@@ -2217,14 +1616,6 @@ impl Scanner {
             let raw = base64::engine::general_purpose::STANDARD
                 .decode(b64)
                 .map_err(|e| e.to_string())?;
-            // FRONTEND's un-annotated copy, taken here because `raw` is about
-            // to be consumed by draw_marks. Only when the UI genuinely needs a
-            // DIFFERENT image than the model's: with DEBUG on the annotated
-            // frame is the one you want to look at, and with marks off `shot`
-            // already IS the plain frame — cloning in either case is waste.
-            if FRONTEND && !DEBUG && marks {
-                plain = Some(raw.clone());
-            }
             shot = Some(if marks {
                 draw_marks(&raw, &recs).unwrap_or(raw)
             } else {
@@ -2240,41 +1631,32 @@ impl Scanner {
             occluded: n_occluded,
             noise: n_noise,
             screenshot: shot,
-            plain,
             url,
             settled_ms,
-            hits: {
-                let mut v: Vec<(usize, [f64; 4])> =
-                    self.hits.iter().map(|(k, r)| (*k, *r)).collect();
-                v.sort_by_key(|(k, _)| *k);
-                v
-            },
+            hits,
             dpr,
         })
     }
 }
 
-struct ScanOut {
-    tree: String,
-    count: usize,
-    sessions: usize,
-    skipped: usize,
-    occluded: usize,
-    noise: usize,
-    screenshot: Option<Vec<u8>>,
-    /// Un-annotated capture for the UI. Some(..) only when FRONTEND wants an
-    /// image distinct from `screenshot` — see the FRONTEND const.
-    plain: Option<Vec<u8>>,
-    url: String,
+pub struct ScanOut {
+    pub tree: String,
+    pub count: usize,
+    pub sessions: usize,
+    pub skipped: usize,
+    pub occluded: usize,
+    pub noise: usize,
+    pub screenshot: Option<Vec<u8>>,
+    pub url: String,
     /// ms spent waiting for the page to go quiet before this scan.
-    settled_ms: u64,
+    pub settled_ms: u64,
     /// [id] -> viewport rect in DEVICE px, and the device-px-per-CSS-px ratio
     /// to convert them. Published so the CALLER can resolve an id to a point
     /// itself: the tree it was handed and the geometry behind that tree then
     /// come from one scan, instead of the caller holding names while this
     /// process privately holds the coordinates they refer to.
-    hits: Vec<(usize, [f64; 4])>,
-    dpr: f64,
+    pub hits: Vec<(usize, [f64; 4])>,
+    pub dpr: f64,
 }
 
 // ============================================================ debug dump
@@ -2283,7 +1665,7 @@ struct ScanOut {
 /// the EXACT annotated bytes the model is handed — so the record is
 /// byte-identical to the payload by construction, not a re-render of it.
 /// Mirrors mac/tree/element.py's debug layout. Callers gate on DEBUG.
-fn write_debug(
+pub fn write_debug(
     iteration: usize,
     header: &str,
     tree: &str,
@@ -2545,514 +1927,4 @@ fn draw_marks(jpeg: &[u8], recs: &[Rec]) -> Option<Vec<u8>> {
         .encode(rgb.as_raw(), rgb.width(), rgb.height(), ExtendedColorType::Rgb8)
         .ok()?;
     Some(out)
-}
-
-// ============================================================ cli
-
-const HELP: &str = "
-  s | scan       scan current page -> tree.txt + shot.jpg   (or just hit enter)
-  g <url>        navigate current tab
-  r | reload     reload current tab
-  bk | back      go back one page in this tab's history
-  fw | forward   go forward one page
-  t | tabs       list open tabs
-  n <url>        open a new tab
-  u <n>          switch to tab n
-  cl <id>        click [id] from the last scan
-  hd <id> <s>    press and hold [id] for <s> seconds
-  in <id> <text> clear [id] and type text
-  ie <id> <text> same, then press Enter
-  cx x y w h ms n  click a CSS-px rect; n=2 is a double click
-  ix x y w h e t type at a CSS-pixel point; e=1 presses Enter
-  sx x y dx dy   wheel at a CSS-pixel point (scrolls whatever is under it)
-  bl <html>      render html as the current document (no navigation)
-  m | marks      toggle number overlay
-  c | config     reload config overlay file
-  q | quit       exit (browser stays open)
-";
-
-struct Args {
-    port: u16,
-    url: Option<String>,
-    /// Bind to this exact CDP target id at startup — no fallback to another
-    /// tab. Used when several agents share one browser: each binary must land
-    /// on its own agent's tab, never on whichever tab is frontmost.
-    target_id: Option<String>,
-    headless: bool,
-    offscreen: bool,
-    no_marks: bool,
-    out: String,
-    config: String,
-    goto: Option<String>,
-    settle: u64,
-    /// What a "blank" tab should show. Defaults to about:blank; the agent
-    /// passes its own inert page so a blank surface never lands on Chrome's
-    /// New Tab page, which carries a Google search box and reads to a model
-    /// like Google is already open.
-    blank: String,
-}
-
-fn parse_args() -> Args {
-    let mut a = Args {
-        port: 9222,
-        url: None,
-        target_id: None,
-        headless: false,
-        offscreen: false,
-        no_marks: false,
-        out: "scans".into(),
-        config: "element.config.json".into(),
-        goto: None,
-        settle: 2000,
-        blank: "about:blank".into(),
-    };
-    let v: Vec<String> = std::env::args().skip(1).collect();
-    let mut i = 0;
-    while i < v.len() {
-        let next = |i: usize| v.get(i + 1).cloned().unwrap_or_default();
-        match v[i].as_str() {
-            "--port" => {
-                a.port = next(i).parse().unwrap_or(9222);
-                i += 1;
-            }
-            "--url" => {
-                a.url = Some(next(i));
-                i += 1;
-            }
-            "--target-id" => {
-                a.target_id = Some(next(i));
-                i += 1;
-            }
-            "--out" => {
-                a.out = next(i);
-                i += 1;
-            }
-            "--config" => {
-                a.config = next(i);
-                i += 1;
-            }
-            "--goto" => {
-                a.goto = Some(next(i));
-                i += 1;
-            }
-            "--blank" => {
-                a.blank = next(i);
-                i += 1;
-            }
-            "--settle" => {
-                a.settle = (next(i).parse::<f64>().unwrap_or(2.0) * 1000.0) as u64;
-                i += 1;
-            }
-            "--headless" => a.headless = true,
-            "--offscreen" => a.offscreen = true,
-            "--no-marks" => a.no_marks = true,
-            other => eprintln!("unknown arg: {}", other),
-        }
-        i += 1;
-    }
-    a
-}
-
-fn main() {
-    let a = parse_args();
-
-    let launched = match launch_chrome(a.port, a.headless, a.offscreen) {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
-        }
-    };
-    println!(
-        "chrome {} on port {}",
-        if launched { "launched" } else { "attached" },
-        a.port
-    );
-    // Port can accept TCP before /json/version is ready; retry briefly.
-    let info = {
-        let mut last = String::new();
-        let mut ok = None;
-        for _ in 0..40 {
-            match browser_info(a.port) {
-                Ok(v) => {
-                    ok = Some(v);
-                    break;
-                }
-                Err(e) => {
-                    last = e;
-                    std::thread::sleep(Duration::from_millis(100));
-                }
-            }
-        }
-        ok.ok_or_else(|| last)
-    };
-    match info {
-        Ok(v) => println!(
-            "  {}",
-            v.get("Browser").and_then(|x| x.as_str()).unwrap_or("?")
-        ),
-        Err(e) => {
-            eprintln!(
-                "port {} is open but not answering as Chrome: {}",
-                a.port, e
-            );
-            std::process::exit(1);
-        }
-    }
-
-    std::fs::create_dir_all(&a.out).ok();
-    let mut cfg = load_config(&a.config);
-
-    let mut target = if let Some(id) = &a.target_id {
-        // Exact binding for shared-browser (parallel agent) runs: only THIS
-        // target will do. The tab was just created by the parent, so ride out
-        // the /json/list propagation delay — but never grab a different tab.
-        let mut found = None;
-        for _ in 0..20 {
-            found = targets(a.port)
-                .ok()
-                .and_then(|ts| {
-                    ts.into_iter()
-                        .find(|t| t.get("id").and_then(|v| v.as_str()) == Some(id.as_str()))
-                });
-            if found.is_some() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(250));
-        }
-        match found {
-            Some(t) => t,
-            None => {
-                eprintln!("target {} not found on port {}", id, a.port);
-                std::process::exit(1);
-            }
-        }
-    } else {
-        match pick_target(a.port, a.url.as_deref()) {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("{}", e);
-                std::process::exit(1);
-            }
-        }
-    };
-    let ws = |t: &Value| -> String {
-        t.get("webSocketDebuggerUrl")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string()
-    };
-
-    let mut sc = match Scanner::new(&ws(&target), cfg.clone()) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
-        }
-    };
-    if let Some(u) = &a.goto {
-        let _ = sc.goto(u, a.settle);
-    }
-
-    let mut marks = !a.no_marks;
-    // Scan counter behind DEBUG's per-scan folders (mac's _debug_iteration).
-    let mut iteration = 0usize;
-    println!("DEBUG = {}   FRONTEND = {}", DEBUG, FRONTEND);
-    if DEBUG {
-        println!("  per-scan record -> {}/iteration_<n>/", DEBUG_DIR);
-    }
-    println!("{}", HELP);
-
-    let stdin = std::io::stdin();
-    loop {
-        print!("autouse> ");
-        std::io::stdout().flush().ok();
-        let mut line = String::new();
-        if stdin.lock().read_line(&mut line).unwrap_or(0) == 0 {
-            println!();
-            break;
-        }
-        let line = line.trim();
-        let raw = if line.is_empty() { "s" } else { line };
-        let (cmd, arg) = match raw.split_once(' ') {
-            Some((c, r)) => (c.to_lowercase(), r.trim().to_string()),
-            None => (raw.to_lowercase(), String::new()),
-        };
-
-        let res: Result<(), String> = (|| {
-            match cmd.as_str() {
-                "q" | "quit" | "exit" => return Err("__quit__".into()),
-
-                "h" | "help" | "?" => println!("{}", HELP),
-
-                // Acting on the last scan. Two-letter names throughout: the
-                // obvious single letters are already taken (c = config,
-                // s = scan, h = help), and an agent typing `c 12` expecting a
-                // click would otherwise silently reload the config instead.
-                "cl" | "click" => {
-                    let i: usize = arg.trim().parse().map_err(|_| "usage: cl <id>".to_string())?;
-                    sc.click(i, 0)?;
-                    println!("clicked [{}]", i);
-                }
-
-                "hd" | "hold" => {
-                    let (a1, a2) = arg.trim().split_once(' ').unwrap_or((arg.trim(), "2"));
-                    let i: usize = a1
-                        .trim()
-                        .parse()
-                        .map_err(|_| "usage: hd <id> <seconds>".to_string())?;
-                    let secs: f64 = a2.trim().parse().unwrap_or(2.0);
-                    sc.click(i, (secs * 1000.0) as u64)?;
-                    println!("held [{}] for {}s", i, secs);
-                }
-
-                "in" | "input" | "ie" => {
-                    let (a1, txt) = arg
-                        .split_once(' ')
-                        .ok_or_else(|| format!("usage: {} <id> <text>", cmd))?;
-                    let i: usize = a1
-                        .trim()
-                        .parse()
-                        .map_err(|_| format!("usage: {} <id> <text>", cmd))?;
-                    let enter = cmd == "ie";
-                    sc.input(i, txt, enter)?;
-                    println!("typed into [{}]{}", i, if enter { " + Enter" } else { "" });
-                }
-
-                // Point-based twins of cl/hd/in/ie. The agent resolves an [id]
-                // to a point from the geometry the scan published, so the tree
-                // it showed the model and the point it acts on are provably
-                // the same scan. x/y/w/h are CSS pixels.
-                "cx" | "ix" => {
-                    // cx: x y w h hold_ms            -> 5 fields
-                    // ix: x y w h enter <text...>      -> 6, the last holding
-                    // the REST of the line. Splitting into 7 made the text a
-                    // single token and silently dropped everything after the
-                    // first space, so "rust lang" typed as "rust".
-                    // cx: x y w h hold_ms times       -> 6 fields
-                    // ix: x y w h enter <text...>       -> 6, the last holding
-                    // the REST of the line. Splitting into 7 made the text a
-                    // single token and silently dropped everything after the
-                    // first space, so "rust lang" typed as "rust".
-                    let mut it = arg.splitn(6, ' ');
-                    let mut num = |name: &str| -> Result<f64, String> {
-                        it.next()
-                            .and_then(|v| v.trim().parse::<f64>().ok())
-                            .ok_or_else(|| format!("{}: bad or missing {}", cmd, name))
-                    };
-                    let (x, y, w, h) = (num("x")?, num("y")?, num("w")?, num("h")?);
-                    if cmd == "cx" {
-                        let hold = num("hold_ms").unwrap_or(0.0).max(0.0) as u64;
-                        let times = num("times").unwrap_or(1.0).max(1.0) as u32;
-                        sc.click_at(x, y, w, h, hold, times)?;
-                        println!("clicked ({:.0},{:.0}) x{}", x, y, times.clamp(1, 2));
-                    } else {
-                        let enter = num("enter").unwrap_or(0.0) != 0.0;
-                        let text = it.next().unwrap_or("");
-                        sc.input_at(x, y, w, h, text, enter)?;
-                        println!("typed at ({:.0},{:.0}){}", x, y,
-                                 if enter { " + Enter" } else { "" });
-                    }
-                }
-
-                "sx" | "scroll" => {
-                    // sx: x y dx dy — CSS pixels, wheel deltas. Point-based
-                    // like cx/ix: the caller resolved which surface to scroll
-                    // from the scan it showed the model, and this dispatches.
-                    let mut it = arg.split_whitespace();
-                    let mut num = |name: &str| -> Result<f64, String> {
-                        it.next()
-                            .and_then(|v| v.parse::<f64>().ok())
-                            .ok_or_else(|| format!("sx: bad or missing {}", name))
-                    };
-                    let (x, y, dx, dy) = (num("x")?, num("y")?, num("dx")?, num("dy")?);
-                    sc.scroll_at(x, y, dx, dy)?;
-                    println!("scrolled ({:.0},{:.0}) by ({:.0},{:.0})", x, y, dx, dy);
-                }
-
-                "bl" | "blank" => {
-                    if arg.is_empty() {
-                        println!("usage: bl <html>");
-                        return Ok(());
-                    }
-                    sc.set_content(&arg)?;
-                    println!("blank page rendered");
-                }
-
-                "m" | "marks" => {
-                    marks = !marks;
-                    println!("marks: {}", marks);
-                }
-
-                "c" | "config" => {
-                    cfg = load_config(&a.config);
-                    sc.cfg = cfg.clone();
-                    println!("config reloaded");
-                }
-
-                "g" | "goto" => {
-                    if arg.is_empty() {
-                        println!("usage: g <url>");
-                        return Ok(());
-                    }
-                    let u = if arg.contains("://") {
-                        arg.clone()
-                    } else {
-                        format!("https://{}", arg)
-                    };
-                    sc.goto(&u, a.settle)?;
-                    println!("-> {}", u);
-                }
-
-                "r" | "reload" => sc.reload(a.settle)?,
-
-                "bk" | "back" => {
-                    sc.history(-1, a.settle)?;
-                    println!("went back");
-                }
-
-                "fw" | "forward" => {
-                    sc.history(1, a.settle)?;
-                    println!("went forward");
-                }
-
-                "t" | "tabs" => {
-                    let cur = ws(&target);
-                    for (i, x) in targets(a.port)?.iter().enumerate() {
-                        let mark = if ws(x) == cur { "*" } else { " " };
-                        println!(
-                            " {}[{}] {} | {}",
-                            mark,
-                            i,
-                            x.get("title").and_then(|v| v.as_str()).unwrap_or(""),
-                            x.get("url").and_then(|v| v.as_str()).unwrap_or("")
-                        );
-                    }
-                }
-
-                "n" | "new" => {
-                    let u = if arg.is_empty() {
-                        a.blank.clone()
-                    } else if arg.contains("://") {
-                        arg.clone()
-                    } else {
-                        format!("https://{}", arg)
-                    };
-                    let created = new_tab(a.port, &u)?;
-                    std::thread::sleep(Duration::from_secs(1));
-                    // Bind to the target /json/new actually created, by its id.
-                    // `targets().last()` was wrong: /json/list is ordered
-                    // most-recently-USED, not creation order, so it routinely
-                    // handed back the tab we came from — and then every scan
-                    // and click for the rest of the run landed on that page
-                    // instead of the one just opened.
-                    let created_id = created
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_default()
-                        .to_string();
-                    let ts = targets(a.port)?;
-                    target = ts
-                        .iter()
-                        .find(|t| {
-                            t.get("id").and_then(|v| v.as_str()) == Some(created_id.as_str())
-                        })
-                        .cloned()
-                        .or_else(|| {
-                            created
-                                .get("webSocketDebuggerUrl")
-                                .is_some()
-                                .then(|| created.clone())
-                        })
-                        .or_else(|| ts.last().cloned())
-                        .ok_or("no tabs")?;
-                    sc = Scanner::new(&ws(&target), cfg.clone())?;
-                    println!("-> {}", u);
-                }
-
-                "u" | "use" => {
-                    let i: usize = arg.parse().map_err(|_| "usage: u <n>".to_string())?;
-                    let ts = targets(a.port)?;
-                    target = ts.get(i).cloned().ok_or("no such tab")?;
-                    sc = Scanner::new(&ws(&target), cfg.clone())?;
-                    println!(
-                        "-> {}",
-                        target.get("title").and_then(|v| v.as_str()).unwrap_or("")
-                    );
-                }
-
-                "s" | "scan" => {
-                    let t0 = Instant::now();
-                    let out = sc.scan(marks, true)?;
-                    let ms = t0.elapsed().as_secs_f64() * 1000.0;
-                    iteration += 1;
-
-                    // Always one current pair — each scan overwrites the last.
-                    let tp = format!("{}/tree.txt", a.out);
-                    let header = format!(
-                        "# {}\n# {} interactive, {:.0} ms ({} ms settle), {} sessions, {} frames skipped, {} occluded, {} noise\n\n",
-                        out.url, out.count, ms, out.settled_ms, out.sessions, out.skipped, out.occluded, out.noise
-                    );
-                    std::fs::write(&tp, format!("{}{}\n", header, out.tree))
-                        .map_err(|e| e.to_string())?;
-
-                    println!("{}", out.tree);
-                    println!(
-                        "\n{} interactive, {:.0} ms ({} ms settle) | sessions {}, skipped {}, occluded {}, noise {}",
-                        out.count, ms, out.settled_ms, out.sessions, out.skipped, out.occluded, out.noise
-                    );
-                    println!("tree -> {}", tp);
-
-                    // Geometry beside the tree, NOT inside it: tree.txt goes
-                    // to the model verbatim and coordinates would be noise
-                    // there. Same scan, separate file.
-                    {
-                        let mut m = serde_json::Map::new();
-                        for (i, r) in &out.hits {
-                            m.insert(i.to_string(), json!([r[0], r[1], r[2], r[3]]));
-                        }
-                        let hp = format!("{}/hits.json", a.out);
-                        std::fs::write(
-                            &hp,
-                            serde_json::to_string(&json!({ "dpr": out.dpr, "hits": m }))
-                                .unwrap_or_default(),
-                        )
-                        .map_err(|e| e.to_string())?;
-                    }
-
-                    if let Some(bytes) = out.screenshot.as_deref() {
-                        let sp = format!("{}/shot.jpg", a.out);
-                        std::fs::write(&sp, bytes).map_err(|e| e.to_string())?;
-                        println!("shot -> {}", sp);
-                    }
-
-                    // FRONTEND, DEBUG off: the un-annotated frame for the UI.
-                    if let Some(bytes) = out.plain.as_deref() {
-                        let pp = format!("{}/shot_plain.jpg", a.out);
-                        std::fs::write(&pp, bytes).map_err(|e| e.to_string())?;
-                        println!("plain -> {}", pp);
-                    }
-
-                    // DEBUG: this scan's own folder, kept across scans (the
-                    // pair above is overwritten every time).
-                    if DEBUG {
-                        let dir =
-                            write_debug(iteration, &header, &out.tree, out.screenshot.as_deref())?;
-                        println!("debug -> {}/", dir);
-                    }
-                }
-
-                other => println!("? {}   (h for help)", other),
-            }
-            Ok(())
-        })();
-
-        match res {
-            Ok(()) => {}
-            Err(e) if e == "__quit__" => break,
-            Err(e) => println!("! {}", e),
-        }
-    }
-
-    println!("browser still running on port {}", a.port);
 }
