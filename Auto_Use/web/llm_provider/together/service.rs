@@ -107,7 +107,7 @@ fn normalize_tool_response(result: &Value) -> Value {
     json!({
         "choices": [{
             "message": {
-                "content": if crate::agent::browser::truthy(&content) { content } else { json!("") },
+                "content": if crate::browser::truthy(&content) { content } else { json!("") },
                 "tool_calls": calls,
             }
         }],

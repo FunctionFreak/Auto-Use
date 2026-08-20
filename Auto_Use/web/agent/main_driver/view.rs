@@ -78,7 +78,7 @@ pub fn ensure_ascii(s: &str) -> String {
 }
 
 /// Python truthiness for a JSON value (shared with browser.rs).
-pub use crate::agent::browser::truthy;
+pub use crate::browser::truthy;
 
 /// Python `str()` of a JSON value ("None"/"True"/"False", numbers via repr).
 pub fn py_str_of(v: &Value) -> String {

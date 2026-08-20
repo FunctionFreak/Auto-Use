@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use pyo3::prelude::*;
 use serde_json::{json, Value};
 
-use crate::agent::browser::ScannerInner;
+use crate::browser::ScannerInner;
 use crate::controller::service::{err, py_int_value, scan_op, ActResult};
 use crate::agent::main_driver::view::py_str_of;
 

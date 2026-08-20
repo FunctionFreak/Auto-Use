@@ -83,7 +83,7 @@ impl OpenRouterProvider {
                     let tagged = meta.get("provider").and_then(Value::as_str)
                         == Some("openrouter");
                     let details = meta.get("reasoning_details");
-                    if is_assistant && tagged && details.map(crate::agent::browser::truthy).unwrap_or(false) {
+                    if is_assistant && tagged && details.map(crate::browser::truthy).unwrap_or(false) {
                         msg["reasoning_details"] = details.cloned().unwrap_or(Value::Null);
                     }
                 }
@@ -172,7 +172,7 @@ fn normalize_tool_response(result: &Value) -> Value {
     let content = message.get("content").cloned().unwrap_or(Value::Null);
     out.insert(
         "content".into(),
-        if crate::agent::browser::truthy(&content) { content } else { json!("") },
+        if crate::browser::truthy(&content) { content } else { json!("") },
     );
     out.insert("tool_calls".into(), Value::Array(calls));
     if let Some(Value::Array(details)) = message.get("reasoning_details") {

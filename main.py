@@ -4,7 +4,7 @@
 from Auto_Use.agent_launcher import run_agent
 
 # Configuration
-MODE = "computer use"  # "computer use" (this PC) / "shell use" (CLI agent straight to the terminal) / "web use" (CDP-controlled Chrome) / "mobile use, ios" / "mobile use, android"
+MODE = "web use"  # "computer use" (this PC) / "shell use" (CLI agent straight to the terminal) / "web use" (CDP-controlled Chrome) / "mobile use, ios" / "mobile use, android"
 PROVIDER = "together"
 MODEL = "minimax-m3" #refer to the model name correctly from model_list.txt.
 # Your task here
@@ -23,6 +23,8 @@ run_agent(
     model=MODEL,
     task=task,
     external_terminal=True,
+    save_conversation=conversation,
+
 )
 
 # Response is displayed inside process_request

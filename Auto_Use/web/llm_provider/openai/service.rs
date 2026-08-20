@@ -98,7 +98,7 @@ impl OpenAIProvider {
         let mut message = Map::new();
         message.insert(
             "content".into(),
-            if crate::agent::browser::truthy(&content) { content } else { json!("") },
+            if crate::browser::truthy(&content) { content } else { json!("") },
         );
         if self.tools.is_some() {
             message.insert(

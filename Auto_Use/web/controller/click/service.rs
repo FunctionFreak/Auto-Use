@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use pyo3::prelude::*;
 use serde_json::{json, Map, Value};
 
-use crate::agent::browser::ScannerInner;
+use crate::browser::ScannerInner;
 use crate::controller::service::{
     label_for, py_float_str, py_float_value, py_int_value, rect_for, reject_viewport,
     resolve_element_id, with_box, ActResult,

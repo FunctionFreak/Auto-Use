@@ -16,7 +16,7 @@ use std::time::Duration;
 use pyo3::prelude::*;
 use serde_json::{json, Map, Value};
 
-use crate::agent::browser::ScannerInner;
+use crate::browser::ScannerInner;
 use crate::controller::service::{
     label_for, rect_for, resolve_element_id, scan_op, with_box, ActErr, ActResult, VIEWPORT_ID,
 };

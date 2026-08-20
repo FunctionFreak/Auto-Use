@@ -21,7 +21,7 @@ use regex::Regex;
 use serde_json::{json, Map, Value};
 
 use super::view;
-use crate::agent::browser::{truthy, BrowserScanner, CHROME_PORT};
+use crate::browser::{truthy, BrowserScanner, CHROME_PORT};
 
 // Run-boundary request markers: on resume, the bridge entry that ended the
 // prior run gets its empty tool slot filled with the NEW run's request, so the
@@ -618,11 +618,17 @@ impl AgentService {
             _ => CHROME_PORT,
         };
         let headless_flag = headless;
-        py.detach(|| crate::agent::browser::launch_chrome_impl(browser_port_num, headless_flag))
+        py.detach(|| crate::browser::launch_chrome_impl(browser_port_num, headless_flag))
             .map_err(PyErr::from)?;
         let scanner = Py::new(
             py,
-            BrowserScanner::create(&agent_dir, browser_port_num, frontend_callback, None, single_tab),
+            BrowserScanner::create(
+                &crate::browser_dir(py)?,
+                browser_port_num,
+                frontend_callback,
+                None,
+                single_tab,
+            ),
         )?;
 
         // Controller — pure Rust in the same crate, driving the same scanner.

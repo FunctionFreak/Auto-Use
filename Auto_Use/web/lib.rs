@@ -16,9 +16,12 @@ use pyo3::prelude::*;
 // web/tree's element binary can fold in as a second build target when it
 // converts.
 pub mod agent {
-    pub mod browser;
     pub mod main_driver;
 }
+// The browser session keeps its own directory: web/browser/browser.rs. The
+// #[path] lets the file keep its name while the module stays `crate::browser`.
+#[path = "browser/browser.rs"]
+pub mod browser;
 pub mod controller;
 pub mod llm_provider;
 
@@ -51,10 +54,15 @@ pub fn web_dir(py: Python<'_>) -> PyResult<&'static PathBuf> {
     Ok(DIR.get_or_init(|| dir))
 }
 
-/// Auto_Use/web/agent — kept as a helper because every asset path the agent
-/// reads (glow.*, main_driver prompts) lives under it.
+/// Auto_Use/web/agent — kept as a helper because the main_driver prompts the
+/// agent reads live under it.
 pub fn agent_dir(py: Python<'_>) -> PyResult<PathBuf> {
     Ok(web_dir(py)?.join("agent"))
+}
+
+/// Auto_Use/web/browser — browser.rs and the glow assets it injects (glow/).
+pub fn browser_dir(py: Python<'_>) -> PyResult<PathBuf> {
+    Ok(web_dir(py)?.join("browser"))
 }
 
 #[pymodule]
@@ -62,12 +70,12 @@ fn agent_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     use agent::main_driver::view;
 
     m.add("ScannerError", m.py().get_type::<ScannerError>())?;
-    m.add("CHROME_PORT", agent::browser::CHROME_PORT)?;
-    m.add_class::<agent::browser::BrowserScanner>()?;
-    m.add_function(pyo3::wrap_pyfunction!(agent::browser::launch_chrome, m)?)?;
-    m.add_function(pyo3::wrap_pyfunction!(agent::browser::is_blank_page, m)?)?;
-    m.add_function(pyo3::wrap_pyfunction!(agent::browser::blank_html, m)?)?;
-    m.add_function(pyo3::wrap_pyfunction!(agent::browser::ensure_tab, m)?)?;
+    m.add("CHROME_PORT", browser::CHROME_PORT)?;
+    m.add_class::<browser::BrowserScanner>()?;
+    m.add_function(pyo3::wrap_pyfunction!(browser::launch_chrome, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(browser::is_blank_page, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(browser::blank_html, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(browser::ensure_tab, m)?)?;
 
     m.add_class::<agent::main_driver::service::AgentService>()?;
     m.add_class::<llm_provider::llm_manager::LLMManager>()?;

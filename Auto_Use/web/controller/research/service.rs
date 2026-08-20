@@ -20,7 +20,7 @@
 use pyo3::prelude::*;
 use serde_json::{json, Value};
 
-use crate::agent::browser::truthy;
+use crate::browser::truthy;
 use crate::controller::service::ActResult;
 use crate::agent::main_driver::view::py_str_of;
 

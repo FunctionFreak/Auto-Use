@@ -26,7 +26,7 @@ use serde_json::{json, Map, Value};
 
 use super::service::{ActErr, ControllerService};
 use super::{click, done, input, scratchpad, scroll, tab, todo_tracker, wait};
-use crate::agent::browser::{truthy, BrowserScanner, ScannerInner};
+use crate::browser::{truthy, BrowserScanner, ScannerInner};
 use crate::agent::main_driver::view::py_str_of;
 
 /// Routes one step's actions against the live browser.

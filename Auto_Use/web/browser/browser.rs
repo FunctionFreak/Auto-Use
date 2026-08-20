@@ -768,10 +768,10 @@ pub struct ScannerInner {
 // when the child's pipes close. There is no raw fd left to hand back.
 
 impl ScannerInner {
-    pub fn new(agent_dir: &PathBuf, port: u16, out_dir: Option<PathBuf>, single_tab: bool) -> Self {
-        // web/agent -> parent=web; web/tree holds the scanner crate, and
+    pub fn new(browser_dir: &PathBuf, port: u16, out_dir: Option<PathBuf>, single_tab: bool) -> Self {
+        // web/browser -> parent=web; web/tree holds the scanner crate, and
         // parent.parent=Auto_Use holds the shared logo.
-        let web_dir = agent_dir.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let web_dir = browser_dir.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         let tree_dir = web_dir.join("tree");
         let logo_page = web_dir
             .parent()
@@ -793,8 +793,8 @@ impl ScannerInner {
             web_dir,
             tree_dir,
             logo_page,
-            glow_css: agent_dir.join("glow.css"),
-            glow_js: agent_dir.join("glow.js"),
+            glow_css: browser_dir.join("glow").join("glow.css"),
+            glow_js: browser_dir.join("glow").join("glow.js"),
             proc: None,
             stdin: None,
             out: None,
@@ -1819,8 +1819,8 @@ pub fn is_blank_page(url: Option<Bound<'_, PyAny>>) -> PyResult<bool> {
 /// The logo page as one line of HTML, ready to render into a blank tab.
 #[pyfunction]
 pub fn blank_html(py: Python<'_>) -> PyResult<String> {
-    let agent = crate::agent_dir(py)?;
-    let logo = agent
+    let browser = crate::browser_dir(py)?;
+    let logo = browser
         .parent()
         .and_then(|p| p.parent())
         .map(|p| p.join("logo").join("logo.html"))
@@ -1852,14 +1852,14 @@ impl BrowserScanner {
     /// Rust-side constructor (the #[new] pymethod wraps this) — service.rs
     /// builds the scanner directly during AgentService construction.
     pub fn create(
-        agent_dir: &PathBuf,
+        browser_dir: &PathBuf,
         port: u16,
         frontend_callback: Option<Py<PyAny>>,
         out_dir: Option<PathBuf>,
         single_tab: bool,
     ) -> Self {
         BrowserScanner {
-            inner: Arc::new(Mutex::new(ScannerInner::new(agent_dir, port, out_dir, single_tab))),
+            inner: Arc::new(Mutex::new(ScannerInner::new(browser_dir, port, out_dir, single_tab))),
             frontend_callback,
             port,
         }
@@ -1895,9 +1895,9 @@ impl BrowserScanner {
         out_dir: Option<String>,
         single_tab: bool,
     ) -> PyResult<Self> {
-        let agent = crate::agent_dir(py)?;
+        let browser = crate::browser_dir(py)?;
         Ok(BrowserScanner::create(
-            &agent,
+            &browser,
             port,
             frontend_callback,
             out_dir.map(PathBuf::from),
