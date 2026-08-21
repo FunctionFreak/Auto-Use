@@ -38,7 +38,24 @@ fn await_load(cdp: &mut Cdp, sess: &str) {
 
 fn navigate_to(cdp: &mut Cdp, sess: &str, url: &str) -> Result<(), CdpFail> {
     cdp.take_events("Page.loadEventFired", Some(sess));
-    cdp.rpc("Page.navigate", json!({"url": url}), Some(sess), 10.0)?;
+    let reply = cdp.rpc("Page.navigate", json!({"url": url}), Some(sess), 10.0)?;
+    // Page.navigate answers successfully even when the navigation failed — the
+    // failure is in `errorText`, and throwing the reply away made an
+    // unreachable host indistinguishable from a live one. Chrome then renders
+    // its OWN error page and fires an ordinary load event, so the wait below is
+    // satisfied and the tool reported {"status":"success"} for a site that was
+    // never coming. Because a batch only stops on a non-success status, this
+    // was the one failure that structurally could not stop one.
+    //
+    // Note the deliberate asymmetry with the load wait below, and keep it: a
+    // wait that lapses is NOT an error, because the scanner settles the page
+    // again before the next scan, so a slow site costs a wait and never a
+    // wrong tree. errorText is different. That page is never arriving.
+    if let Some(text) = reply.get("errorText").and_then(Value::as_str) {
+        if !text.is_empty() {
+            return Err(CdpFail::Clean(format!("could not load {url}: {text}")));
+        }
+    }
     await_load(cdp, sess);
     Ok(())
 }

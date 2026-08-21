@@ -60,6 +60,18 @@ pub fn web_dir(py: Python<'_>) -> PyResult<&'static PathBuf> {
     Ok(DIR.get_or_init(|| dir))
 }
 
+/// The Chrome user-data-dir for a named browser profile, asked of Python.
+///
+/// Rust cannot answer this itself: `Auto_Use/__init__.py` handles the
+/// compiled-vs-dev base directory and the AUTOUSE_DATA_DIR override, and a
+/// second definition of "where is autouse_data" drifting apart from that one
+/// is the exact bug that module exists to prevent.
+pub fn browser_profile_dir(py: Python<'_>, name: Option<&str>) -> PyResult<PathBuf> {
+    let module = py.import("Auto_Use")?;
+    let dir = module.call_method1("browser_profile_dir", (name,))?;
+    Ok(PathBuf::from(dir.str()?.extract::<String>()?))
+}
+
 /// Auto_Use/web/agent — kept as a helper because the main_driver prompts the
 /// agent reads live under it.
 pub fn agent_dir(py: Python<'_>) -> PyResult<PathBuf> {

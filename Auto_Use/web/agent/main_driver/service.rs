@@ -618,7 +618,14 @@ impl AgentService {
             _ => CHROME_PORT,
         };
         let headless_flag = headless;
-        py.detach(|| crate::browser::launch_chrome_impl(browser_port_num, headless_flag))
+        // Resolved on the PYTHON side: Auto_Use/__init__.py is the single
+        // source of truth for where autouse_data lives, and it alone knows the
+        // compiled-vs-dev split and the AUTOUSE_DATA_DIR override. Must happen
+        // before py.detach — the detached closure holds no GIL.
+        let profile = crate::browser_profile_dir(py, None).ok();
+        py.detach(move || {
+            crate::browser::launch_chrome_impl(browser_port_num, headless_flag, profile)
+        })
             .map_err(PyErr::from)?;
         let scanner = Py::new(
             py,
@@ -965,7 +972,27 @@ impl AgentService {
                 println!("\n{}", "=".repeat(60));
                 println!("Step {step_number}: Scanning snapshot.");
                 let scanner = self.scanner.get();
-                scanner.scan_elements(py)?;
+                // A scan failure must not escape `process_request`. As a bare
+                // `?` this returned straight out of the function, skipping
+                // stop(), emit_flow("run_end"), compression.finish_run() and
+                // the result dict — so the caller got an exception and NO
+                // result at all, and agent_launcher has no `except` to catch
+                // it. The triggers are ordinary: a screenshot timing out on a
+                // self-reloading page, or a tab whose renderer will not answer.
+                // Handled the same way a failing step is, so the cleanup tail
+                // runs and the caller is told what happened.
+                if let Err(e) = scanner.scan_elements(py) {
+                    // KeyboardInterrupt / SystemExit are BaseException — let
+                    // them fly, exactly as the step guard below does.
+                    if !e.is_instance_of::<PyException>(py) {
+                        return Err(e);
+                    }
+                    let msg = py_err_str(py, &e);
+                    println!("Error processing request: {msg}");
+                    final_status = "error".into();
+                    final_message = format!("could not read the page: {msg}");
+                    break;
+                }
 
                 // Check Stop AFTER Scan
                 if self.stop_set(py)? {

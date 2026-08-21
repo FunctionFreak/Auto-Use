@@ -200,6 +200,7 @@ def run_parallel_web_agents(tasks, provider, model, save_conversation=False,
     # Importing the package builds the Rust extension ONCE here in the parent,
     # so N children never race the compiler — they find a fresh .so.
     from Auto_Use.web.agent import launch_chrome, CHROME_PORT
+    from Auto_Use import browser_profile_dir
 
     port = int(browser_port or CHROME_PORT)
     n = len(tasks)
@@ -210,7 +211,7 @@ def run_parallel_web_agents(tasks, provider, model, save_conversation=False,
 
     # One browser for everyone: launch (or attach) before any child starts, so
     # every child's constructor takes the clean attach path.
-    launch_chrome(port, headless)
+    launch_chrome(port, headless, str(browser_profile_dir()))
 
     run_root = Path.cwd() / "parallel"
     shutil.rmtree(run_root, ignore_errors=True)

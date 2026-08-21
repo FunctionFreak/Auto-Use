@@ -53,6 +53,11 @@ const BLANK_URL: &str = "about:blank";
 // subresource-heavy page into a silent 30-second timeout.
 const EVENT_CAP: usize = 2000;
 
+/// How many pending frames to read before answering "did anything happen?".
+/// Non-blocking — `drain` stops at the first WouldBlock — so this is a ceiling
+/// on a backlog, not a wait.
+const NOTICE_DRAIN: usize = 256;
+
 // The only CDP events anything in this crate ever waits on:
 //   Page.loadEventFired        - navigation, reload and history waits
 //   Network.requestWillBeSent  - settle()'s in-flight set
@@ -282,6 +287,26 @@ fn chrome_http(port: u16, path: &str, method: &str) -> SResult<Value> {
     Ok(serde_json::from_str(body.trim()).unwrap_or(Value::String(body)))
 }
 
+/// Chrome's page targets, telling "no tabs" apart from "could not ask".
+///
+/// `page_targets` collapses every failure — refused connection, read timeout,
+/// non-JSON body — into an empty Vec, which reads as "this browser has zero
+/// tabs". Anything that then decides what to do about having no tabs acts on a
+/// transient hiccup as though the browser were empty. `start` is exactly that
+/// caller, and getting it wrong there means abandoning the bound tab.
+fn page_targets_checked(port: u16) -> SResult<Vec<Value>> {
+    match chrome_http(port, "/json/list", "GET") {
+        Ok(Value::Array(items)) => Ok(items
+            .into_iter()
+            .filter(|t| t.get("type").and_then(Value::as_str) == Some("page"))
+            .collect()),
+        Ok(other) => Err(ScanErr::s(format!(
+            "/json/list on port {port} did not answer with a list: {other}"
+        ))),
+        Err(e) => Err(e),
+    }
+}
+
 fn page_targets(port: u16) -> Vec<Value> {
     match chrome_http(port, "/json/list", "GET") {
         Ok(Value::Array(items)) => items
@@ -506,6 +531,11 @@ pub struct Cdp {
     /// form it filled reset, or why the tab went blank. Draining them into the
     /// next tool result is what turns "the tool lied" into "the tool told me".
     notices: VecDeque<String>,
+    /// Sessions Chrome has explicitly told us are finished — their renderer
+    /// crashed, or they detached. Kept apart from `sessions` on purpose: an
+    /// absence there only means nobody has attached, while membership here
+    /// means the page is confirmed gone and no call to it can ever answer.
+    dead: HashSet<String>,
     /// Targets whose renderer died. Recovery is the caller's business — this
     /// only remembers, because the crash event and the next scan can be many
     /// calls apart.
@@ -538,6 +568,7 @@ impl Cdp {
             abandoned: HashSet::new(),
             notices: VecDeque::new(),
             crashed: HashSet::new(),
+            dead: HashSet::new(),
             generation: 0,
         }
     }
@@ -590,6 +621,7 @@ impl Cdp {
         self.events.clear();
         self.replies.clear();
         self.abandoned.clear();
+        self.dead.clear();
         // `notices` deliberately SURVIVES a hang-up: a crash is often what
         // caused it, and that is exactly the sentence the model needs.
         self.generation += 1;
@@ -695,6 +727,7 @@ impl Cdp {
             if let Some(t) = target {
                 self.crashed.insert(t);
             }
+            self.dead.insert(sess.clone());
             self.forget_session(&sess);
             self.notice(
                 "the page crashed - its renderer died, so the tab was re-created and \
@@ -710,6 +743,7 @@ impl Cdp {
             .and_then(|p| p.get("sessionId"))
             .and_then(Value::as_str)
         {
+            self.dead.insert(gone.to_string());
             self.forget_session(gone);
         }
     }
@@ -730,11 +764,22 @@ impl Cdp {
 
     /// Everything that has happened since anyone last asked, and clear.
     pub fn take_notices(&mut self) -> Vec<String> {
+        self.drain(NOTICE_DRAIN);
         self.notices.drain(..).collect()
     }
 
     /// Whether that tab's renderer died since the last time this was asked.
+    ///
+    /// Reads the wire FIRST. These events are only ever noticed by `stash`,
+    /// which only runs when something reads the socket — so the answer used to
+    /// depend on whether some unrelated call had happened to read recently.
+    /// It worked while every navigation ended in a load wait that did the
+    /// reading; the moment `navigate_to` learned to fail fast on errorText,
+    /// nothing drained and a crash went unnoticed until the scan hit the dead
+    /// renderer. Same reasoning as `is_loading` above: answer about the
+    /// browser NOW, not about the last time somebody happened to look.
     pub fn take_crashed(&mut self, target_id: &str) -> bool {
+        self.drain(NOTICE_DRAIN);
         self.crashed.remove(target_id)
     }
 
@@ -962,6 +1007,16 @@ impl Cdp {
         }
         let deadline = Instant::now() + Duration::from_secs_f64(timeout);
         while Instant::now() < deadline {
+            // A confirmed-dead page will never answer, so waiting out the full
+            // timeout is time spent learning nothing. The scan's RPCs use a 30s
+            // ceiling, so without this a crash cost a full minute of nothing
+            // before the retry could even begin.
+            if session.is_some_and(|sid| self.dead.contains(sid)) {
+                self.abandoned.insert(mid);
+                return Err(CdpFail::Clean(format!(
+                    "{method}: the page crashed while it was being read"
+                )));
+            }
             let ws = self.ws.as_mut().expect("still connected in loop");
             match ws.read() {
                 Ok(tungstenite::Message::Text(t)) => {
@@ -1094,6 +1149,9 @@ impl Cdp {
             .ok_or_else(|| CdpFail::Lost("attach returned no sessionId".into()))?
             .to_string();
         self.sessions.insert(target_id.to_string(), s.clone());
+        // A brand-new session is alive by definition, even if Chrome happens
+        // to reuse an id we once buried.
+        self.dead.remove(&s);
         // Page.enable is what makes navigation events (loadEventFired) arrive
         // at all, and the glow's document-start script fire. Focus emulation
         // keeps a backgrounded tab believing it is focused, which matters the
@@ -1227,7 +1285,95 @@ fn find_chrome() -> SResult<PathBuf> {
         .ok_or_else(|| ScanErr::s("Chrome not found — install Google Chrome to use web mode"))
 }
 
-pub fn launch_chrome_impl(port: u16, headless: bool) -> SResult<bool> {
+/// Name the profile and give it a face, before Chrome ever opens it.
+///
+/// Chrome writes `Local State` from MEMORY when it exits, so editing the file
+/// while it is running is simply thrown away — measured. Seeding the file
+/// BEFORE the first launch works: Chrome reads the entry, merges its own keys
+/// around it, and keeps the name and the avatar.
+///
+/// Also measured, and worth writing down so nobody tries it again: a CUSTOM
+/// avatar image cannot be set this way. Chrome only honours
+/// `Google Profile Picture.png` when the profile is signed in to a Google
+/// account — with an empty `gaia_id` it keeps the setting, ignores the file,
+/// and the toolbar still reads "Sign in to Chrome?". A stock
+/// `IDR_PROFILE_AVATAR_*` does render, so that is what is used. Auto-Use's own
+/// logo reaches the browser where it actually can: as the favicon of the
+/// agent's page, embedded in logo/logo.html.
+fn brand_profile(profile: &PathBuf) {
+    let state_path = profile.join("Local State");
+    let mut state: Value = std::fs::read_to_string(&state_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_else(|| json!({}));
+
+    let entry = state
+        .as_object_mut()
+        .map(|o| o.entry("profile").or_insert_with(|| json!({})))
+        .and_then(Value::as_object_mut)
+        .map(|o| o.entry("info_cache").or_insert_with(|| json!({})))
+        .and_then(Value::as_object_mut)
+        .map(|o| o.entry("Default").or_insert_with(|| json!({})))
+        .and_then(Value::as_object_mut);
+    let Some(entry) = entry else { return };
+
+    // Only ever brand a profile still carrying Chrome's own default name.
+    // Renaming one the user has since renamed themselves would be rude, and
+    // this runs on every launch, not just the first.
+    let default_named = entry
+        .get("is_using_default_name")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    if !default_named {
+        return;
+    }
+    entry.insert("name".into(), json!("Auto-Use"));
+    entry.insert("is_using_default_name".into(), json!(false));
+    entry.insert(
+        "avatar_icon".into(),
+        json!("chrome://theme/IDR_PROFILE_AVATAR_31"),
+    );
+    entry.insert("is_using_default_avatar".into(), json!(false));
+    if let Ok(text) = serde_json::to_string(&state) {
+        let _ = std::fs::write(&state_path, text);
+    }
+}
+
+/// Whether another live Chrome already holds this profile directory.
+///
+/// Chrome's ProcessSingleton locks a user-data-dir: a second Chrome launched
+/// against a locked one hands its command line to the first instance and
+/// EXITS, so its --remote-debugging-port never binds. Without this check that
+/// surfaces as `await_browser_ready` serving out its full timeout and then
+/// reporting "Chrome did not open the debug port", which says nothing about
+/// the actual cause. On macOS and Linux the lock is a symlink named
+/// `<host>-<pid>`; a stale one from a crash points at a pid that is gone.
+fn profile_locked_by_live_chrome(profile: &PathBuf) -> bool {
+    let Ok(target) = std::fs::read_link(profile.join("SingletonLock")) else {
+        return false;
+    };
+    let text = target.to_string_lossy().to_string();
+    let Some(pid) = text.rsplit('-').next().and_then(|p| p.parse::<u32>().ok()) else {
+        return false;
+    };
+    // `kill -0` tests for existence without delivering a signal. A subprocess
+    // rather than a libc call so the crate keeps its dependency list; this runs
+    // once per launch, never in a loop. Windows has no SingletonLock symlink,
+    // so read_link above has already returned.
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|st| st.success())
+        .unwrap_or(false)
+}
+
+pub fn launch_chrome_impl(
+    port: u16,
+    headless: bool,
+    profile_dir: Option<PathBuf>,
+) -> SResult<bool> {
     if port_open(port) {
         // Attached, not launched — but a browser someone started a moment ago
         // is in exactly the state `browser_ready` describes, so this path has
@@ -1241,9 +1387,27 @@ pub fn launch_chrome_impl(port: u16, headless: bool) -> SResult<bool> {
         return Ok(false);
     }
 
-    let profile = home_dir().join(".autouse").join(format!("chrome-{port}"));
+    // Keyed by NAME, not by port. The old `~/.autouse/chrome-<port>` scheme
+    // made a brand-new profile for every port the agent ever used — 22 of them
+    // and 3.6 GB on the machine this was written on — so nothing was ever
+    // logged in twice and every run started from a cold, empty browser.
+    let profile = match profile_dir {
+        Some(p) => p,
+        None => home_dir().join(".autouse").join(format!("chrome-{port}")),
+    };
+    let is_new = !profile.join("Local State").exists();
     std::fs::create_dir_all(&profile)
         .map_err(|e| ScanErr::s(format!("could not create {}: {e}", profile.display())))?;
+    if profile_locked_by_live_chrome(&profile) {
+        return Err(ScanErr::s(format!(
+            "another Chrome is already using the profile at {} — close it, or run \
+             with a different browser profile",
+            profile.display()
+        )));
+    }
+    // Before the spawn, while nothing owns the file. Chrome would overwrite an
+    // edit made after it starts.
+    brand_profile(&profile);
     let chrome = find_chrome()?;
     let mut cmd = Command::new(chrome);
     cmd.arg(format!("--remote-debugging-port={port}"))
@@ -1275,6 +1439,9 @@ pub fn launch_chrome_impl(port: u16, headless: bool) -> SResult<bool> {
 
     if await_browser_ready(port, READY_TIMEOUT)? {
         let mode = if headless { "headless" } else { "headful" };
+        if is_new {
+            println!("Created browser profile at {}", profile.display());
+        }
         println!("Chrome launched on port {port} ({mode})");
         return Ok(true);
     }
@@ -1411,19 +1578,16 @@ impl ScannerInner {
             .clone()
             .is_some_and(|id| self.cdp.take_crashed(&id));
         if crashed {
-            if let Some(old) = self.tab_id.take() {
-                let _ = close_target(self.port, &old);
-                self.cdp.forget(&old);
-                self.glow_armed.retain(|_, t| *t != old);
-            }
-            self.prepared.clear();
-            // Deliberately CREATE, rather than falling through to the adopt
-            // path below: recovering from our own crash by taking over
-            // whatever tab the human happens to be looking at would be a
-            // worse outcome than the crash was.
-            self.tab_id = Some(create_tab_impl(self.port)?);
+            self.recover_crashed_tab()?;
         }
-        let alive = self.tab_id.as_deref().is_some_and(|id| tab_exists(self.port, id));
+        // ONE listing, and a failure to get it is an error rather than an
+        // answer. Asking twice (tab_exists, then page_targets) also let the
+        // browser change between the two questions.
+        let targets = page_targets_checked(self.port)?;
+        let alive = self
+            .tab_id
+            .as_deref()
+            .is_some_and(|id| targets.iter().any(|t| target_id_of(t) == id));
         if !alive {
             self.tab_id = if self.single_tab {
                 // Parallel mode: this agent drives ONE tab of its own. Create
@@ -1431,13 +1595,26 @@ impl ScannerInner {
                 // agent's tab.
                 Some(create_tab_impl(self.port)?)
             } else {
-                // Shared with the human: adopt the tab the browser is already
-                // showing rather than opening another one on top of it.
-                ensure_tab_impl(self.port)?;
-                page_targets(self.port)
-                    .first()
+                // Shared with the human: take over a BLANK surface if there is
+                // one — that is the tab Chrome opens on, and nobody's work —
+                // and otherwise open our own.
+                //
+                // This used to be `page_targets().first()`, which is Chrome's
+                // most-recently-USED head: whatever the human was last looking
+                // at. Two measured consequences. It adopted a tab running an
+                // infinite loop, and `prepare_session`'s 30s Page.enable then
+                // ended the whole run. And on a blank tab it went on to paint
+                // the logo over it via show_blank_page — defacing a tab this
+                // process never opened.
+                match targets
+                    .iter()
+                    .find(|t| blank_url(t.get("url").and_then(Value::as_str).unwrap_or("")))
                     .map(|t| target_id_of(t).to_string())
                     .filter(|id| !id.is_empty())
+                {
+                    Some(id) => Some(id),
+                    None => Some(create_tab_impl(self.port)?),
+                }
             };
             self.prepared.clear();
         }
@@ -1459,6 +1636,22 @@ impl ScannerInner {
         // Glow from second zero: the browser should read as driven the moment
         // it is driven — blank tab included.
         self.glow_tabs();
+        Ok(())
+    }
+
+    /// Replace the driven tab after its renderer died.
+    ///
+    /// Deliberately CREATES rather than reusing the adopt path: recovering
+    /// from our own crash by taking over whatever tab the human happens to be
+    /// looking at would be a worse outcome than the crash was.
+    fn recover_crashed_tab(&mut self) -> SResult<()> {
+        if let Some(old) = self.tab_id.take() {
+            let _ = close_target(self.port, &old);
+            self.cdp.forget(&old);
+            self.glow_armed.retain(|_, t| *t != old);
+        }
+        self.prepared.clear();
+        self.tab_id = Some(create_tab_impl(self.port)?);
         Ok(())
     }
 
@@ -1518,6 +1711,27 @@ impl ScannerInner {
     /// screenshot could each be from a different moment if anything went wrong
     /// between writing and reading them.
     pub fn scan_core(&mut self) -> SResult<String> {
+        match self.scan_once() {
+            Ok(summary) => Ok(summary),
+            Err(e) => {
+                // The scan may have failed because the renderer died under it.
+                // `start`'s pre-check cannot be relied on for that: the crash
+                // event is only noticed while something is reading the socket,
+                // and a navigation that now fails fast on errorText returns
+                // before anything has read. By the time a scan has timed out
+                // the event has certainly arrived — so ask again HERE, where
+                // the failure is, and take one more run at it on a fresh tab.
+                let tid = self.tab_id.clone().unwrap_or_default();
+                if tid.is_empty() || !self.cdp.take_crashed(&tid) {
+                    return Err(e);
+                }
+                self.recover_crashed_tab()?;
+                self.scan_once()
+            }
+        }
+    }
+
+    fn scan_once(&mut self) -> SResult<String> {
         self.start()?;
         // The click box is per-action and must not be frozen into the scan's
         // screenshot. The glow stays up: it is a thin, blurred edge the model
@@ -2244,9 +2458,15 @@ fn rect4(v: &Bound<'_, PyAny>) -> PyResult<[f64; 4]> {
 /// Already listening -> attach to what is there, so a browser the user
 /// already has open (or a previous run's) is reused rather than duplicated.
 #[pyfunction]
-#[pyo3(signature = (port=CHROME_PORT, headless=false))]
-pub fn launch_chrome(py: Python<'_>, port: u16, headless: bool) -> PyResult<bool> {
-    py.detach(|| launch_chrome_impl(port, headless))
+#[pyo3(signature = (port=CHROME_PORT, headless=false, profile_dir=None))]
+pub fn launch_chrome(
+    py: Python<'_>,
+    port: u16,
+    headless: bool,
+    profile_dir: Option<String>,
+) -> PyResult<bool> {
+    let dir = profile_dir.map(PathBuf::from);
+    py.detach(move || launch_chrome_impl(port, headless, dir))
         .map_err(PyErr::from)
 }
 
