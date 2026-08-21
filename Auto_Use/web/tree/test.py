@@ -18,7 +18,7 @@ This file lives in:  <repo>/Auto_Use/web/tree/
 Usage (from anywhere):
     python3 Auto_Use/web/tree/test.py
     python3 Auto_Use/web/tree/test.py --port 9222
-    python3 Auto_Use/web/tree/test.py --url https://example.com
+    python3 Auto_Use/web/tree/test.py --url https://www.github.com
 
 Filtering:
     element.config.json (this folder) is picked up automatically and merged

@@ -1090,6 +1090,9 @@ pub struct ScannerInner {
     /// old list and then indexing the new one is how `close_tab` could close a
     /// tab nobody asked to close.
     tab_ids: Vec<String>,
+    /// Every tab this agent has seen, in the order it first saw them — the
+    /// order `<all_tabs>` numbers against, and the only stable one available.
+    tab_order: Vec<String>,
     /// The tab this agent is driving, by CDP target id.
     ///
     /// Tracked in BOTH modes, and authoritative: the scanner is bound to it by
@@ -1146,6 +1149,7 @@ impl ScannerInner {
             glow_gen: 0,
             single_tab,
             tab_ids: Vec::new(),
+            tab_order: Vec::new(),
             tab_id: None,
         }
     }
@@ -1342,9 +1346,43 @@ impl ScannerInner {
     /// act on cannot drift apart. It used to come from the scanner
     /// subprocess's own `t` command and get regex-parsed back out of its
     /// stdout — a second listing of the same thing that only agreed by luck.
+    /// Chrome's open tabs in a STABLE, left-to-right order.
+    ///
+    /// /json/list is most-recently-USED order, not tab-strip order. Measured:
+    /// with four tabs open it lists them newest-first, and activating the
+    /// OLDEST moves that one to the head. Numbering straight off it therefore
+    /// renumbers every tab each time one is brought to the front — which
+    /// `bind_tab` does on every single scan — so the tab the model called [2]
+    /// last step is a different tab this step, and it is told nothing.
+    ///
+    /// Chrome exposes no tab-strip index over CDP, so the order is KEPT here
+    /// rather than asked for: an id is appended the first time it is seen and
+    /// never moves again, and a closed tab closes the gap behind it. A new tab
+    /// opens on the right and takes the next number up, which is what the
+    /// model is told to expect.
+    fn ordered_tabs(&mut self) -> Vec<Value> {
+        let live = self.open_tabs();
+        // Reversed, because Chrome hands them over newest-first: tabs seen for
+        // the first time this pass then land oldest-first, and the very first
+        // listing of a browser we did not open reads left-to-right too.
+        let mut fresh: Vec<String> =
+            live.iter().map(|t| target_id_of(t).to_string()).rev().collect();
+        fresh.retain(|id| !id.is_empty());
+        self.tab_order.retain(|id| fresh.contains(id));
+        for id in fresh {
+            if !self.tab_order.contains(&id) {
+                self.tab_order.push(id);
+            }
+        }
+        self.tab_order
+            .iter()
+            .filter_map(|id| live.iter().find(|t| target_id_of(t) == id).cloned())
+            .collect()
+    }
+
     pub fn read_tabs(&mut self) -> String {
         let current = self.tab_id.clone().unwrap_or_default();
-        let targets = self.open_tabs();
+        let targets = self.ordered_tabs();
         // The ids behind the lines, captured in the same pass that renders
         // them. This is the whole point: one listing, two views of it.
         self.tab_ids = targets.iter().map(|t| target_id_of(t).to_string()).collect();
