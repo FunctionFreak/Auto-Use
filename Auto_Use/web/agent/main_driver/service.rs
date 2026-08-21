@@ -105,82 +105,6 @@ fn trim_history_entry(entry: &str) -> String {
     }
 }
 
-/// Build the compact tool_response preserved in agent memory for a step: only
-/// SUCCESSFUL research results are compacted to a scratchpad pointer; every
-/// other result is preserved verbatim.
-fn tool_response_for_memory(action_result: &Value) -> Value {
-    fn compact(entry: &Value) -> Value {
-        let is_research_success = entry
-            .as_object()
-            .map(|o| {
-                o.get("tool").and_then(Value::as_str) == Some("research")
-                    && o.get("status").and_then(Value::as_str) == Some("success")
-            })
-            .unwrap_or(false);
-        if is_research_success {
-            let query = entry.get("query").cloned().unwrap_or(json!(""));
-            json!({
-                "action": "tool",
-                "tool": "research",
-                "query": query,
-                "message": "memory optimized - refer to scratchpad for the research result",
-            })
-        } else {
-            entry.clone()
-        }
-    }
-
-    if let Some(obj) = action_result.as_object() {
-        if obj.get("action").and_then(Value::as_str) == Some("multiple") {
-            if let Some(Value::Array(results)) = obj.get("results") {
-                let mut out = obj.clone();
-                out.insert(
-                    "results".into(),
-                    Value::Array(results.iter().map(compact).collect()),
-                );
-                return Value::Object(out);
-            }
-        }
-    }
-    compact(action_result)
-}
-
-/// Replace a research step's 'refer to scratchpad' placeholder with the
-/// numbered findings the agent distilled into the scratchpad on the digest
-/// step. Preserves the surrounding shape.
-fn backfill_research_findings(tool_response_str: &str, findings: &str) -> String {
-    let Ok(mut data) = serde_json::from_str::<Value>(tool_response_str) else {
-        return tool_response_str.to_string();
-    };
-
-    fn fill(entry: &mut Value, findings: &str) {
-        if let Some(obj) = entry.as_object_mut() {
-            if obj.get("tool").and_then(Value::as_str) == Some("research") {
-                obj.shift_remove("message");
-                obj.insert("research_result".into(), Value::String(findings.to_string()));
-            }
-        }
-    }
-
-    let is_multiple = data
-        .as_object()
-        .map(|o| {
-            o.get("action").and_then(Value::as_str) == Some("multiple")
-                && o.contains_key("results")
-        })
-        .unwrap_or(false);
-    if is_multiple {
-        if let Some(Value::Array(results)) = data.get_mut("results") {
-            for r in results {
-                fill(r, findings);
-            }
-        }
-    } else {
-        fill(&mut data, findings);
-    }
-    view::dumps_pretty(&data)
-}
-
 /// <persistent_memory>: the agent's OWN live state, rebuilt fresh EVERY step.
 fn persistent_memory(todo_list: &str, scratchpad: &str) -> String {
     let todo = todo_list.trim();
@@ -442,8 +366,7 @@ fn pair_results(
     reject_results: &[Value],
     action_result: &Value,
 ) -> PyResult<()> {
-    let compacted = tool_response_for_memory(action_result);
-    let batch = compacted.get("results").and_then(Value::as_array);
+    let batch = action_result.get("results").and_then(Value::as_array);
     let paired: Vec<Value> = if let (false, Some(batch)) = (calls.is_empty(), batch) {
         if batch.len() == calls.len() {
             calls
@@ -457,10 +380,10 @@ fn pair_results(
                 })
                 .collect()
         } else {
-            whole_envelope(calls, &compacted)
+            whole_envelope(calls, action_result)
         }
     } else if !calls.is_empty() {
-        whole_envelope(calls, &compacted)
+        whole_envelope(calls, action_result)
     } else {
         Vec::new()
     };
@@ -639,9 +562,8 @@ impl AgentService {
         )?;
 
         // Controller — pure Rust in the same crate, driving the same scanner.
-        // web_callback/shell_callback are accepted for GUI parity and will
-        // wire into the research sub-agent when it lands; the current tools
-        // don't use them.
+        // web_callback/shell_callback are accepted for GUI parity only; no
+        // current tool uses them.
         let _ = (&web_callback, &shell_callback, &api_key);
         let web_dir = agent_dir
             .parent()
@@ -838,8 +760,6 @@ impl AgentService {
         let mut is_first_iteration = true;
         let mut am = PyList::empty(py); // assistant turns, aligned 1:1 with...
         let mut tr = PyList::empty(py); // ...per-step tool results
-        let mut pending_research_response: Option<String> = None;
-        let mut research_memory_index: Option<i64> = None;
         let mut json_fail_count = 0i32;
         let mut final_status = "incomplete".to_string();
         let mut final_message = "Agent stopped before completing the task".to_string();
@@ -924,23 +844,14 @@ impl AgentService {
             }
 
             // Apply a finished background compression: the controller splices
-            // the lists IN PLACE here on the main thread.
-            let rmi_obj: Py<PyAny> = match research_memory_index {
-                Some(i) => i.into_pyobject(py)?.into_any().unbind(),
-                None => py.None(),
-            };
-            let shifted = self
-                .compression
+            // the lists IN PLACE here on the main thread. The third argument
+            // was the research-digest memory index; the feature is gone, so
+            // None goes in and the shifted return is ignored.
+            self.compression
                 .bind(py)
-                .call_method1("apply_pending", (&am, &tr, rmi_obj))?;
-            research_memory_index = if shifted.is_none() {
-                None
-            } else {
-                Some(shifted.extract::<i64>()?)
-            };
+                .call_method1("apply_pending", (&am, &tr, py.None()))?;
 
             step_number += 1;
-            let mut is_research_digest = false;
 
             // Max step limit - prevent infinite loops
             if step_number > 100 {
@@ -951,24 +862,21 @@ impl AgentService {
             }
 
             // Tool-flow chain: announce the turn.
-            self.emit_flow(
-                py,
-                "turn",
-                Some(&json!({"hasImage": pending_research_response.is_none()})),
-            );
+            self.emit_flow(py, "turn", Some(&json!({"hasImage": true})));
 
             // No page scanned this step means no skills. STUB: always "".
             let domain_block = "";
 
-            let mut annotated_image_base64: Option<String> = None;
-            let mut image_sent = false;
-            let mut formatted_element_tree = String::new();
-            let mut all_tabs_text = String::new();
+            // Assigned inside the block below on every path that survives it
+            // (a scan failure or a Stop breaks the loop instead), which the
+            // compiler checks — a dead default here would hide a path that
+            // forgot to.
+            let annotated_image_base64: Option<String>;
+            let image_sent: bool;
+            let formatted_element_tree: String;
+            let all_tabs_text: String;
 
-            if pending_research_response.is_some() {
-                println!("\n{}", "=".repeat(60));
-                println!("Step {step_number}: Research digest iteration (no scan)");
-            } else {
+            {
                 println!("\n{}", "=".repeat(60));
                 println!("Step {step_number}: Scanning snapshot.");
                 let scanner = self.scanner.get();
@@ -1052,23 +960,12 @@ impl AgentService {
             } else {
                 let request_tag = if is_resumed { "updated_user_request" } else { "user_request" };
                 let base = format!("<{request_tag}>\n{task}\n</{request_tag}>");
-                if let Some(research) = pending_research_response.take() {
-                    user_message = format!(
-                        "<critical>\nNo image and element tree provided. Focus on digesting the research report below.\n1. Analyze thoroughly - extract all relevant data (numbers, dates, names, URLs, prices, etc.)\n2. Save ALL important findings to scratchpad in this step's action.\n</critical>\n\n{research}\n\n{base}\n\n{state_block}"
-                    );
-                    image_sent = false;
-                    annotated_image_base64 = None;
-                    // Flag consumed (take()); mark this as the research-digest
-                    // step so its scratchpad response can be folded below.
-                    is_research_digest = true;
-                } else {
-                    let mut msg = format!("{base}\n\n{state_block}\n\n{page_block}");
-                    if image_sent {
-                        msg.push_str("\n\n<image>Annotated screenshot with bounding boxes</image>");
-                        msg.push_str("\n\n<critical>Pure vision first: decide which element to interact with from the screenshot alone, then refer to <element_tree> for its [id].</critical>");
-                    }
-                    user_message = msg;
+                let mut msg = format!("{base}\n\n{state_block}\n\n{page_block}");
+                if image_sent {
+                    msg.push_str("\n\n<image>Annotated screenshot with bounding boxes</image>");
+                    msg.push_str("\n\n<critical>Pure vision first: decide which element to interact with from the screenshot alone, then refer to <element_tree> for its [id].</critical>");
                 }
+                user_message = msg;
             }
 
             // Build the API messages as a real NATIVE dialogue. APPEND-ONLY:
@@ -1186,9 +1083,6 @@ impl AgentService {
                 &mut step_number,
                 &mut is_first_iteration,
                 &mut json_fail_count,
-                &mut pending_research_response,
-                &mut research_memory_index,
-                is_research_digest,
                 image_sent,
                 annotated_image_base64.as_deref(),
                 &mut step_ctx,
@@ -1260,9 +1154,6 @@ impl AgentService {
         step_number: &mut i64,
         is_first_iteration: &mut bool,
         json_fail_count: &mut i32,
-        pending_research_response: &mut Option<String>,
-        research_memory_index: &mut Option<i64>,
-        is_research_digest: bool,
         image_sent: bool,
         annotated_image_base64: Option<&str>,
         step_ctx: &mut Option<StepCtx>,
@@ -1520,7 +1411,7 @@ impl AgentService {
             self.controller.set_elements(elements_mapping, &app_name);
 
             // Send action to controller
-            let mut action_result: Value = self
+            let action_result: Value = self
                 .controller
                 .route_action(py, &Value::Array(actions_val.clone()))?;
 
@@ -1532,43 +1423,6 @@ impl AgentService {
                 *final_status = "incomplete".into();
                 *final_message = "Stopped by user".into();
                 return Ok(Flow::Break);
-            }
-
-            // Check if the research tool was used - store for the digest step.
-            let mut research_results_list: Vec<String> = Vec::new();
-            let is_research = action_result.get("tool").and_then(Value::as_str) == Some("research");
-            if is_research && action_result.get("result").is_some() {
-                if let Some(obj) = action_result.as_object_mut() {
-                    if let Some(result) = obj.shift_remove("result") {
-                        research_results_list.push(py_str_of_value(&result));
-                    }
-                }
-            } else if action_result.get("action").and_then(Value::as_str) == Some("multiple") {
-                if let Some(Value::Array(results)) =
-                    action_result.get_mut("results").map(|r| &mut *r)
-                {
-                    for entry in results.iter_mut() {
-                        let hit = entry.get("tool").and_then(Value::as_str) == Some("research")
-                            && entry.get("result").is_some();
-                        if hit {
-                            if let Some(obj) = entry.as_object_mut() {
-                                if let Some(result) = obj.shift_remove("result") {
-                                    research_results_list.push(py_str_of_value(&result));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if !research_results_list.is_empty() {
-                *pending_research_response = Some(format!(
-                    "<tool>\n{}\n</tool>",
-                    research_results_list.join("\n")
-                ));
-                println!("Research results captured for digest iteration");
-            } else {
-                *pending_research_response = None;
             }
 
             // Check if task completed (done action was executed)
@@ -1588,85 +1442,6 @@ impl AgentService {
             // Preserve this step's results as role:"tool" turns keyed to the
             // calls that produced them.
             pair_results(tr, &calls, &reject_results, &action_result)?;
-
-            // Research-result memory: on the digest step, fold the numbered
-            // scratchpad findings into the original research step's slot.
-            if is_research_digest {
-                if let Some(rmi) = *research_memory_index {
-                    let in_range = rmi >= 0 && (rmi as usize) < tr.len();
-                    let slot_truthy = in_range && tr.get_item(rmi as usize)?.is_truthy()?;
-                    if slot_truthy {
-                        let entries: Vec<String> = actions_val
-                            .iter()
-                            .filter_map(|a| {
-                                let obj = a.as_object()?;
-                                if obj.get("type").and_then(Value::as_str) == Some("scratchpad") {
-                                    let value = obj.get("value")?;
-                                    if truthy(value) {
-                                        return Some(py_str_of_value(value).trim().to_string());
-                                    }
-                                }
-                                None
-                            })
-                            .collect();
-                        if !entries.is_empty() {
-                            let numbered = entries
-                                .iter()
-                                .enumerate()
-                                .map(|(i, e)| format!("{}. {e}", i + 1))
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            let slot_str: String =
-                                tr.get_item(rmi as usize)?.str()?.extract()?;
-                            let stored: Option<Vec<Value>> =
-                                match serde_json::from_str::<Value>(&slot_str) {
-                                    Ok(Value::Array(items))
-                                        if !items.is_empty()
-                                            && items.iter().all(|d| {
-                                                d.as_object()
-                                                    .map(|o| o.contains_key("tool_call_id"))
-                                                    .unwrap_or(false)
-                                            }) =>
-                                    {
-                                        Some(items)
-                                    }
-                                    _ => None,
-                                };
-                            match stored {
-                                Some(mut items) => {
-                                    for entry in items.iter_mut() {
-                                        let content =
-                                            py_str_or_empty_value(entry.get("content"));
-                                        if let Some(obj) = entry.as_object_mut() {
-                                            obj.insert(
-                                                "content".into(),
-                                                Value::String(backfill_research_findings(
-                                                    &content, &numbered,
-                                                )),
-                                            );
-                                        }
-                                    }
-                                    tr.set_item(rmi as usize, view::encode_results(&items))?;
-                                }
-                                None => {
-                                    // Legacy (schema-era) slot: plain JSON string.
-                                    tr.set_item(
-                                        rmi as usize,
-                                        backfill_research_findings(&slot_str, &numbered),
-                                    )?;
-                                }
-                            }
-                        }
-                    }
-                    *research_memory_index = None;
-                }
-            }
-
-            // A research call this step points the pointer at THIS step, for
-            // the next digest to fold into.
-            if !research_results_list.is_empty() {
-                *research_memory_index = Some(tr.len() as i64 - 1);
-            }
 
             // No fixed pause between an action and the next scan — the
             // scanner waits for the PAGE. An explicit `wait` is honoured.
@@ -1748,10 +1523,3 @@ fn py_str_of_value(v: &Value) -> String {
     view::py_str_of(v)
 }
 
-/// Python `str(x or "")` over an optional value.
-fn py_str_or_empty_value(v: Option<&Value>) -> String {
-    match v {
-        Some(v) if truthy(v) => view::py_str_of(v),
-        _ => String::new(),
-    }
-}

@@ -42,15 +42,13 @@ pub struct ControllerView {
     pub controller_service: ControllerService,
     pub todo_tracker: todo_tracker::service::TodoTrackerService,
     pub scratchpad_service: scratchpad::service::ScratchpadService,
-    /// The ids from the scan the model was just shown, plus the current app
-    /// name — replaced per step by set_elements.
+    /// The ids from the scan the model was just shown — replaced per step by
+    /// set_elements.
     state: Mutex<ElementsState>,
 }
 
 struct ElementsState {
     elements: Map<String, Value>,
-    #[allow(dead_code)] // read by the future research sub-agent's report header
-    application_name: String,
 }
 
 impl ControllerView {
@@ -75,22 +73,17 @@ impl ControllerView {
             controller_service: ControllerService,
             todo_tracker: todo_tracker::service::TodoTrackerService::new(&scratchpad_base)?,
             scratchpad_service: scratchpad::service::ScratchpadService::new(&scratchpad_base)?,
-            state: Mutex::new(ElementsState {
-                elements: Map::new(),
-                application_name: String::new(),
-            }),
+            state: Mutex::new(ElementsState { elements: Map::new() }),
         })
     }
 
     // ------------------------------------------------------------------ setup
 
-    /// Hand over the ids from the scan the model was just shown.
-    pub fn set_elements(&self, elements_mapping: Map<String, Value>, application_name: &str) {
-        let mut state = self.state.lock().unwrap();
-        state.elements = elements_mapping;
-        if !application_name.is_empty() {
-            state.application_name = application_name.to_string();
-        }
+    /// Hand over the ids from the scan the model was just shown. The app-name
+    /// parameter is accepted for signature parity with the mac/ios controllers
+    /// and unused here — nothing web-side ever read it.
+    pub fn set_elements(&self, elements_mapping: Map<String, Value>, _application_name: &str) {
+        self.state.lock().unwrap().elements = elements_mapping;
     }
 
     // ---------------------------------------------------------------- helpers
