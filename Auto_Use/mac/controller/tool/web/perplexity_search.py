@@ -3,6 +3,7 @@
 import os
 import requests
 from dotenv import load_dotenv
+from Auto_Use.mac.llm_provider import LLM_HTTP_TIMEOUT
 
 load_dotenv()
 
@@ -36,7 +37,8 @@ def web_search(query, api_key=None):
                 "input": query,
                 "tools": [{"type": "web_search"}],
                 "max_output_tokens": 4096,
-            }
+            },
+            timeout=LLM_HTTP_TIMEOUT
         )
         response.raise_for_status()
         result = response.json()

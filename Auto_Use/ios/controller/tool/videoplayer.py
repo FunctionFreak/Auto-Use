@@ -12,6 +12,11 @@ playback from there.
 
 import requests
 import time
+
+# (connect, read) seconds for the WebDriverAgent source dump — same bound the
+# scanner uses at Auto_Use/ios/tree/element.py:57. Without it `requests` blocks
+# forever, and a wedged WDA takes the whole agent down with it.
+WDA_SOURCE_TIMEOUT = (5, 60)
 import logging
 import re
 import xml.etree.ElementTree as ET
@@ -237,7 +242,7 @@ class VideoPlayerService:
     def _scan_elements(self):
         """Scan video player elements"""
         try:
-            response = requests.get(f"{self.wda_url}/source")
+            response = requests.get(f"{self.wda_url}/source", timeout=WDA_SOURCE_TIMEOUT)
             if response.status_code != 200:
                 logger.error(f"❌ Failed to get source: {response.status_code}")
                 return None

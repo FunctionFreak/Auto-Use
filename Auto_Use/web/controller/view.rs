@@ -177,7 +177,39 @@ impl ControllerView {
         Ok(json!({"status": status, "action": "multiple", "results": results}))
     }
 
+    /// Run the tool, then tell the truth about what else happened.
+    ///
+    /// A dialog that blocked the page, a renderer that died — these arrive on
+    /// the socket while a tool is running and used to go nowhere. The tool
+    /// then answered "clicked [3]" and the model had no way to know why the
+    /// page it saw next made no sense. Appending them here covers every tool
+    /// at once, including the early-return branches inside `one_inner`.
     fn one(&self, py: Python<'_>, action: &Value) -> PyResult<Value> {
+        let mut result = self.one_inner(py, action)?;
+        let notes: Vec<String> =
+            super::service::scan_op(py, &self.scanner, |s| Ok(s.take_notices()))
+                .unwrap_or_default();
+        if !notes.is_empty() {
+            let base = result
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let joined = notes.join(" ");
+            let message = if base.is_empty() {
+                joined
+            } else {
+                format!("{base} Note: {joined}")
+            };
+            if let Some(obj) = result.as_object_mut() {
+                obj.insert("message".into(), Value::String(message));
+            }
+        }
+        Ok(result)
+    }
+
+    fn one_inner(&self, py: Python<'_>, action: &Value) -> PyResult<Value> {
         let kind = action
             .get("type")
             .filter(|v| truthy(v))

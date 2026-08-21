@@ -5,6 +5,7 @@ import requests
 from typing import Dict, Any, Optional
 
 from .view import get_model_info, get_reasoning_params
+from .. import LLM_HTTP_TIMEOUT
 
 
 class PerplexityProvider:
@@ -104,7 +105,7 @@ class PerplexityProvider:
             data["tool_choice"] = "required"
 
         try:
-            response = requests.post(self.api_url, json=data, headers=headers)
+            response = requests.post(self.api_url, json=data, headers=headers, timeout=LLM_HTTP_TIMEOUT)
             response.raise_for_status()
             result = response.json()
 

@@ -64,7 +64,11 @@ const EVENT_CAP: usize = 2000;
 // crowded out the events that matter: with Network.enable on, Chrome emits
 // roughly eight events per request, so a page with a few hundred subresources
 // used to bury the load event under its own noise.
-const WAITED_METHODS: [&str; 6] = [
+//
+// The last three are not waited on by anybody. They are here because `stash`
+// is the one place that sees every frame Chrome sends, and each of them needs
+// answering the moment it arrives rather than whenever someone next looks.
+const WAITED_METHODS: [&str; 9] = [
     "Page.loadEventFired",
     // Not waited on directly — it is what tells us a tab STARTED loading, so
     // switching to that tab knows to wait for it. See `loading`.
@@ -73,6 +77,13 @@ const WAITED_METHODS: [&str; 6] = [
     "Network.loadingFinished",
     "Network.loadingFailed",
     "Target.attachedToTarget",
+    // A modal dialog BLOCKS the renderer. Until it is answered the tab replies
+    // to nothing, so this has to be handled on arrival, not on demand.
+    "Page.javascriptDialogOpening",
+    // A crashed target stays in /json/list, so `tab_exists` keeps saying the
+    // tab is fine while every call against it fails.
+    "Inspector.targetCrashed",
+    "Target.detachedFromTarget",
 ];
 
 // Relative install paths under Program Files / Program Files (x86) /
@@ -452,9 +463,11 @@ fn glow_source(glow_css: &PathBuf, glow_js: &PathBuf) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
-// This side's own thin CDP line to Chrome, for dressing tabs (favicon, glow).
-// Chrome happily serves several CDP clients at once; the scanner's socket is
-// never touched. Deliberately NO Origin header — tungstenite's plain client
+// THE line to Chrome. Not "this side's cosmetics socket" any more: the tab
+// tools, the scanner and the glow all ride this one connection, so a rule
+// written when nobody was listening — "it can fail freely, it need not know
+// which tab" — is now load-bearing for the whole agent. Deliberately NO
+// Origin header — tungstenite's plain client
 // handshake sends none, and a socket with no Origin needs no
 // --remote-allow-origins flag. Cosmetics-only by contract: callers swallow
 // every failure, and a dead socket just gets dropped and lazily redialed.
@@ -485,6 +498,27 @@ pub struct Cdp {
     /// cover this — it only knows about requests whose start it witnessed
     /// itself, and a navigation begun before the scan is invisible to it.
     loading: HashSet<String>,
+    /// Things that happened to the browser nobody asked for, in the words the
+    /// MODEL should read: a dialog that was dismissed, a page that crashed.
+    ///
+    /// Handling these silently is what browser-use does, and it leaves the
+    /// model's picture of the page quietly wrong — it never learns why the
+    /// form it filled reset, or why the tab went blank. Draining them into the
+    /// next tool result is what turns "the tool lied" into "the tool told me".
+    notices: VecDeque<String>,
+    /// Targets whose renderer died. Recovery is the caller's business — this
+    /// only remembers, because the crash event and the next scan can be many
+    /// calls apart.
+    crashed: HashSet<String>,
+    /// Request ids whose caller stopped waiting.
+    ///
+    /// A per-call timeout no longer hangs up (see `rpc`), so the answer it gave
+    /// up on may still turn up later. Nothing will ever claim it, and parking
+    /// it in `replies` would pin a slot there for the life of the run — with
+    /// enough timeouts that fills the map and starts dropping answers callers
+    /// ARE waiting for. So the id is recorded here and its reply discarded on
+    /// arrival.
+    abandoned: HashSet<u64>,
     /// Bumped on every hang-up. Sessions and anything registered inside them
     /// die with the connection, so a caller holding session-keyed state
     /// watches this to know its state is stale.
@@ -501,6 +535,9 @@ impl Cdp {
             replies: HashMap::new(),
             sessions: HashMap::new(),
             loading: HashSet::new(),
+            abandoned: HashSet::new(),
+            notices: VecDeque::new(),
+            crashed: HashSet::new(),
             generation: 0,
         }
     }
@@ -552,7 +589,22 @@ impl Cdp {
         self.loading.clear();
         self.events.clear();
         self.replies.clear();
+        self.abandoned.clear();
+        // `notices` deliberately SURVIVES a hang-up: a crash is often what
+        // caused it, and that is exactly the sentence the model needs.
         self.generation += 1;
+    }
+
+    /// Hold a reply that arrived for some call other than the one being
+    /// waited on — unless that call has already given up, in which case the
+    /// answer is dead post and goes in the bin.
+    fn hold_reply(&mut self, id: u64, m: Value) {
+        if self.abandoned.remove(&id) {
+            return;
+        }
+        if self.replies.len() < EVENT_CAP {
+            self.replies.insert(id, m);
+        }
     }
 
     /// Keep an event for whoever is waiting on one.
@@ -561,18 +613,136 @@ impl Cdp {
     /// WAITED_METHODS. If the cap is somehow still reached, the OLDEST event
     /// goes, so the event that just arrived is always kept.
     fn stash(&mut self, m: Value) {
-        let waited = m
-            .get("method")
-            .and_then(Value::as_str)
-            .is_some_and(|name| WAITED_METHODS.contains(&name));
-        if !waited {
+        let Some(method) = m.get("method").and_then(Value::as_str).map(str::to_string) else {
             return;
+        };
+        if !WAITED_METHODS.contains(&method.as_str()) {
+            return;
+        }
+        // Answered here and NOT buffered: nothing waits on these, and a
+        // dialog left unanswered blocks its renderer for as long as it sits.
+        match method.as_str() {
+            "Page.javascriptDialogOpening" => return self.note_dialog(&m),
+            "Inspector.targetCrashed" | "Target.detachedFromTarget" => {
+                return self.note_gone(&method, &m)
+            }
+            _ => {}
         }
         self.note_load_state(&m);
         while self.events.len() >= EVENT_CAP {
             self.events.pop_front();
         }
         self.events.push_back(m);
+    }
+
+    /// Answer a modal dialog immediately, and remember what it said.
+    ///
+    /// An open alert/confirm/prompt blocks its renderer completely: the tab
+    /// answers no CDP call at all until the dialog is closed. Nothing in this
+    /// crate used to listen, so the tab simply stopped responding and every
+    /// call against it ran out its timeout — the agent burned its whole step
+    /// budget on a box saying "are you sure?".
+    ///
+    /// Accept everything except `prompt`, which is dismissed: accepting a
+    /// prompt submits an empty string as though the user typed nothing, and a
+    /// cancel is the honest answer when we have nothing to type.
+    ///
+    /// The text is KEPT. Dismissing a dialog without telling the model what it
+    /// said makes the model's picture of the page silently wrong — it sees a
+    /// form reset with no explanation. `send` is used rather than `rpc` so a
+    /// dialog can never make this the slow path.
+    fn note_dialog(&mut self, m: &Value) {
+        let params = m.get("params");
+        let kind = params
+            .and_then(|p| p.get("type"))
+            .and_then(Value::as_str)
+            .unwrap_or("dialog")
+            .to_string();
+        let text = params
+            .and_then(|p| p.get("message"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let sess = m.get("sessionId").and_then(Value::as_str).map(str::to_string);
+        let accept = kind != "prompt";
+        let _ = self.send(
+            "Page.handleJavaScriptDialog",
+            json!({"accept": accept}),
+            sess.as_deref(),
+        );
+        let verb = if accept { "accepted" } else { "dismissed" };
+        self.notice(if text.is_empty() {
+            format!("the page opened a JavaScript {kind} and it was {verb}")
+        } else {
+            format!("the page opened a JavaScript {kind} saying \"{text}\" and it was {verb}")
+        });
+    }
+
+    /// A target died — its renderer crashed, or its session went away.
+    fn note_gone(&mut self, method: &str, m: &Value) {
+        if method == "Inspector.targetCrashed" {
+            let Some(sess) = m.get("sessionId").and_then(Value::as_str).map(str::to_string) else {
+                return;
+            };
+            // Reverse the map BEFORE forgetting the session, or the target id
+            // this crash belongs to is lost with it.
+            let target = self
+                .sessions
+                .iter()
+                .find(|(_, s)| **s == sess)
+                .map(|(t, _)| t.clone());
+            if let Some(t) = target {
+                self.crashed.insert(t);
+            }
+            self.forget_session(&sess);
+            self.notice(
+                "the page crashed - its renderer died, so the tab was re-created and \
+                 whatever was on it is gone"
+                    .into(),
+            );
+            return;
+        }
+        // Target.detachedFromTarget names the session in its params, not the
+        // envelope: the envelope is the PARENT the detach was reported to.
+        if let Some(gone) = m
+            .get("params")
+            .and_then(|p| p.get("sessionId"))
+            .and_then(Value::as_str)
+        {
+            self.forget_session(gone);
+        }
+    }
+
+    /// Queue something for the model, newest kept. Capped, because a page in a
+    /// dialog loop would otherwise fill the run's memory with the same
+    /// sentence — browser-use never clears theirs and it pollutes every later
+    /// prompt.
+    fn notice(&mut self, msg: String) {
+        if self.notices.iter().any(|n| *n == msg) {
+            return;
+        }
+        while self.notices.len() >= 8 {
+            self.notices.pop_front();
+        }
+        self.notices.push_back(msg);
+    }
+
+    /// Everything that has happened since anyone last asked, and clear.
+    pub fn take_notices(&mut self) -> Vec<String> {
+        self.notices.drain(..).collect()
+    }
+
+    /// Whether that tab's renderer died since the last time this was asked.
+    pub fn take_crashed(&mut self, target_id: &str) -> bool {
+        self.crashed.remove(target_id)
+    }
+
+    /// Drop ONE session. The connection and every other session survive — the
+    /// distinction `drop_conn` used not to make.
+    fn forget_session(&mut self, session: &str) {
+        self.sessions.retain(|_, s| s != session);
+        self.loading.remove(session);
     }
 
     /// Follow a session's main-frame navigation so `is_loading` can answer.
@@ -676,9 +846,7 @@ impl Cdp {
                         Ok(m) if m.get("method").is_some() => self.stash(m),
                         Ok(m) => {
                             if let Some(id) = m.get("id").and_then(Value::as_u64) {
-                                if self.replies.len() < EVENT_CAP {
-                                    self.replies.insert(id, m);
-                                }
+                                self.hold_reply(id, m);
                             }
                         }
                         Err(_) => continue,
@@ -702,12 +870,61 @@ impl Cdp {
             if Instant::now() >= deadline || self.ws.is_none() {
                 return false;
             }
+            // A session that has gone away — crashed, or detached — is never
+            // going to fire this. `note_gone` drops it from the map the moment
+            // Chrome says so, so its absence is the signal. Without this a
+            // navigation whose renderer died still served out the full
+            // LOAD_TIMEOUT: 30 seconds of waiting on a dead page.
+            if session.is_some_and(|s| !self.sessions.values().any(|v| v == s)) {
+                return false;
+            }
             self.drain(250);
             if !self.take_events(method, session).is_empty() {
                 return true;
             }
             sleep_s(0.02);
         }
+    }
+
+    /// Send a command and do NOT wait for its answer.
+    ///
+    /// CDP runs the commands on a session in the order they arrive, so a
+    /// forgotten send still lands, and still lands in order relative to
+    /// anything else sent on that session. The only thing given up is knowing
+    /// whether it worked — which is precisely the contract cosmetics already
+    /// have, since every caller swallowed the result anyway.
+    ///
+    /// Waiting is what made the glow expensive. A tab whose renderer is wedged
+    /// answers nothing, so decorating it cost a full RPC timeout EACH PASS,
+    /// and the scan queued behind it paid that. Measured: 45s per scan with a
+    /// single looping sibling tab open. A send costs one write into a socket
+    /// buffer whatever state the renderer is in.
+    ///
+    /// The id goes straight into `abandoned`, so if an answer does turn up
+    /// `hold_reply` bins it instead of parking it in `replies` for the run.
+    pub fn send(
+        &mut self,
+        method: &str,
+        params: Value,
+        session: Option<&str>,
+    ) -> Result<(), CdpFail> {
+        self.connect()?;
+        self.id += 1;
+        let mid = self.id;
+        let mut msg = json!({"id": mid, "method": method, "params": params});
+        if let Some(sid) = session {
+            msg["sessionId"] = Value::String(sid.to_string());
+        }
+        self.abandoned.insert(mid);
+        let ws = self.ws.as_mut().expect("connected above");
+        if ws
+            .send(tungstenite::Message::Text(msg.to_string().into()))
+            .is_err()
+        {
+            self.drop_conn();
+            return Err(CdpFail::Lost(format!("{method}: connection lost")));
+        }
+        Ok(())
     }
 
     pub fn rpc(
@@ -773,9 +990,7 @@ impl Cdp {
                     }
                     // Someone else's answer — hold it rather than drop it.
                     if let Some(other) = m.get("id").and_then(Value::as_u64) {
-                        if self.replies.len() < EVENT_CAP {
-                            self.replies.insert(other, m);
-                        }
+                        self.hold_reply(other, m);
                     }
                 }
                 Ok(tungstenite::Message::Close(_)) => {
@@ -783,18 +998,42 @@ impl Cdp {
                     return Err(CdpFail::Lost(format!("{method}: connection lost")));
                 }
                 Ok(_) => continue, // ping/pong/binary — tungstenite answers pings
+                // OUR OWN read deadline, not a broken socket. Unix reports it
+                // as WouldBlock and Windows as TimedOut; both mean "nothing
+                // arrived in time". tungstenite keeps any partly-read frame in
+                // its own buffer, so the stream is still in step and the next
+                // read resumes exactly where this one stopped — which is why
+                // `drain` has always been able to break here and carry on.
+                Err(tungstenite::Error::Io(e))
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    break;
+                }
                 Err(_) => {
-                    // Timeout or torn transport mid-frame: the stream can no
-                    // longer be trusted to start at a frame boundary.
+                    // Torn transport mid-frame: the stream can no longer be
+                    // trusted to start at a frame boundary, so it must go.
                     self.drop_conn();
                     return Err(CdpFail::Lost(format!("{method}: connection lost")));
                 }
             }
         }
-        // Deadline passed with the reply unread — it may yet arrive and
-        // desync whoever reads next, so this connection is done too.
-        self.drop_conn();
-        Err(CdpFail::Lost(format!("{method} timed out")))
+        // One call did not answer in time. That says something about THIS
+        // request — a busy renderer, a tab blocked on a modal dialog — and
+        // nothing at all about the socket, so hanging up here was wrong: it
+        // took every other tab's session, the event buffer and the pending
+        // replies with it, and the next call rebuilt all of them only to time
+        // out again the same way. That is how a cosmetic call against an
+        // unrelated tab turned a 0.20s scan into 30.23s, and how one blocked
+        // renderer wedged the whole agent.
+        //
+        // The frame stream is still in step, so the connection stays. The only
+        // loose end is this call's answer, which may still arrive: its id goes
+        // to `abandoned` so `hold_reply` bins it instead of parking it forever.
+        self.abandoned.insert(mid);
+        Err(CdpFail::Clean(format!("{method} timed out")))
     }
 
     /// Read whatever is already waiting, so an idle socket can never back up
@@ -861,13 +1100,14 @@ impl Cdp {
         // moment several agents share one browser: only one tab can really be
         // in front, and pages that gate on focus would misbehave for the rest.
         // Both are best-effort — a session that refuses either is still
-        // perfectly usable for reading and clicking.
-        let _ = self.rpc("Page.enable", json!({}), Some(&s), 5.0);
-        let _ = self.rpc(
+        // perfectly usable for reading and clicking — so neither is worth
+        // waiting on. Attaching to a tab with a wedged renderer used to cost
+        // two full timeouts here before the caller got its session back.
+        let _ = self.send("Page.enable", json!({}), Some(&s));
+        let _ = self.send(
             "Emulation.setFocusEmulationEnabled",
             json!({"enabled": true}),
             Some(&s),
-            5.0,
         );
         Ok(s)
     }
@@ -1161,6 +1401,28 @@ impl ScannerInner {
     /// There is no process to start any more: scanning is a call on the
     /// session below, so "start" means only "have somewhere to point it".
     pub fn start(&mut self) -> SResult<()> {
+        // A crashed renderer leaves its target sitting in /json/list, so the
+        // `tab_exists` check below hands it straight back and every call
+        // against it fails for the rest of the run. Measured before this:
+        // update_tab to chrome://crash reported success, then every scan
+        // raised "Page.enable: connection lost" at 45s, 55s, indefinitely.
+        let crashed = self
+            .tab_id
+            .clone()
+            .is_some_and(|id| self.cdp.take_crashed(&id));
+        if crashed {
+            if let Some(old) = self.tab_id.take() {
+                let _ = close_target(self.port, &old);
+                self.cdp.forget(&old);
+                self.glow_armed.retain(|_, t| *t != old);
+            }
+            self.prepared.clear();
+            // Deliberately CREATE, rather than falling through to the adopt
+            // path below: recovering from our own crash by taking over
+            // whatever tab the human happens to be looking at would be a
+            // worse outcome than the crash was.
+            self.tab_id = Some(create_tab_impl(self.port)?);
+        }
         let alive = self.tab_id.as_deref().is_some_and(|id| tab_exists(self.port, id));
         if !alive {
             self.tab_id = if self.single_tab {
@@ -1198,6 +1460,12 @@ impl ScannerInner {
         // it is driven — blank tab included.
         self.glow_tabs();
         Ok(())
+    }
+
+    /// Everything the browser did behind the agent's back since anyone last
+    /// asked — a dialog answered, a page that crashed — in the model's words.
+    pub fn take_notices(&mut self) -> Vec<String> {
+        self.cdp.take_notices()
     }
 
     /// Let the tab go. Chrome stays up — the browser outlives the run — and so
@@ -1628,14 +1896,16 @@ impl ScannerInner {
     pub fn unflash(&mut self) {
         let sessions: Vec<String> = self.cdp.sessions.values().cloned().collect();
         for sess in sessions {
-            let _ = self.cdp.rpc(
+            // Every session, every scan — so this is exactly the loop that
+            // must never block. Hiding a box nobody can see costs nothing to
+            // get wrong and used to cost 5s per unresponsive tab to get right.
+            let _ = self.cdp.send(
                 "Runtime.evaluate",
                 json!({
                     "expression": "window.__autouseBoxHide && window.__autouseBoxHide()",
                     "returnByValue": true
                 }),
                 Some(&sess),
-                5.0,
             );
         }
     }
@@ -1700,51 +1970,56 @@ impl ScannerInner {
             targets.retain(|t| t.get("id").and_then(Value::as_str) == Some(mine.as_str()));
         }
         self.cdp.drain(500);
+        let driven = self.tab_id.clone().unwrap_or_default();
         for t in targets {
-            let tid = t.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+            let tid = target_id_of(&t).to_string();
             if tid.is_empty() {
                 continue;
             }
-            let mut sess: Option<String> = None;
-            let attempt = (|| -> Result<(), CdpFail> {
-                let s = self.cdp.attach(&tid)?;
-                sess = Some(s.clone());
-                if !self.glow_armed.contains_key(&s) {
-                    // Page.enable is not optional and must STAY on: without it
-                    // the registered script never fires. Its events are drained.
-                    self.cdp.rpc("Page.enable", json!({}), Some(&s), 5.0)?;
-                    self.cdp.rpc(
-                        "Page.addScriptToEvaluateOnNewDocument",
-                        json!({"source": src}),
-                        Some(&s),
-                        5.0,
-                    )?;
-                    self.glow_armed.insert(s.clone(), tid.clone());
-                    // The document already open predates the registration.
-                    self.cdp.rpc(
-                        "Runtime.evaluate",
-                        json!({"expression": src, "returnByValue": true}),
-                        Some(&s),
-                        5.0,
-                    )?;
-                }
-                let url = t.get("url").and_then(Value::as_str).unwrap_or("");
-                let has_favicon = t
-                    .get("faviconUrl")
-                    .map(|v| truthy(v))
-                    .unwrap_or(false);
-                if blank_url(url) && !has_favicon {
-                    self.nudge_favicon(&s)?;
-                }
-                Ok(())
-            })();
-            if attempt.is_err() {
+            // The one call here that must be answered: without the sessionId
+            // there is nothing to address. It is a BROWSER-level command, so
+            // a wedged renderer does not delay it, and the result is cached.
+            let Ok(sess) = self.cdp.attach(&tid) else {
                 // Tabs come and go mid-pass by nature; the next call rebuilds
                 // whatever still exists.
-                if let Some(s) = sess {
-                    self.glow_armed.remove(&s);
-                }
                 self.cdp.forget(&tid);
+                continue;
+            };
+            if !self.glow_armed.contains_key(&sess) {
+                // Armed ONCE per session, then left alone. A script registered
+                // with addScriptToEvaluateOnNewDocument is re-run by Chrome on
+                // every document that tab loads afterwards, so navigation,
+                // redirects and SPA route changes keep the glow with no
+                // further call from here. Re-walking every tab every scan was
+                // never what kept it on screen — this registration is.
+                //
+                // Page.enable is not optional and must STAY on: without it the
+                // registered script never fires. Its events are drained.
+                let _ = self.cdp.send("Page.enable", json!({}), Some(&sess));
+                let _ = self.cdp.send(
+                    "Page.addScriptToEvaluateOnNewDocument",
+                    json!({"source": src}),
+                    Some(&sess),
+                );
+                // The document already open predates the registration.
+                let _ = self.cdp.send(
+                    "Runtime.evaluate",
+                    json!({"expression": src, "returnByValue": true}),
+                    Some(&sess),
+                );
+                self.glow_armed.insert(sess.clone(), tid.clone());
+            }
+            // The favicon nudge is the only part that has to read the page
+            // back, so it is the only part that can still cost a timeout.
+            // Restrict it to the tab this agent painted: the icon it re-fires
+            // is the logo page's own, and another tab's favicon was never this
+            // code's business.
+            if tid == driven {
+                let url = t.get("url").and_then(Value::as_str).unwrap_or("");
+                let has_favicon = t.get("faviconUrl").map(|v| truthy(v)).unwrap_or(false);
+                if blank_url(url) && !has_favicon {
+                    let _ = self.nudge_favicon(&sess);
+                }
             }
         }
     }
@@ -1851,8 +2126,9 @@ impl ScannerInner {
             )
         })?;
         // The paint carries the icon link but Chrome dropped its announcement
-        // mid-rewrite — glow_tabs re-fires it.
-        self.glow_tabs();
+        // mid-rewrite. `start()` calls glow_tabs immediately after this, and
+        // that pass re-fires the icon — so a third walk from here was pure
+        // duplication of the pass about to happen anyway.
         Ok(String::new())
     }
 }

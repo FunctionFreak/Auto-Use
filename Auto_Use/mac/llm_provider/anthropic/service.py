@@ -6,6 +6,7 @@ import copy
 from typing import Dict, Any, Optional
 
 from .view import get_model_info, get_sampling_params, get_thinking_params
+from .. import LLM_HTTP_TIMEOUT
 
 
 def _as_text(content) -> str:
@@ -217,7 +218,7 @@ class AnthropicProvider:
             data["tool_choice"] = {"type": "any"}
         
         try:
-            response = requests.post(self.api_url, json=data, headers=headers)
+            response = requests.post(self.api_url, json=data, headers=headers, timeout=LLM_HTTP_TIMEOUT)
             response.raise_for_status()
             result = response.json()
             

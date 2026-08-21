@@ -6,6 +6,7 @@ import base64
 from typing import Dict, Any, Optional
 
 from .view import get_reasoning_params
+from .. import LLM_HTTP_TIMEOUT
 
 def _is_gemini_route(model: str) -> bool:
     """True when OpenRouter will hand this request to Google's backend, where a
@@ -144,7 +145,7 @@ class OpenRouterProvider:
         }
 
         try:
-            response = requests.post(self.api_url, json=data, headers=headers)
+            response = requests.post(self.api_url, json=data, headers=headers, timeout=LLM_HTTP_TIMEOUT)
             response.raise_for_status()
             result = response.json()
             if self.tools:
