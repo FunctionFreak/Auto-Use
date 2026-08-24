@@ -48,12 +48,16 @@ def main():
                         help="Path to write the result JSON when complete")
     args = parser.parse_args()
 
-    # Set BEFORE importing the agent: the WDA endpoint is resolved at import
-    # time (ios/tree/element.py), and the scratchpad paths at construction.
+    # Belt and braces for a hand-run child. run_parallel_sim_agents already
+    # puts both of these in the child's environment, which is the only way that
+    # works for the port: `python -m Auto_Use.ios.agent` imports the package —
+    # and with it ios/tree/element.py, which resolves the WDA URL at import —
+    # BEFORE this function runs. Setting the port here only takes effect if the
+    # agent modules somehow have not been imported yet.
     if args.wda_port:
-        os.environ["AUTOUSE_WDA_PORT"] = str(args.wda_port)
+        os.environ.setdefault("AUTOUSE_WDA_PORT", str(args.wda_port))
     if args.session_id:
-        os.environ["AUTOUSE_IOS_SESSION"] = args.session_id
+        os.environ.setdefault("AUTOUSE_IOS_SESSION", args.session_id)
 
     result = {"status": "error", "message": "child crashed before the agent returned"}
     exit_code = 1

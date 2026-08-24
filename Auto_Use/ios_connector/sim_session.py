@@ -309,7 +309,17 @@ class SimulatorSession:
                     env={**os.environ, "USE_PORT": str(self.port)})
             except Exception as e:
                 self._stop_locked()
-                return {"ok": False, "state": "error", "error": str(e)}
+                failure = str(e)
+            else:
+                failure = None
+        if failure is not None:
+            # _stop_locked cleared _udid, so a later deactivate() would leave
+            # this simulator booted — shut down the one we just booted here.
+            try:
+                _simctl("shutdown", sim["udid"], timeout=60)
+            except Exception:
+                pass
+            return {"ok": False, "state": "error", "error": failure}
         return {"ok": True, "state": "connecting", **sim}
 
     @staticmethod

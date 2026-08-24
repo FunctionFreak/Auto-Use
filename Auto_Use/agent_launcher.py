@@ -302,12 +302,16 @@ def run_parallel_sim_agents(tasks, provider, model, save_conversation=False,
         for i in range(1, n + 1):
             port = WDA_PORT + i - 1
             session = SimulatorSession(port=port, slot=i)
+            # Track it BEFORE activating: activate() boots a simulator and can
+            # still fail (or catch a Ctrl+C) afterwards, and only sessions in
+            # this list get shut down by the finally below.
+            sessions.append((i, session, None))
             res = session.activate(ios_version, exclude=tuple(claimed))
             if not res.get("ok"):
                 detail = " — ".join(p for p in (res.get("error"), res.get("hint")) if p)
                 raise RuntimeError(f"📱 task {i}: {detail}")
             claimed.append(res["udid"])
-            sessions.append((i, session, res))
+            sessions[-1] = (i, session, res)
             print(f"[task {i}] {res['name']} (iOS {res['version']}) on port {port}")
 
         # 2. Wait for all of them to answer (first run builds WDA — minutes).
@@ -340,9 +344,9 @@ def run_parallel_sim_agents(tasks, provider, model, save_conversation=False,
         run_root = Path.cwd() / "parallel"
         shutil.rmtree(run_root, ignore_errors=True)
 
-        env = os.environ.copy()
-        env["PYTHONUNBUFFERED"] = "1"
-        env["PYTHONPATH"] = str(_REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+        base_env = os.environ.copy()
+        base_env["PYTHONUNBUFFERED"] = "1"
+        base_env["PYTHONPATH"] = str(_REPO_ROOT) + os.pathsep + base_env.get("PYTHONPATH", "")
 
         procs = []  # (index, task_text, Popen, result_file)
         for (i, session, sim), task_text in zip(sessions, tasks):
@@ -361,6 +365,14 @@ def run_parallel_sim_agents(tasks, provider, model, save_conversation=False,
                 cmd += ["--speed", str(speed)]
             if save_conversation:
                 cmd += ["--save-conversation"]
+            # The port MUST be in the child's environment before the process
+            # starts: `python -m Auto_Use.ios.agent` imports the package (and
+            # ios/tree/element.py, which resolves the WDA URL at import) before
+            # __main__ runs, so a value set inside main() would arrive too late
+            # and the scanner would read task 1's screen. One env per child.
+            env = dict(base_env)
+            env["AUTOUSE_WDA_PORT"] = str(session.port)
+            env["AUTOUSE_IOS_SESSION"] = f"task_{i}"
             # Deliberately NO start_new_session: children stay in this
             # terminal's process group, so one Ctrl+C interrupts every agent.
             proc = subprocess.Popen(cmd, cwd=str(task_dir), env=env, text=True,

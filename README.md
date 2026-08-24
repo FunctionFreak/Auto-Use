@@ -3,15 +3,11 @@
 
   # Auto Use
 
-  <a href="https://autouse.netlify.app/">
-    <img src="https://img.shields.io/badge/⬇️%20Download%20One--Click%20Setup-2563EB?style=for-the-badge&logoColor=white" alt="Download One-Click Setup" height="44"/>
-  </a>
-
   **🤖 Computer Use Framework for macOS & Windows**
 
   Let AI drive your computer — **Autouse AI — Computer Use**, now with both the macOS and Windows builds combined in a single repository. Control your entire OS with natural language. Browser automation, coding tasks, file management — all powered by vision-language models.
 
-  [Features](#-features) • [Architecture](#-multi-agent-architecture) • [GUI Engine](#-how-gui-control-works) • [Example Tasks](#-example-tasks) • [Providers](#-supported-providers) • [Setup](#-setup) • [Maintainer](#-maintainer)
+  [Features](#-features) • [Architecture](#-multi-agent-architecture) • [GUI Engine](#-how-gui-control-works) • [iOS](#-ios--iphone-and-simulator) • [Parallel Tasks](#-parallel-tasks) • [Example Tasks](#-example-tasks) • [Providers](#-supported-providers) • [Setup](#-setup) • [Maintainer](#-maintainer)
 </div>
 
 ---
@@ -40,7 +36,11 @@
 - **Native AppleScript runner** — full `osascript` execution with automatic TCC permission-dialog handling so first-run consent prompts don't stall the agent.
 - **Sandboxed Bash** — subprocess execution confined to a Desktop workspace, with path blocklists, 10-minute total / 15-second idle timeouts, and interactive-stdin detection.
 - **Web agent** — browser automation living alongside system control, not bolted on top of it.
+- **iOS automation — simulator or real iPhone** — the same agent drives an iOS Simulator (the default: no pairing, no signing, no Apple account) or your paired iPhone, over WebDriverAgent. Pick the target with one flag: `device="simulation"` / `device="hardware"`.
+- **Parallel tasks** — run several agents at once from a single `main.py`: N web agents sharing one Chrome (a tab each), or N iOS agents with **one simulator each**. Live per-task output, one `Ctrl+C` stops everything.
 - **7 LLM providers** — Anthropic, Google, Groq, OpenAI, OpenRouter, Perplexity, Together AI. Switch providers and models per task.
+
+> ⚙️ Every optional flag — `device`, `ios_version`, `extra_tasks`, `speed`, `headless`, `save_conversation` — is documented in **[agent_operation.md](agent_operation.md)**.
 
 ---
 
@@ -144,6 +144,59 @@ Live web search built into the agent loop — no manual copy-paste between brows
 
 ---
 
+## 📱 iOS — iPhone and Simulator
+
+The same agent loop that drives your Mac drives an iPhone: it reads the app's
+accessibility tree, annotates a screenshot, and taps / swipes / types through
+**[WebDriverAgent](https://github.com/appium/WebDriverAgent)**. Two targets,
+one flag:
+
+| | `device="simulation"` (default) | `device="hardware"` |
+|---|---|---|
+| Runs on | An iOS Simulator on your Mac | Your paired iPhone |
+| iOS version | `ios_version="26.5"` — or omit for the newest installed runtime | Whatever the phone runs |
+| Needs | Full Xcode. **No signing, no Apple ID, no pairing** | One-time pairing + Team ID signing (see [Setup](#-setup)) |
+| Best for | Everyday runs, testing, a specific iOS version | Real apps with your logins, camera, cellular |
+
+```python
+# main.py
+MODE        = "mobile use, ios"
+DEVICE      = "simulation"   # or "hardware"
+IOS_VERSION = None           # e.g. "26.5"; None = newest installed
+```
+
+Auto Use boots the simulator, builds and starts WebDriverAgent on it, runs your
+task, then shuts the simulator down when the agent finishes — success, error,
+or `Ctrl+C`. The first run compiles WebDriverAgent once (a few minutes); after
+that it starts in well under a minute.
+
+---
+
+## ⚡ Parallel Tasks
+
+One `main.py`, many agents. Fill in `task_2`, `task_3`, … and every task —
+including the first — runs at the same time in its own child process:
+
+```python
+task   = """find the cheapest flight to Tokyo next month"""
+task_2 = """summarise today's top Hacker News thread"""
+task_3 = """check my GitHub notifications"""
+```
+
+| Mode | What each task gets | Shared |
+|---|---|---|
+| `"web use"` | Its own web agent, pinned to **its own browser tab** | One Chrome for everyone |
+| `"mobile use, ios"` + `device="simulation"` | Its own **iOS Simulator** + its own WebDriverAgent port | Nothing — a phone screen can't be split |
+
+- Live output is prefixed per task: `[task 1] …`, `[task 2] …`
+- One `Ctrl+C` stops every task; a summary prints when they all finish.
+- Results and logs land in `./parallel/task_N/` (`result.json`, `conversation/`, `raw_reasoning/`, `debug/`).
+- iOS parallelism is simulator-only — `device="hardware"` runs one task, because you only have one phone.
+
+Full details, limits and examples: **[agent_operation.md](agent_operation.md)**.
+
+---
+
 ## 🎯 Example Tasks
 
 Just describe what you want — Auto Use picks the right tool for the job.
@@ -173,6 +226,11 @@ Just describe what you want — Auto Use picks the right tool for the job.
 "Send an iMessage to John saying I'll be 10 minutes late"
 ```
 
+### 📱 iOS Task
+```
+"Open Settings, turn on Dark Mode, and tell me which iOS version this is"
+```
+
 ---
 
 ## 🎯 What Can Auto Use Do?
@@ -184,6 +242,8 @@ Just describe what you want — Auto Use picks the right tool for the job.
 | **Development** | Write code, debug errors, run tests, manage git |
 | **System** | Install software, configure settings, manage processes |
 | **Research** | Search web, compile information, generate reports |
+| **Mobile (iOS)** | Drive apps on a simulator or your iPhone — tap, type, scroll, launch apps |
+| **At scale** | Run several tasks in parallel — many browser tabs, or many simulators |
 
 ---
 
@@ -205,6 +265,7 @@ Auto Use supports **7 LLM providers**:
 
 - **macOS** (Apple Silicon or Intel) **or** **Windows 10/11**
 - **API Key** from any supported provider
+- *For iOS only:* macOS with **full Xcode** and at least one iOS simulator runtime (a paired iPhone is needed only for `device="hardware"`)
 
 ---
 
@@ -239,11 +300,10 @@ Auto Use supports **7 LLM providers**:
    python main.py   # 💻  Terminal-only experience — same agents, no GUI, fully usable over SSH
    ```
 
-4. **Optional — iPhone / iPad support**
+4. **Optional — iOS support** (simulator or iPhone — see [iOS](#-ios--iphone-and-simulator))
 
-   Skip this unless you want Auto Use to drive an iOS device. It needs **full
-   Xcode** (not just the Command Line Tools) and an Apple ID added under
-   Xcode → Settings → Accounts.
+   Skip this unless you want Auto Use to drive iOS. Either way it needs **full
+   Xcode** (not just the Command Line Tools).
 
    ```bash
    bash ios_setup.sh
@@ -251,13 +311,19 @@ Auto Use supports **7 LLM providers**:
 
    This clones **[WebDriverAgent](https://github.com/appium/WebDriverAgent)**
    (Appium/Facebook, BSD 3-Clause) at pinned tag `v15.1.1` into
-   `Auto_Use/ios_connector/`, then verifies the signing toolchain. It is not
-   bundled in this repo — you get it from the Appium project directly. Re-run it
-   any time; it reuses an existing clone, or pass `--force` to re-fetch.
+   `Auto_Use/ios_connector/`. It is not bundled in this repo — you get it from
+   the Appium project directly. Re-run it any time; it reuses an existing
+   clone, or pass `--force` to re-fetch.
 
-   Signing happens afterwards in the connector UI — either **Settings → Connect
-   Device → iPhone** in the desktop app, or standalone via
-   `python Auto_Use/ios_connector/setup.py`.
+   **Simulator (`device="simulation"`, the default) — that's it.** No Apple ID,
+   no signing, no pairing: Auto Use builds WebDriverAgent unsigned and boots a
+   simulator on demand. Just make sure you have an iOS runtime installed
+   (Xcode → Settings → Components) — check with `xcrun simctl list runtimes`.
+
+   **Physical iPhone (`device="hardware"`)** additionally needs an Apple ID
+   under Xcode → Settings → Accounts and a one-time signing + pairing pass in
+   the connector UI — either **Settings → Connect Device → iPhone** in the
+   desktop app, or standalone via `python Auto_Use/ios_connector/setup.py`.
 
    > A free Apple ID works, but its provisioning profiles expire after 7 days, so
    > you'll re-sign weekly. A paid developer account lasts a year.
@@ -320,10 +386,12 @@ Auto Use supports **7 LLM providers**:
 
 ## 💻 OS Support
 
-This repository supports **both macOS and Windows** — the two platform builds live side-by-side in the same repo:
+This repository supports **both macOS and Windows** — the platform builds live side-by-side in the same repo:
 
 - **macOS** — `Auto_Use/mac`
 - **Windows** — `Auto_Use/windows`
+- **Web** — `Auto_Use/web` (CDP-controlled Chrome, host-OS independent)
+- **iOS** — `Auto_Use/ios` + `Auto_Use/ios_connector` (simulator or iPhone; macOS host only)
 
 ---
 
