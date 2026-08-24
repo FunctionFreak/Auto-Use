@@ -15,7 +15,11 @@ class ScratchpadService:
 
         # On-disk storage kept as "milestone/milestone.md" to avoid the
         # scratchpad/scratchpad/scratchpad.md collision with the parent dir.
-        self.scratchpad_dir = os.path.join(ios_dir, "scratchpad", "milestone")
+        # Parallel simulator tasks each get their own scratchpad/<session>/
+        # subtree (AUTOUSE_IOS_SESSION), so they never overwrite each other.
+        session = os.environ.get("AUTOUSE_IOS_SESSION") or ""
+        self.scratchpad_dir = os.path.join(ios_dir, "scratchpad", session, "milestone") \
+            if session else os.path.join(ios_dir, "scratchpad", "milestone")
         self.scratchpad_file = os.path.join(self.scratchpad_dir, "milestone.md")
 
         # Create scratchpad directory if it doesn't exist

@@ -39,6 +39,28 @@ WDA_BUNDLE_ID = "com.autouse.WebDriverAgentRunner.xctrunner"
 WDA_PORT = 8100
 WDA_STATUS_URL = f"http://127.0.0.1:{WDA_PORT}/status"
 
+# Which iOS target the current process is driving — "hardware" (paired iPhone)
+# or "simulation" (sim_session). Whichever session activates last sets it;
+# tools that need non-WDA device access read it (open_app's installed-apps
+# scan picks pymobiledevice3 vs simctl from here).
+active_target = {"kind": "hardware", "udid": None}
+
+
+def wda_port() -> int:
+    """WDA port for THIS process. 8100 unless AUTOUSE_WDA_PORT says otherwise.
+
+    Parallel simulator tasks each get their own simulator + their own WDA, so
+    the parent hands every child process its port through the environment."""
+    try:
+        return int(os.environ.get("AUTOUSE_WDA_PORT") or WDA_PORT)
+    except (TypeError, ValueError):
+        return WDA_PORT
+
+
+def wda_url() -> str:
+    """Base URL of the WDA this process talks to (http://localhost:<port>)."""
+    return f"http://localhost:{wda_port()}"
+
 _IS_COMPILED = bool(getattr(sys, "frozen", False)) or ("__compiled__" in globals())
 
 
@@ -206,11 +228,19 @@ class WDASession:
                         "error": "No paired device",
                         "hint": "Pair your iPhone in Settings → Connect Device."}
             udid = devs[0]["udid"]
+        active_target.update({"kind": "hardware", "udid": udid})
         with self._lock:
             if self._udid == udid and self._wda_up():
                 return {"ok": True, "state": "connected", "udid": udid}
             self._stop_locked()
             self._free_port()
+            if self._wda_up():
+                # Something else already serves WDA on the port (a leftover
+                # simulator session) — refuse rather than silently drive it.
+                return {"ok": False, "state": "error", "code": "port_busy",
+                        "error": f"Port {WDA_PORT} is already serving another WDA "
+                                 "(a simulator session?)",
+                        "hint": "Close it (quit Simulator / kill xcodebuild), then retry."}
             self._udid = udid
             env = dict(os.environ)
             env["PYMOBILEDEVICE3_UDID"] = udid
@@ -245,8 +275,12 @@ class WDASession:
             # That's what makes the "Automation Running" overlay vanish right
             # away — killing only the Mac-side processes leaves the phone
             # session lingering ~30s until testmanagerd times it out. The
-            # server drops the connection mid-response by design; any outcome
-            # is fine, the local kills below are the guarantee.
+            # request never returns: WDA frees its HTTP server while still
+            # replying, so the runner segfaults (a use-after-free in the
+            # vendored RoutingHTTPServer). On a phone that is invisible and the
+            # process was exiting anyway; the local kills below are the
+            # guarantee. The SIMULATOR path deliberately does NOT do this —
+            # there the same crash pops a macOS dialog (see sim_session.py).
             if self._udid is not None:
                 try:
                     urllib.request.urlopen(

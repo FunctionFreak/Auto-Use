@@ -13,7 +13,11 @@ class TaskTrackerService:
         # Go up two levels from Auto_Use/ios/controller/task_tracker/ to reach ios/
         ios_dir = os.path.dirname(os.path.dirname(current_dir))
 
-        self.todo_dir = os.path.join(ios_dir, "scratchpad", "todo")
+        # Parallel simulator tasks each get their own scratchpad/<session>/
+        # subtree (AUTOUSE_IOS_SESSION), so their todo lists stay separate.
+        session = os.environ.get("AUTOUSE_IOS_SESSION") or ""
+        self.todo_dir = os.path.join(ios_dir, "scratchpad", session, "todo") \
+            if session else os.path.join(ios_dir, "scratchpad", "todo")
         self.todo_file = os.path.join(self.todo_dir, "todo.md")
 
         # Create todo directory if it doesn't exist

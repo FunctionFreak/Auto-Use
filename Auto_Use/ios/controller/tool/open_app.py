@@ -19,14 +19,19 @@ class AppLauncherService:
     """Service for launching and managing iPhone apps"""
     
     def __init__(self):
-        self.wda_url = "http://localhost:8100"
+        from Auto_Use.ios_connector.session import wda_url
+        self.wda_url = wda_url()
         self.session_id = None
         self.apps_dict = {}
         
     def scan_apps(self):
         """Scan all installed apps using pymobiledevice3 (same CLI the WDA session uses)"""
         try:
-            from Auto_Use.ios_connector.session import _pmd3_base
+            from Auto_Use.ios_connector.session import _pmd3_base, active_target
+
+            # Simulator runs have no USB device — list apps via simctl instead.
+            if active_target.get("kind") == "simulation":
+                return self._scan_apps_simulator(active_target.get("udid") or "booted")
             base = _pmd3_base()
             if not base:
                 logger.error("❌ Error: pymobiledevice3 not found.")
@@ -55,6 +60,34 @@ class AppLauncherService:
             logger.error("❌ Error: pymobiledevice3 not found.")
             logger.error("💡 Install it with: pip install pymobiledevice3")
             return False
+        except subprocess.TimeoutExpired:
+            logger.error("❌ Timeout while scanning apps")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Error scanning apps: {e}")
+            return False
+
+    def _scan_apps_simulator(self, udid):
+        """`simctl listapps` prints an old-style plist; plutil turns it into the
+        same bundle-id-keyed JSON shape `pymobiledevice3 apps list` gives, so
+        parse_apps handles both."""
+        try:
+            logger.info("📱 Scanning installed apps (simulator)...")
+            listed = subprocess.run(["xcrun", "simctl", "listapps", udid],
+                                    capture_output=True, text=True, timeout=30)
+            if listed.returncode != 0:
+                tail = (listed.stderr or '').strip().splitlines()
+                logger.error(f"❌ App scan failed: {tail[-1] if tail else 'simctl error'}")
+                return False
+            as_json = subprocess.run(["plutil", "-convert", "json", "-o", "-", "--", "-"],
+                                     input=listed.stdout,
+                                     capture_output=True, text=True, timeout=15)
+            if as_json.returncode != 0:
+                logger.error("❌ App scan failed: could not parse simctl output")
+                return False
+            self.parse_apps(as_json.stdout)
+            logger.info(f"✅ Found {len(self.apps_dict)} apps")
+            return True
         except subprocess.TimeoutExpired:
             logger.error("❌ Timeout while scanning apps")
             return False

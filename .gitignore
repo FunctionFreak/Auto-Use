@@ -40,6 +40,8 @@ conversations/
 # Distribution / packaging
 .Python
 build/
+build-sim/
+build-sim-*/
 develop-eggs/
 dist/
 downloads/

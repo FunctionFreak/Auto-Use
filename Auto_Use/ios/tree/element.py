@@ -152,8 +152,11 @@ config = {
     "only_visible": True
 }
 
-# WebDriverAgent endpoint
-wda_url = "http://localhost:8100"
+# WebDriverAgent endpoint — port 8100 unless this process was given its own
+# (parallel simulator tasks each drive their own simulator on their own port).
+from Auto_Use.ios_connector.session import wda_url as _wda_url
+
+wda_url = _wda_url()
 
 def _element_rect(element):
     """An element's frame as (x, y, w, h), or None if the XML is malformed."""

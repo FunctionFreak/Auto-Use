@@ -31,9 +31,16 @@ def _request_marker(n: int, task: str) -> str:
     return f'<updated_user_request no="{n}">\n{task}\n</updated_user_request no="{n}">'
 
 def _cleanup_scratchpad():
-    """Clear all contents inside Auto_Use/ios/scratchpad/ for a fresh start."""
+    """Clear all contents inside Auto_Use/ios/scratchpad/ for a fresh start.
+
+    Parallel simulator tasks set AUTOUSE_IOS_SESSION and own only their own
+    scratchpad/<session>/ subtree — wiping the whole folder there would delete
+    a sibling task's notes mid-run."""
     # Clear scratchpad contents
     scratchpad_dir = Path(__file__).parent.parent.parent / "scratchpad"
+    session = os.environ.get("AUTOUSE_IOS_SESSION") or ""
+    if session:
+        scratchpad_dir = scratchpad_dir / session
     if scratchpad_dir.exists():
         for item in scratchpad_dir.iterdir():
             if item.is_dir():

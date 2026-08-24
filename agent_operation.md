@@ -8,13 +8,17 @@ use the agent's optional flags. `main.py` ships with only the essentials
 | Flag | Applies to | Default | Section |
 |---|---|---|---|
 | `headless` | `"web use"` only | `False` (visible Chrome) | Part 1 |
-| `extra_tasks` | `"web use"` only | none (single task) | Part 2 |
+| `extra_tasks` | `"web use"`, `"mobile use, ios"` + `device="simulation"` | none (single task) | Part 2 |
 | `speed` | `"computer use"` (mac + windows), `"mobile use, ios"` | `"quality"` | Part 3 |
 | `save_conversation` | every mode | `False` (nothing written) | Part 4 |
+| `device` | `"mobile use, ios"` only | `"simulation"` (iOS Simulator) | Part 6 |
+| `ios_version` | `"mobile use, ios"` + `device="simulation"` only | newest installed runtime | Part 6 |
 
-> `headless` and `extra_tasks` apply to `"web use"` mode ONLY. Every other mode
-> ignores `headless` and runs exactly one task — passing extra tasks there raises
-> a `ValueError`.
+> `headless` applies to `"web use"` mode ONLY. `extra_tasks` works in `"web use"`
+> (N agents, one shared Chrome) and in `"mobile use, ios"` with
+> `device="simulation"` (N agents, one simulator each). Every other mode —
+> including `device="hardware"`, where there is only one phone — runs exactly
+> one task and raises a `ValueError` if you pass extras.
 
 ---
 
@@ -83,25 +87,46 @@ pkill -f "remote-debugging-port=9222"
 
 # Part 2 — Running multiple tasks in parallel
 
+Works in two modes, with the same `extra_tasks` flag:
+
+| | `"web use"` | `"mobile use, ios"` + `device="simulation"` |
+|---|---|---|
+| What each task gets | Its own web agent, pinned to **its own tab** | Its own **iOS Simulator** + its own WebDriverAgent |
+| Shared resource | **One Chrome** for everyone | Nothing shared — a phone screen can't be split |
+| Ports | One debug port | One WDA port per task (8100, 8101, 8102, …) |
+| Limit | Practical (tabs + RAM) | Number of simulator devices you have installed |
+
+Not supported with `device="hardware"` — you only have one iPhone, so extras
+raise a `ValueError` telling you to use simulation.
+
 ## How it works
 
 When you pass extra tasks, **all** tasks — including the main `task` — run in
-parallel. Each task gets its own web agent as a separate child process, but they
-all share **one Chrome** (launched or attached once, on one debug port), and each
-agent is pinned to **its own single browser tab**.
+parallel, each as its own child process.
 
 - Live terminal output is prefixed per task: `[task 1] ...`, `[task 2] ...`
 - One `Ctrl+C` stops every task at once.
 - A summary prints when every task has finished.
+- On iOS the parent boots every simulator and starts every WebDriverAgent
+  **before** any agent runs, and shuts them all down at the end — success,
+  error, or `Ctrl+C`.
 
 ## How to write it in main.py
 
 `main.py` runs one task by default. To go parallel, do three things:
 
-**1. Set the mode to web use:**
+**1. Set the mode** — web use:
 
 ```python
 MODE = "web use"
+```
+
+…or iOS simulators (one per task):
+
+```python
+MODE = "mobile use, ios"
+DEVICE = "simulation"      # required for parallel — hardware can't split
+IOS_VERSION = None         # optional: pin a runtime, e.g. "26.5"
 ```
 
 **2. Define the extra tasks** (below the main `task`). Use `None` for slots you
@@ -129,8 +154,23 @@ run_agent(
     save_conversation=conversation,
     external_terminal=True,
     speed=speed,
-    headless=True,                          # recommended for parallel runs (see Part 1)
-    extra_tasks=[task_2, task_3, task_4],   # tasks 2..N ("web use" only)
+    headless=True,                          # web use only — recommended for parallel (Part 1)
+    extra_tasks=[task_2, task_3, task_4],   # tasks 2..N
+)
+```
+
+On iOS, pass the device flags instead of `headless`:
+
+```python
+run_agent(
+    mode=MODE,                              # "mobile use, ios"
+    provider=PROVIDER,
+    model=MODEL,
+    task=task,
+    device=DEVICE,                          # "simulation" — required for parallel
+    ios_version=IOS_VERSION,
+    save_conversation=conversation,
+    extra_tasks=[task_2, task_3, task_4],
 )
 ```
 
@@ -164,20 +204,36 @@ anything you want to keep before running again.
 
 ## Tips
 
-- **Headless:** with a visible window, N agents share one Chrome and tabs switch
-  on screen constantly. Pass `headless=True` (Part 1) for a calmer run.
+- **Headless (web):** with a visible window, N agents share one Chrome and tabs
+  switch on screen constantly. Pass `headless=True` (Part 1) for a calmer run.
 - **One task = simpler path:** if only `task` is set (all extras are `None`),
   the normal single-agent path runs — no `parallel/` folder, no child processes.
 - **Independent tasks only:** the agents don't talk to each other. Write each
   task so it stands alone; don't make task 3 depend on task 2's result.
+- **iOS — how many tasks can I run?** One per installed simulator device
+  (`xcrun simctl list devices`). Ask for more than you have and the run stops
+  with "Not enough simulators"; add devices in Xcode → Window → Devices and
+  Simulators.
+- **iOS — first parallel run is slower.** Each task builds WebDriverAgent into
+  its own folder (`build-sim`, `build-sim-2`, …) because concurrent builds
+  sharing one folder re-sign the same app underneath each other and kill one
+  another's test runner. Task 1 reuses the build you already have, so only the
+  extra tasks pay, and only once (~270 MB each, all gitignored).
+- **iOS — watch them work:** every simulator is visible on screen at once. They
+  are all shut down when the run ends.
 
 ## Under the hood
 
 Implemented in [Auto_Use/agent_launcher.py](Auto_Use/agent_launcher.py):
 `run_agent(..., extra_tasks=[...])` filters out empty entries and, if any
-remain, hands `[task] + extras` to `run_parallel_web_agents()`, which launches
-one `python -m Auto_Use.web.agent` child per task against the shared Chrome
-port. You can also call either function directly from your own script.
+remain, hands `[task] + extras` to either
+`run_parallel_web_agents()` — one `python -m Auto_Use.web.agent` child per task
+against the shared Chrome port — or `run_parallel_sim_agents()` — one
+simulator + one WebDriverAgent (`USE_PORT` 8100, 8101, …) + one
+`python -m Auto_Use.ios.agent` child per task. Each iOS child gets its port via
+`AUTOUSE_WDA_PORT` and its own `Auto_Use/ios/scratchpad/task_N/` via
+`AUTOUSE_IOS_SESSION`, so parallel agents never share a screen, a port, or a
+notes folder. You can also call either function directly from your own script.
 
 ---
 
@@ -369,3 +425,69 @@ minutes rather than seconds.
   `autouse_data/web_fallback/<run-id>/` for inspection.
 
 Implementation: [Auto_Use/mac/controller/tool/web/web_agent.py](Auto_Use/mac/controller/tool/web/web_agent.py).
+
+---
+
+# Part 6 — iOS device target (`"mobile use, ios"`)
+
+## What it is
+
+`device` picks WHAT the iPhone agent drives:
+
+| | `"simulation"` (default) | `"hardware"` |
+|---|---|---|
+| Runs on | An iOS Simulator on this Mac | Your paired physical iPhone |
+| iOS version | `ios_version` picks the runtime (e.g. `"26.5"`); omitted = newest installed, preferring an already-booted simulator | Whatever the phone runs — `ios_version` is ignored |
+| Needs | Full Xcode (simulator runtimes ship with it) — no signing, no Apple account, no pairing | One-time pairing in Settings → Connect Device (Team ID signing, WDA install) |
+| First start | Builds WebDriverAgent for the simulator once — a few minutes; later runs boot + attach in under a minute | Seconds (WDA is pre-installed at pairing) |
+| Agent behaviour | Same — identical WDA endpoints, tree, taps, screenshots | Same |
+
+## Default
+
+**`device = "simulation"`.** Omitting both flags boots the best installed
+simulator. Hardware is the explicit opt-in.
+
+## How to use it in main.py
+
+```python
+MODE = "mobile use, ios"
+DEVICE = "simulation"   # or "hardware" for your paired iPhone
+IOS_VERSION = None      # simulation only — e.g. "26.5"; None = newest installed
+
+run_agent(
+    mode=MODE,
+    provider=PROVIDER,
+    model=MODEL,
+    task=task,
+    device=DEVICE,          # ← add this
+    ios_version=IOS_VERSION,
+    save_conversation=conversation,
+)
+```
+
+Both flags are ignored by every other mode, so they're safe to leave in place
+when you switch `MODE`.
+
+`device="simulation"` is also what unlocks **parallel tasks** on iOS — each task
+gets its own simulator. See Part 2.
+
+## When to use which
+
+- **`"simulation"` (default)** — day-to-day runs, testing tasks, no phone on
+  the desk, or when you need a specific iOS version installed via Xcode.
+- **`"hardware"`** — anything that needs the real device: real apps with your
+  logins, camera, cellular, notifications, app-store apps not in the sim.
+
+## Under the hood
+
+The launcher branches in [Auto_Use/agent_launcher.py](Auto_Use/agent_launcher.py):
+hardware keeps the existing `wda_session` (pymobiledevice3 USB forward +
+xcuitest launch of the pre-installed WDA). Simulation uses
+[Auto_Use/ios_connector/sim_session.py](Auto_Use/ios_connector/sim_session.py):
+`xcrun simctl` resolves/boots the device, then one unsigned
+`xcodebuild test -destination id=<sim>` serves WDA on the same
+`localhost:8100` the agent already talks to — so the whole agent stack is
+unchanged. App scanning switches from `pymobiledevice3 apps list` to
+`xcrun simctl listapps` automatically. On teardown WDA is stopped, the
+simulator is **shut down**, and the Simulator app is closed — it's not a
+real device, so nothing is left running after the agent terminates.
