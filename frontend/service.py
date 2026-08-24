@@ -1015,35 +1015,19 @@ def serve_telegram_orb():
 
 @app.route('/logo.png')
 def serve_logo():
-    """Serve the Auto Use logo for the splash screen"""
+    """Serve the Auto Use brand logo (left bar + setup screen).
+
+    logo.png is the ONLY brand image left in Auto_Use/logo/. The old
+    auto_use.png / cursor.png were deleted in f9067f1 and logo_rounded.png in
+    60183a9, but the routes (and the left bar's <img>) kept pointing at them —
+    so the left-bar mark and the setup logo were both silently broken 404s.
+    One file, one route, and everything brands from it."""
     if IS_COMPILED:
-        response = serve_embedded_file('Auto_Use/logo/auto_use.png')
+        response = serve_embedded_file('Auto_Use/logo/logo.png')
         if response:
             return response
         return "Logo not found", 404
-    return send_from_directory(str(get_auto_use_path() / 'logo'), 'auto_use.png')
-
-
-@app.route('/logo_rounded.png')
-def serve_logo_rounded():
-    """Serve the rounded app-icon logo used as the left bar's brand mark"""
-    if IS_COMPILED:
-        response = serve_embedded_file('Auto_Use/logo/logo_rounded.png')
-        if response:
-            return response
-        return "Logo not found", 404
-    return send_from_directory(str(get_auto_use_path() / 'logo'), 'logo_rounded.png')
-
-
-@app.route('/cursor.png')
-def serve_cursor():
-    """Serve the cursor image for the splash animation"""
-    if IS_COMPILED:
-        response = serve_embedded_file('Auto_Use/logo/cursor.png')
-        if response:
-            return response
-        return "Cursor not found", 404
-    return send_from_directory(str(get_auto_use_path() / 'logo'), 'cursor.png')
+    return send_from_directory(str(get_auto_use_path() / 'logo'), 'logo.png')
 
 
 # =============================================================================
@@ -2067,6 +2051,11 @@ def _kill_shell_trees_on_exit() -> None:
             _active_shell_pids.clear()
     except Exception:
         pass
+    # Quitting the app must also release the iPhone: nothing else covers the
+    # window being closed mid-session, and an orphaned WDA session leaves the
+    # "Automation Running" overlay on the phone until testmanagerd times it
+    # out. Deactivate is a no-op when no session is active.
+    _release_iphone()
 
 
 def _shell_outcome(result) -> dict:
@@ -2821,7 +2810,24 @@ def new_chat():
     active_agent_session_id = None
     if active_agent_stop_event:
         active_agent_stop_event.set()
+    # Release the iPhone too. Switching modes kills the WDA session, but New
+    # chat resets the mode picker with a SILENT set — deliberately no
+    # agentmode:changed, so no side effects — and the phone disconnect was one
+    # of the side effects it skipped: the UI showed Computer use while the
+    # "Automation Running" overlay stayed on the phone. Deactivate is
+    # idempotent (no session -> no-op) and phone-first (~1s), but that second
+    # belongs to a background thread, not this endpoint's response.
+    threading.Thread(target=_release_iphone, daemon=True).start()
     return jsonify({'status': 'ok'})
+
+
+def _release_iphone():
+    """Best-effort WDA teardown — safe to call whether or not a session exists."""
+    try:
+        from Auto_Use.ios_connector.session import wda_session
+        wda_session.deactivate()
+    except Exception:
+        debug_exception("release iphone")
 
 
 @app.route('/api/open-github', methods=['POST'])

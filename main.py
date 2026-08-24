@@ -4,13 +4,13 @@
 from Auto_Use.agent_launcher import run_agent
 
 # Configuration
-MODE = "web use"  # "computer use" (this PC) / "shell use" (CLI agent straight to the terminal) / "web use" (CDP-controlled Chrome) / "mobile use, ios" / "mobile use, android"
+MODE = "mobile use, ios"  # "computer use" (this PC) / "shell use" (CLI agent straight to the terminal) / "web use" (CDP-controlled Chrome) / "mobile use, ios" / "mobile use, android"
 PROVIDER = "anthropic"
 MODEL = "claude-sonnet-5" #refer to the model name correctly from model_list.txt.
 # Your task here
 task = """
 
-open three tab with different  url then switch between them
+hi
 """
 conversation=True
 # Optional flags — conversation saving, speed ("quality"/"fast"), headless
