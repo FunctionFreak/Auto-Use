@@ -21,13 +21,22 @@
     var statusTimer = null;
     function stopPoll() { if (statusTimer) { clearInterval(statusTimer); statusTimer = null; } }
 
+    // The backend always says WHY it could not connect (error + hint): a missing
+    // pymobiledevice3, a port already serving another WDA, a device that is not
+    // paired. Swallowing that and printing one fixed sentence turns a one-read
+    // diagnosis into a guessing game, so carry the reason all the way out.
+    function reasonOf(d) {
+        if (!d) return '';
+        return [d.error, d.hint].filter(Boolean).join(' — ');
+    }
+
     function activate(cb) {
         cb = cb || {};
         stopPoll();
-        function fail() {
+        function fail(why) {
             stopPoll();
             fetch('/api/ios/deactivate', { method: 'POST' }).catch(function () {});
-            if (cb.onFail) cb.onFail();
+            if (cb.onFail) cb.onFail(why || '');
         }
         fetch('/api/ios/activate', {
             method: 'POST',
@@ -35,16 +44,21 @@
             body: JSON.stringify({})            // backend picks the newest paired device
         }).then(function (r) { return r.json(); }).then(function (d) {
             if (d.state === 'connected') { if (cb.onConnected) cb.onConnected(); return; }
-            if (!d.ok) { fail(); return; }
+            if (!d.ok) { fail(reasonOf(d)); return; }
             var deadline = Date.now() + 90000;
             statusTimer = setInterval(function () {
-                if (Date.now() > deadline) { fail(); return; }
+                if (Date.now() > deadline) {
+                    fail('timed out after 90s waiting for WebDriverAgent to answer');
+                    return;
+                }
                 fetch('/api/ios/session-status').then(function (r) { return r.json(); }).then(function (s) {
                     if (s.state === 'connected') { stopPoll(); if (cb.onConnected) cb.onConnected(); }
-                    else if (s.state === 'error' || s.state === 'disconnected') { fail(); }
+                    else if (s.state === 'error' || s.state === 'disconnected') { fail(reasonOf(s)); }
                 }).catch(function () { /* transient */ });
             }, 2000);
-        }).catch(function () { fail(); });
+        }).catch(function (e) {
+            fail('the Auto Use backend did not answer (' + (e && e.message || 'network error') + ')');
+        });
     }
 
     function deactivate() {
@@ -148,9 +162,16 @@
                     // graceful: the current breath completes, THEN the glow settles
                     endPairingAnim('Device connected', 2200, true);
                 },
-                onFail: function () {
+                onFail: function (why) {
                     iosActive = false;
-                    endPairingAnim('Pairing failed — check Settings → Connect Device', 3200);
+                    // A placeholder cannot hold a paragraph, but it can hold the
+                    // sentence that names the cause — which beats sending people
+                    // to a Settings pane that will not mention it either.
+                    var msg = why
+                        ? ('iOS: ' + (why.length > 150 ? why.slice(0, 147) + '…' : why))
+                        : 'Pairing failed — check Settings → Connect Device';
+                    if (why) { try { console.error('[ios] activate failed:', why); } catch (e) {} }
+                    endPairingAnim(msg, why ? 9000 : 3200);
                     // quietly put the menu back on Computer use (no re-dispatch)
                     document.dispatchEvent(new CustomEvent('agentmode:set', {
                         detail: { mode: 'computer' }

@@ -124,21 +124,36 @@ def is_paired(udid) -> bool:
 
 
 # ───────────────────────────── pymobiledevice3 ────────────────────────────────
+def _pmd3_candidates():
+    """Every place pymobiledevice3 can legitimately live, in priority order."""
+    root = Path(__file__).resolve().parents[2]   # <checkout>/Auto_Use/ios_connector/
+    out = []
+    override = os.environ.get("AUTOUSE_PMD3")
+    if override:
+        out.append(Path(override))
+    out.append(Path(sys.executable).parent / "pymobiledevice3")
+    # THE VENV THE SETUP SCRIPTS INSTALL INTO. Whoever launches the app decides
+    # sys.executable — a shell without the venv active, an IDE's interpreter,
+    # the venv's own base python — and none of that should make the tooling
+    # "missing" when it is sitting right here in the checkout.
+    for venv in (".venv", "venv", "env"):
+        out.append(root / venv / "bin" / "pymobiledevice3")
+    out.append(Path.home() / "Desktop" / "wda_setup" / "venv" / "bin" / "pymobiledevice3")
+    return out
+
+
 def _pmd3_base():
     """argv prefix that runs pymobiledevice3, or None. Forgiving search:
-    env override, next-to-executable, PATH, known dev venv, python -m."""
-    override = os.environ.get("AUTOUSE_PMD3")
-    if override and Path(override).exists():
-        return [override]
-    cand = Path(sys.executable).parent / "pymobiledevice3"
-    if cand.exists():
-        return [str(cand)]
+    env override, next-to-executable, the checkout's venv, PATH, dev venv, -m."""
+    for cand in _pmd3_candidates():
+        try:
+            if cand.exists():
+                return [str(cand)]
+        except OSError:
+            continue
     found = shutil.which("pymobiledevice3")
     if found:
         return [found]
-    dev = Path.home() / "Desktop" / "wda_setup" / "venv" / "bin" / "pymobiledevice3"
-    if dev.exists():
-        return [str(dev)]
     try:
         import pymobiledevice3  # noqa: F401
         return [sys.executable, "-m", "pymobiledevice3"]
@@ -218,9 +233,14 @@ class WDASession:
         """Fresh session for `udid` (default: newest paired device)."""
         base = _pmd3_base()
         if not base:
-            return {"ok": False, "state": "error",
+            # Name the interpreter: "not found" is almost always "found, but you
+            # launched the app with a different Python", and only this line says so.
+            return {"ok": False, "state": "error", "code": "no_pmd3",
                     "error": "pymobiledevice3 not found",
-                    "hint": "Pair a device in Settings first — that installs the tooling."}
+                    "hint": (f"running under {sys.executable} — looked beside it, in the "
+                             "checkout's .venv/, and on PATH. Install it with:  bash ios_setup.sh  "
+                             "or start the app with the venv's Python:  "
+                             "source .venv/bin/activate && python app.py")}
         if not udid:
             devs = paired_devices()
             if not devs:

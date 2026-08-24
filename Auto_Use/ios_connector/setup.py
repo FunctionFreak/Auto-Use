@@ -318,6 +318,93 @@ def _detect_cert_teams():
     return [{"team_id": k, "label": v} for k, v in found.items()]
 
 
+def signing_identities(team=None):
+    """Codesigning identities in the login keychain, newest expiry first.
+
+    Each entry: {"sha1", "name", "team", "revoked", "expires"}. `team` filters
+    by the certificate's OU, which IS the team id (the parenthesised part of the
+    common name is not — it identifies the person).
+    """
+    rc, listing = sh(["security", "find-identity", "-v", "-p", "codesigning"])
+    revoked, known = set(), {}
+    for line in (listing or "").splitlines():
+        m = re.search(r"\)\s+([0-9A-Fa-f]{40})\s+\"(.+?)\"", line)
+        if not m:
+            continue
+        known[m.group(1).upper()] = m.group(2)
+        if "CSSMERR" in line:                     # revoked / untrusted / expired
+            revoked.add(m.group(1).upper())
+
+    out = []
+    for cn_prefix in ("Apple Development", "iPhone Developer",
+                      "Apple Distribution", "iPhone Distribution"):
+        rc, blob = sh(["security", "find-certificate", "-a", "-Z", "-c", cn_prefix, "-p"])
+        if rc != 0 or not blob:
+            continue
+        for chunk in re.split(r"(?=SHA-1 hash:)", blob):
+            mh = re.search(r"SHA-1 hash:\s*([0-9A-Fa-f]{40})", chunk)
+            pem = re.search(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----",
+                            chunk, re.S)
+            if not (mh and pem):
+                continue
+            sha1 = mh.group(1).upper()
+            if sha1 not in known:                 # cert without a private key
+                continue
+            rc2, subj = sh(["openssl", "x509", "-noout", "-subject", "-enddate"],
+                           inp=pem.group(0))
+            if rc2 != 0:
+                continue
+            mou = re.search(r"OU\s*=\s*([A-Z0-9]{10})", subj)
+            end = re.search(r"notAfter=(.*)", subj)
+            if team and (not mou or mou.group(1) != team):
+                continue
+            out.append({"sha1": sha1, "name": known[sha1],
+                        "team": mou.group(1) if mou else None,
+                        "revoked": sha1 in revoked,
+                        "expires": (end.group(1).strip() if end else "")})
+
+    def _when(e):
+        try:
+            return time.mktime(time.strptime(e["expires"], "%b %d %H:%M:%S %Y %Z"))
+        except Exception:
+            return 0.0
+    out.sort(key=lambda e: (e["revoked"], -_when(e)))
+    return out
+
+
+def resolve_signing_identity(team):
+    """(sha1, note) for `team` — sha1 is None when nothing usable was found.
+
+    WHY THIS EXISTS: codesign matches identities BY NAME. Apple reissues a
+    certificate under the SAME common name, and the old one stays in the
+    keychain, so a perfectly ordinary Mac ends up with two identical names.
+    Every `codesign --sign "<name>"` then dies with
+
+        <name>: ambiguous (matches "<name>" and "<name>" in login.keychain-db)
+
+    WebDriverAgent's own "Embed app icon into Runner.app" scheme post-action
+    signs by name (Xcode does not export CODE_SIGN_* to post-actions, so it
+    reads the name back off the signed bundle), which turns that keychain state
+    into a build failure with no hint of the real cause. Resolving the name to a
+    single SHA-1 up front and handing it to the script removes the ambiguity.
+    """
+    ids = signing_identities(team)
+    if not ids:
+        return None, ""
+    usable = [i for i in ids if not i["revoked"]]
+    if not usable:
+        return None, ("every certificate for team %s is revoked or expired — "
+                      "open Xcode > Settings > Accounts and let it issue a new one" % team)
+    note = ""
+    if len(ids) > 1:
+        dupes = [i for i in ids if i["name"] == usable[0]["name"]]
+        if len(dupes) > 1:
+            note = ("%d certificates share the name %r (%d unusable) — pinning the valid "
+                    "one so codesign cannot call it ambiguous"
+                    % (len(dupes), usable[0]["name"], len(dupes) - len(usable)))
+    return usable[0]["sha1"], note
+
+
 def detect_teams(xc=None):
     """Merged team list for the UI. Teams from Xcode signed-in accounts are
     primary (signed_in=True); keychain-cert-only leftovers are flagged
@@ -816,7 +903,20 @@ class Handler(BaseHTTPRequestHandler):
             if trust_re.search(line):
                 trust_err["hit"] = True
 
-        code = self._stream_cmd(cmd, detect_serverup=(mode == "test"), line_hook=_watch)
+        # Hand the post-action an UNAMBIGUOUS identity. WebDriverAgent's icon
+        # script falls back to signing by name when Xcode does not export one,
+        # and a keychain holding a reissued certificate has two of those names
+        # — see resolve_signing_identity. Xcode's own signing is untouched:
+        # this variable only fills in the blank the post-action reads.
+        benv = dict(os.environ)
+        sha1, note = resolve_signing_identity(team)
+        if note:
+            self._sse("log", "  " + note)
+        if sha1:
+            benv["EXPANDED_CODE_SIGN_IDENTITY"] = sha1
+
+        code = self._stream_cmd(cmd, env=benv, detect_serverup=(mode == "test"),
+                                line_hook=_watch)
 
         if dest_err["hit"]:
             names = ", ".join(dest_err["avail"]) or "no iOS device is currently connected"
