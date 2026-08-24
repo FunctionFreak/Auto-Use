@@ -227,6 +227,34 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# Simulator preflight — can Xcode actually TARGET a simulator?
+#
+# `xcrun simctl` reads the system-wide CoreSimulator runtime store, so it can
+# list and boot devices that the SELECTED Xcode has no platform support for.
+# xcodebuild then refuses those devices ("Unable to find a destination...")
+# halfway through an agent run. One second here beats that every time.
+# -----------------------------------------------------------------------------
+print_step "CHECKING SIMULATOR SUPPORT"
+if xcodebuild -project "$WDA_DIR/WebDriverAgent.xcodeproj" \
+        -scheme WebDriverAgentRunner -showdestinations 2>/dev/null \
+        | grep -q "platform:iOS Simulator, arch"; then
+    print_ok "Xcode can build for the iOS Simulator"
+else
+    print_warn "Xcode cannot target any iOS Simulator on this Mac."
+    print_info "\`xcrun simctl\` may still list and boot simulators — that store is"
+    print_info "system-wide — but the selected Xcode has no iOS platform support,"
+    print_info "so builds fail with \"Unable to find a destination\"."
+    printf "\n"
+    print_info "Fix with:"
+    printf "    xcodebuild -downloadPlatform iOS      # or Xcode > Settings > Components\n"
+    printf "    sudo xcodebuild -runFirstLaunch\n"
+    printf "    xcode-select -p                       # confirm the right Xcode is selected\n"
+    printf "\n"
+    print_info "Simulation mode (the default) needs this; hardware-only use does not."
+    MISSING_TOOLING=1
+fi
+
+# -----------------------------------------------------------------------------
 # Done
 # -----------------------------------------------------------------------------
 if [ $MISSING_TOOLING -ne 0 ]; then

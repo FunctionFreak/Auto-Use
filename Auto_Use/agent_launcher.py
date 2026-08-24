@@ -115,7 +115,9 @@ def _connect_iphone(poll_every=2.0, deadline=90.0):
 
     res = wda_session.activate()
     if not res.get("ok"):
-        raise RuntimeError(f"📱 iPhone connection failed: {res.get('error') or res.get('code') or res}")
+        detail = " — ".join(
+            p for p in (res.get("error"), res.get("hint")) if p) or res.get("code") or res
+        raise RuntimeError(f"📱 iPhone connection failed: {detail}")
     if res.get("state") == "connected":
         print(f"📱 iPhone already connected ({res.get('udid', '')})")
         return wda_session
@@ -152,7 +154,8 @@ def _connect_simulator(ios_version=None, poll_every=2.0, deadline=600.0):
 
     res = sim_session.activate(ios_version)
     if not res.get("ok"):
-        detail = res.get("hint") or res.get("error") or res
+        detail = " — ".join(
+            p for p in (res.get("error"), res.get("hint")) if p) or res.get("code") or res
         raise RuntimeError(f"📱 Simulator connection failed: {detail}")
     label = f"{res.get('name', 'Simulator')} (iOS {res.get('version', '?')})"
     if res.get("state") == "connected":

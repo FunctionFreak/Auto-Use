@@ -315,10 +315,21 @@ Auto Use supports **7 LLM providers**:
    the Appium project directly. Re-run it any time; it reuses an existing
    clone, or pass `--force` to re-fetch.
 
-   **Simulator (`device="simulation"`, the default) — that's it.** No Apple ID,
-   no signing, no pairing: Auto Use builds WebDriverAgent unsigned and boots a
-   simulator on demand. Just make sure you have an iOS runtime installed
-   (Xcode → Settings → Components) — check with `xcrun simctl list runtimes`.
+   **Simulator (`device="simulation"`, the default) — no Apple ID, no signing,
+   no pairing.** Auto Use builds WebDriverAgent unsigned and boots a simulator
+   on demand. Xcode does need to be able to *target* the simulator, which on a
+   fresh Mac is a separate download — `ios_setup.sh` checks this for you and
+   tells you what to run if it's missing:
+
+   ```bash
+   xcodebuild -downloadPlatform iOS   # Xcode-side iOS platform support
+   sudo xcodebuild -runFirstLaunch    # finish Xcode's first-launch install
+   ```
+
+   > A booted simulator in `xcrun simctl list` is **not** proof this works:
+   > simulator runtimes are system-wide, so `simctl` can boot devices that the
+   > selected Xcode cannot build for. The real test is
+   > `xcodebuild -showdestinations` listing `platform:iOS Simulator` entries.
 
    **Physical iPhone (`device="hardware"`)** additionally needs an Apple ID
    under Xcode → Settings → Accounts and a one-time signing + pairing pass in

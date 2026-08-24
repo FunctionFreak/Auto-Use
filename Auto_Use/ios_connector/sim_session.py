@@ -25,7 +25,6 @@ that the cached build boots + attaches in well under a minute.
 import json
 import os
 import subprocess
-import tempfile
 import threading
 import time
 import urllib.request
@@ -171,7 +170,10 @@ class SimulatorSession:
         try:
             with open(self._log_path, "r", errors="replace") as f:
                 lines = [ln for ln in f.read().splitlines() if ln.strip()]
-            return "\n".join(lines[-40:])
+            # Generous window: xcodebuild's destination report alone runs to
+            # dozens of lines on a Mac with several runtimes, and a short tail
+            # would scroll the explanation off and misclassify the failure.
+            return "\n".join(lines[-200:])
         except Exception:
             return ""
 
@@ -187,10 +189,29 @@ class SimulatorSession:
             return {"code": "sim_wedged",
                     "error": "The simulator's test service is wedged (a known flake)",
                     "hint": "Run: xcrun simctl shutdown all && pkill -9 -f CoreSimulatorService — then retry."}
-        if "Unable to find a destination" in t:
+        if "matching the provided destination specifier" in t:
+            # xcodebuild prints the eligible/ineligible destinations right after
+            # this line, and an "error:" reason on each ineligible one — that
+            # block is the only thing that actually explains the failure, so
+            # pass it through instead of guessing. Keep the informative rows
+            # (iOS Simulator entries, reasons) and drop the macOS/placeholder
+            # noise that would otherwise eat the whole budget.
+            lines = [ln.strip() for ln in t.splitlines()]
+            start = next((i for i, ln in enumerate(lines)
+                          if "matching the provided destination specifier" in ln), 0)
+            window = lines[start:start + 40]
+            keep = [ln for ln in window
+                    if ("iOS Simulator" in ln or "error:" in ln or "Ineligible" in ln
+                        or "Available destinations" in ln or "could not be found" in ln
+                        or ln.startswith("xcodebuild:"))]
+            block = "\n    ".join(keep or window)[:1200]
             return {"code": "no_destination",
-                    "error": "xcodebuild could not find the simulator",
-                    "hint": "Check `xcrun simctl list devices` — the picked device may have been deleted."}
+                    "error": "xcodebuild refused to use this simulator as a test destination",
+                    "hint": ("simctl can see the device but Xcode cannot target it — usually the "
+                             "selected Xcode has no iOS platform support installed for that "
+                             "runtime. Try:  xcodebuild -downloadPlatform iOS   (or Xcode → "
+                             "Settings → Components), and check `xcode-select -p` points at the "
+                             "Xcode you expect.\n  xcodebuild said:\n    " + block)}
         if "xcodebuild: error" in t or "BUILD FAILED" in t or "TEST FAILED" in t:
             last = next((ln for ln in reversed(t.splitlines()) if "error" in ln.lower()), t.splitlines()[-1])
             return {"code": "build_failed", "error": last[-200:]}
@@ -221,7 +242,16 @@ class SimulatorSession:
         if state != "Booted":
             print(f"📱 Booting {name}...")
             try:
-                _simctl("boot", udid, timeout=180)  # rc 149 = already booted, fine
+                r = _simctl("boot", udid, timeout=180)
+                # rc 149 means "already booted", which is fine; anything else
+                # non-zero is a real failure worth reporting rather than
+                # discovering later as a confusing xcodebuild error.
+                if r.returncode not in (0, 149):
+                    why = (r.stderr or r.stdout or "").strip().splitlines()
+                    return {"ok": False, "state": "error", "code": "boot_failed",
+                            "error": f"simctl could not boot {name}: "
+                                     f"{why[-1][:200] if why else 'unknown error'}",
+                            "hint": f"Try it by hand: xcrun simctl boot {udid}"}
             except subprocess.TimeoutExpired:
                 pass  # boot continues inside CoreSimulator
         try:
@@ -229,15 +259,31 @@ class SimulatorSession:
             # be "Booted": that state goes stale while a simulator is still
             # coming up or going down, and xcodebuild launching into a
             # half-alive one dies with "Mach error -308 - server died".
-            _simctl("bootstatus", udid, "-b", timeout=180)
+            _simctl("bootstatus", udid, "-b", timeout=300)
         except subprocess.TimeoutExpired:
-            pass  # xcodebuild will wait on the device itself if needed
+            pass  # fall through to the explicit state check below
         # Show the Simulator window so the run is watchable (best effort).
         try:
             subprocess.Popen(["open", "-a", "Simulator"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
+        # Don't hand a device that isn't actually up to xcodebuild — on a fresh
+        # Mac the first boot of a runtime can outlast bootstatus, and the
+        # failure then surfaces as a confusing destination/launch error. Poll
+        # rather than sample once: a single reading can catch a transient
+        # simctl hiccup (_device_state returns "" on any error).
+        deadline = time.time() + 120.0
+        state = self._device_state(udid)
+        while state != "Booted" and time.time() < deadline:
+            time.sleep(2.0)
+            state = self._device_state(udid)
+        if state != "Booted":
+            return {"ok": False, "state": "error", "code": "boot_failed",
+                    "error": f"{name} did not finish booting (state: {state or 'unknown'})",
+                    "hint": "Open Simulator manually and boot the device once, "
+                            "then retry — the first boot of a new runtime is slow."}
+        return None
 
     # -- public --
     def activate(self, ios_version=None, udid=None, exclude=()):
@@ -271,7 +317,17 @@ class SimulatorSession:
             self._stop_locked()
             self._udid, self._name = sim["udid"], sim["name"]
 
-        self._boot(sim["udid"], f'{sim["name"]} (iOS {sim["version"]})')
+        boot_error = self._boot(sim["udid"], f'{sim["name"]} (iOS {sim["version"]})')
+        if boot_error:
+            # Don't leave a half-booted simulator behind: the caller raises on
+            # this without getting a session object to deactivate.
+            try:
+                _simctl("shutdown", sim["udid"], timeout=60)
+            except Exception:
+                pass
+            with self._lock:
+                self._udid = self._name = None
+            return boot_error
         active_target.update({"kind": "simulation", "udid": sim["udid"]})
 
         # Something already serves WDA on the port. Reuse it ONLY if it is a
@@ -289,16 +345,23 @@ class SimulatorSession:
 
         with self._lock:
             try:
-                log = tempfile.NamedTemporaryFile(prefix="autouse_sim_wda_",
-                                                  suffix=".log", delete=False)
-                self._log_path = log.name
+                # A stable, discoverable path beside the build — a first-time
+                # user should not have to go spelunking in /var/folders for the
+                # one file that explains a failed run.
+                self.derived_data.mkdir(parents=True, exist_ok=True)
+                self._log_path = str(self.derived_data / f"wda-{self.port}.log")
+                log = open(self._log_path, "w")
                 # Unsigned simulator build+run — the recipe WebDriverAgent's own
                 # Scripts/build.sh uses. `test` leaves WDA serving until we kill it.
                 self._xcodebuild = subprocess.Popen(
                     ["xcodebuild",
                      "-project", str(_WDA_PROJECT),
                      "-scheme", "WebDriverAgentRunner",
-                     "-destination", f"id={sim['udid']}",
+                     # Fully qualified on purpose: a bare "id=..." leaves the
+                     # platform for xcodebuild to infer, which can fail to
+                     # match ("Unable to find a destination") on machines
+                     # where physical-device destinations are in play.
+                     "-destination", f"platform=iOS Simulator,id={sim['udid']}",
                      "-derivedDataPath", str(self.derived_data),
                      "CODE_SIGN_IDENTITY=", "CODE_SIGNING_REQUIRED=NO",
                      "CODE_SIGNING_ALLOWED=NO",
@@ -333,7 +396,12 @@ class SimulatorSession:
             if not self._alive(self._xcodebuild) and not self._wda_up():
                 info = self._classify(self._log_tail())
                 if self._log_path:
-                    info.setdefault("hint", f"Full xcodebuild log: {self._log_path}")
+                    # ALWAYS append the log path — the classified hint used to
+                    # replace it, which left the failures users actually hit
+                    # with no way to see what xcodebuild said.
+                    info["hint"] = " ".join(
+                        p for p in (info.get("hint"),
+                                    f"Full xcodebuild log: {self._log_path}") if p)
                 return {"state": "error", "udid": self._udid, "name": self._name, **info}
             state = "connected" if self._wda_up() else "connecting"
             return {"state": state, "udid": self._udid, "name": self._name}
