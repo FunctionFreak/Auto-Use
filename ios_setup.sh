@@ -24,6 +24,7 @@
 # How to run (any of these):
 #   bash ios_setup.sh            # simplest
 #   bash ios_setup.sh --force    # discard the existing clone and re-fetch
+#   bash ios_setup.sh --yes      # don't ask before installing Xcode's iOS platform
 #   chmod +x ios_setup.sh && ./ios_setup.sh
 #
 # After it finishes, the iOS connector UI does the signing — either from the
@@ -48,7 +49,13 @@ VENV_DIR=".venv"
 IOS_REQUIREMENTS="ios_requirements.txt"
 
 FORCE=0
-[ "${1:-}" = "--force" ] && FORCE=1
+ASSUME_YES=0
+for _arg in "$@"; do
+    case "$_arg" in
+        --force)   FORCE=1 ;;
+        --yes|-y)  ASSUME_YES=1 ;;
+    esac
+done
 
 # -----------------------------------------------------------------------------
 # Print helpers (match the style used across the project's build scripts)
@@ -177,9 +184,28 @@ if ! command -v ruby >/dev/null 2>&1; then
 elif ruby -e "require 'xcodeproj'" >/dev/null 2>&1; then
     print_ok "ruby $(ruby -e 'print RUBY_VERSION') with the xcodeproj gem"
 else
-    print_warn "The Ruby 'xcodeproj' gem is missing — signing cannot run without it."
-    print_info  "Install it with:  sudo gem install xcodeproj"
-    MISSING_TOOLING=1
+    print_info "The Ruby 'xcodeproj' gem is missing — installing it now."
+    # --user-install, deliberately NOT sudo: this lands in ~/.gem, which is
+    # already on Ruby's search path, instead of writing into the system Ruby
+    # that macOS owns and replaces on update. Every dependency is pure Ruby,
+    # so there is nothing to compile and nothing to elevate for.
+    printf "\n"
+    if gem install --user-install xcodeproj; then
+        printf "\n"
+        if ruby -e "require 'xcodeproj'" >/dev/null 2>&1; then
+            print_ok "xcodeproj installed in $(ruby -e 'require "rubygems"; print Gem.user_dir')"
+        else
+            print_warn "The gem installed but ruby still cannot load it."
+            print_info  "Something is overriding the gem path — compare:"
+            printf "    gem env | grep -A3 'GEM PATHS'\n"
+            MISSING_TOOLING=1
+        fi
+    else
+        printf "\n"
+        print_warn "Could not install the xcodeproj gem — signing cannot run without it."
+        print_info  "Try it by hand:  gem install --user-install xcodeproj"
+        MISSING_TOOLING=1
+    fi
 fi
 
 # -----------------------------------------------------------------------------
@@ -235,9 +261,17 @@ fi
 # halfway through an agent run. One second here beats that every time.
 # -----------------------------------------------------------------------------
 print_step "CHECKING SIMULATOR SUPPORT"
-if xcodebuild -project "$WDA_DIR/WebDriverAgent.xcodeproj" \
+
+# Whether Xcode can BUILD to a simulator, which is a different question from
+# whether simctl can boot one — and the only one that matters here, because
+# simulation mode compiles WebDriverAgent onto the device.
+sim_buildable() {
+    xcodebuild -project "$WDA_DIR/WebDriverAgent.xcodeproj" \
         -scheme WebDriverAgentRunner -showdestinations 2>/dev/null \
-        | grep -q "platform:iOS Simulator, arch"; then
+        | grep -q "platform:iOS Simulator, arch"
+}
+
+if sim_buildable; then
     print_ok "Xcode can build for the iOS Simulator"
 else
     print_warn "Xcode cannot target any iOS Simulator on this Mac."
@@ -245,13 +279,54 @@ else
     print_info "system-wide — but the selected Xcode has no iOS platform support,"
     print_info "so builds fail with \"Unable to find a destination\"."
     printf "\n"
-    print_info "Fix with:"
-    printf "    xcodebuild -downloadPlatform iOS      # or Xcode > Settings > Components\n"
-    printf "    sudo xcodebuild -runFirstLaunch\n"
-    printf "    xcode-select -p                       # confirm the right Xcode is selected\n"
+    print_info "The missing piece is Xcode's iOS platform: an ~8.5 GB download from"
+    print_info "Apple, once. This is the right moment for it — the agent will never"
+    print_info "start a download of this size mid-run."
     printf "\n"
-    print_info "Simulation mode (the default) needs this; hardware-only use does not."
-    MISSING_TOOLING=1
+
+    # Setup is where a big one-time install belongs, so offer it here. Anything
+    # non-interactive (CI, a piped run) declines and reports instead of hanging.
+    DO_INSTALL=0
+    if [ "$ASSUME_YES" -eq 1 ]; then
+        DO_INSTALL=1
+    elif [ -t 0 ]; then
+        printf "  Download and install it now? [Y/n] "
+        read -r REPLY_INSTALL || REPLY_INSTALL=""
+        case "$REPLY_INSTALL" in
+            ""|y|Y|yes|YES|Yes) DO_INSTALL=1 ;;
+        esac
+    fi
+
+    if [ $DO_INSTALL -eq 1 ]; then
+        print_info "Running: xcodebuild -downloadPlatform iOS"
+        printf "\n"
+        if xcodebuild -downloadPlatform iOS; then
+            printf "\n"
+            if sim_buildable; then
+                print_ok "iOS platform installed — Xcode can build for the iOS Simulator"
+            else
+                print_warn "The download finished but Xcode still targets no simulator."
+                print_info "Check that xcode-select points at the Xcode you expect:"
+                printf "    xcode-select -p\n"
+                printf "    sudo xcodebuild -runFirstLaunch\n"
+                MISSING_TOOLING=1
+            fi
+        else
+            printf "\n"
+            print_warn "xcodebuild -downloadPlatform iOS did not complete."
+            print_info "Re-run this script to try again, or install it from"
+            print_info "Xcode > Settings > Components."
+            MISSING_TOOLING=1
+        fi
+    else
+        print_info "Skipped. Install it later with either of:"
+        printf "    bash ios_setup.sh --yes               # re-run and install without asking\n"
+        printf "    xcodebuild -downloadPlatform iOS      # or Xcode > Settings > Components\n"
+        printf "    xcode-select -p                       # confirm the right Xcode is selected\n"
+        printf "\n"
+        print_info "Simulation mode (the default) needs this; hardware-only use does not."
+        MISSING_TOOLING=1
+    fi
 fi
 
 # -----------------------------------------------------------------------------

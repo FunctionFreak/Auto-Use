@@ -6,13 +6,13 @@ from Auto_Use.agent_launcher import run_agent
 # Configuration
 MODE = "mobile use, ios"  # "computer use" (this PC) / "shell use" (CLI agent straight to the terminal) / "web use" (CDP-controlled Chrome) / "mobile use, ios" / "mobile use, android"
 DEVICE = "simulation"  # "mobile use, ios" only: "simulation" (default, iOS Simulator) / "hardware" (your paired iPhone). Ignored by every other mode.
-IOS_VERSION = None     # simulation only: pick a runtime like "26.5"; None = newest installed (hardware ignores this — the phone runs whatever iOS it has)
+IOS_VERSION = None     # simulation only: None = newest runtime ALREADY here that Xcode can build to (never downloads); name one like "26.5" and it is installed if missing (hardware ignores this — the phone runs whatever iOS it has)
 PROVIDER = "anthropic"
 MODEL = "claude-sonnet-5" #refer to the model name correctly from model_list.txt.
 # Your task here
 task = """
 
-hi
+open setting and check the ios version 
 """
 conversation=True
 # Optional flags — conversation saving, speed ("quality"/"fast"), headless

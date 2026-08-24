@@ -49,14 +49,20 @@ XCODEPROJ_NAME = "WebDriverAgent.xcodeproj"
 SCHEME         = "WebDriverAgentRunner"
 BUNDLE_PREFIX  = "com.autouse"              # default; also editable in the UI
 TARGET_NAMES   = ["WebDriverAgentLib", "WebDriverAgentRunner", "IntegrationApp"]
-DERIVED_NAME   = "build"                    # derived data kept local (handy for go-ios later)
+DERIVED_NAME   = "build"                    # derived data name under the shared build root
 DEFAULT_MODE   = "test"                     # "test" or "build-for-testing"
 # =====================================================================
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 WDA_DIR    = SCRIPT_DIR / WDA_DIR_NAME
 PROJECT    = WDA_DIR / XCODEPROJ_NAME
-DERIVED    = SCRIPT_DIR / DERIVED_NAME
+try:                                            # package import (app.py embeds this UI)
+    from Auto_Use.ios_connector.build_paths import wda_build_root
+except ImportError:                             # standalone: python .../setup.py
+    from build_paths import wda_build_root
+# Not SCRIPT_DIR: build products in a TCC-guarded folder (~/Desktop and friends)
+# make macOS prompt mid-build. See build_paths.
+DERIVED    = wda_build_root() / DERIVED_NAME
 
 # The UI can live either right next to setup.py (index.html) or in an html/ folder.
 # Prefer whichever exists so the layout is forgiving.
@@ -721,7 +727,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._sse("fatal", "no device UDID -- pick one or type it in")
         rc, _ = sh(["ruby", "-e", "require 'xcodeproj'"])
         if rc != 0:
-            return self._sse("fatal", "ruby 'xcodeproj' gem missing.  run:  sudo gem install xcodeproj")
+            return self._sse("fatal", "ruby 'xcodeproj' gem missing.  run:  bash ios_setup.sh  "
+                              "(or: gem install --user-install xcodeproj)")
 
         # --- preflight: is this team backed by an Apple Account signed into Xcode? ---
         # A keychain cert alone can sign with an EXISTING profile, but

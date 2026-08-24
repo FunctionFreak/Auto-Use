@@ -5,7 +5,9 @@
 Same three-call contract the launcher and any UI polls:
 
     activate(ios_version=None) -> boot a simulator (picked by iOS version,
-                                  newest installed runtime when omitted) and
+                                  newest runtime XCODE CAN BUILD TO when
+                                  omitted; naming one this Mac lacks installs
+                                  it first) and
                                   start WebDriverAgent on it via one command:
                                     xcodebuild test -destination id=<sim udid>
                                   (unsigned — simulators need no team id, no
@@ -24,16 +26,46 @@ that the cached build boots + attaches in well under a minute.
 
 import json
 import os
+import re
 import subprocess
 import threading
 import time
 import urllib.request
+from collections import deque
 from pathlib import Path
 
+from Auto_Use.ios_connector.build_paths import wda_build_root
 from Auto_Use.ios_connector.session import WDA_PORT, active_target
 
 _WDA_PROJECT = Path(__file__).resolve().parent / "WebDriverAgent" / "WebDriverAgent.xcodeproj"
-_DERIVED_DATA = Path(__file__).resolve().parent / "build-sim"  # separate from the hardware build/
+# OUTSIDE the repo on purpose — see build_paths: a checkout on the Desktop would
+# otherwise make the Simulator raise a TCC prompt mid-run, and a run that stops
+# for a dialog nobody can click is not automation. Still separate from the
+# hardware build/.
+_DERIVED_DATA = wda_build_root() / "build-sim"
+
+# Simulators simctl can BOOT and simulators Xcode can BUILD TO are two different
+# sets: the CoreSimulator runtime store is system-wide and outlives Xcode
+# upgrades, while platform support belongs to whichever Xcode is selected.
+# Picking from the first set alone is how a run gets as far as a booted
+# simulator and then dies on "Unable to find a destination".
+_DEST_LINE = re.compile(r"platform:iOS Simulator[^}]*?\bid:([0-9A-Fa-f-]{36})")
+_XCODE_LOCK = threading.RLock()   # reentrant: _pick nests inside it
+_DEST_CACHE = {"udids": None, "at": 0.0}   # xcodebuild round-trip, so cache it
+# ...but only a POSITIVE answer is cached for the whole process. "Xcode can
+# target nothing" is a state the user fixes from another terminal mid-session
+# (installing the platform), and a UI that keeps the first no forever would
+# still be failing long after the machine was fixed. Re-probing costs a second.
+_DEST_EMPTY_TTL = 30.0
+# A run installs a runtime ONLY when the caller named an iOS version this Mac
+# does not have — asking for 26.5 by name is consent to fetch 26.5. Nothing else
+# downloads mid-run: with no version named, "newest" means newest of what is
+# already here, and an empty set is an error pointing at ios_setup.sh, which is
+# where the one-time platform install belongs. AUTOUSE_IOS_AUTO_DOWNLOAD=0 blocks
+# even the named case.
+_AUTO_DOWNLOAD = os.environ.get("AUTOUSE_IOS_AUTO_DOWNLOAD", "1").strip().lower() \
+    not in ("0", "false", "no", "off")
+_DOWNLOAD_TIMEOUT = float(os.environ.get("AUTOUSE_IOS_DOWNLOAD_TIMEOUT", "5400"))
 
 
 def _simctl(*args, timeout=30):
@@ -68,23 +100,151 @@ def _named_simulator(udid):
                   "hint": "Check `xcrun simctl list devices`."}
 
 
-def resolve_simulator(ios_version=None, exclude=()):
-    """Pick (udid, name, version) for the run.
+def _targetable_udids(refresh=False):
+    """UDIDs of the simulators the SELECTED Xcode can actually BUILD to.
 
-    Prefers an already-Booted device; otherwise an iPhone on the newest
-    runtime matching ios_version (prefix match, so "26" finds 26.5).
-    `exclude` skips udids already claimed by other parallel tasks.
-    Returns (device_dict, error_dict) — exactly one is None.
+    `xcrun simctl` reads the system-wide CoreSimulator store, so it lists — and
+    happily boots — devices whose runtime the selected Xcode has no platform
+    support for. xcodebuild then refuses them, and the run dies minutes later
+    on "Unable to find a destination" with a simulator left on screen. Asking
+    xcodebuild up front turns that into a two-second check.
+
+    Returns a set of udids (EMPTY means Xcode can target nothing), or None when
+    the probe itself could not run — a broken or slow probe must never make an
+    otherwise working Mac fail, so callers read None as "don't filter".
     """
+    with _XCODE_LOCK:
+        cached = _DEST_CACHE["udids"]
+        if not refresh and cached:
+            return cached                      # something is targetable: settled
+        if (not refresh and cached is not None
+                and time.time() - _DEST_CACHE["at"] < _DEST_EMPTY_TTL):
+            return cached                      # nothing was, recently — don't spin
+        if not _WDA_PROJECT.exists():
+            return None
+        try:
+            out = subprocess.run(
+                ["xcodebuild", "-project", str(_WDA_PROJECT),
+                 "-scheme", "WebDriverAgentRunner", "-showdestinations"],
+                capture_output=True, text=True, timeout=300)
+        except Exception:
+            return None
+        text = (out.stdout or "") + "\n" + (out.stderr or "")
+        if "destinations for the" not in text:
+            return None  # xcodebuild could not even enumerate — don't filter
+        # Only what precedes "Ineligible destinations": entries listed THERE are
+        # the ones xcodebuild is refusing, each with its own error: reason.
+        head = text.split("Ineligible destinations", 1)[0]
+        cut = head.find("Available destinations")
+        udids = {m.group(1).upper()
+                 for m in _DEST_LINE.finditer(head[cut:] if cut != -1 else "")}
+        _DEST_CACHE.update(udids=udids, at=time.time())
+        return udids
+
+
+def _download_platform(version=None, log=print):
+    """Install Xcode's iOS platform — the piece that makes simulators buildable.
+
+    Fetches the platform support the selected Xcode is missing plus its matching
+    simulator runtime; -buildVersion asks for one specific iOS instead of the
+    default. Returns None on success, or an error dict.
+    """
+    cmd = ["xcodebuild", "-downloadPlatform", "iOS"]
+    if version:
+        cmd += ["-buildVersion", str(version)]
+    log("📱 Installing the iOS{} simulator platform — multi-GB download, this "
+        "takes a while.".format(" " + str(version) if version else ""))
+    log("   {}   (AUTOUSE_IOS_AUTO_DOWNLOAD=0 turns this off)".format(" ".join(cmd)))
+    try:
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             text=True, errors="replace")
+    except Exception as e:
+        return {"code": "download_failed", "error": "Could not start xcodebuild: {}".format(e)}
+
+    tail, last_echo, pending = deque(maxlen=25), 0.0, ""
+    deadline = time.time() + _DOWNLOAD_TIMEOUT
+    try:
+        while True:
+            chunk = p.stdout.read(256)
+            if not chunk:
+                break
+            # Progress is written with carriage returns, so read by chunk and
+            # split on both — iterating lines would look frozen for minutes.
+            pending += chunk
+            parts = re.split(r"[\r\n]", pending)
+            pending = parts.pop()
+            for part in (s.strip() for s in parts):
+                if not part:
+                    continue
+                tail.append(part)
+                if time.time() - last_echo > 2.0:  # percent lines arrive in floods
+                    last_echo = time.time()
+                    log("   " + part[:140])
+            if time.time() > deadline:
+                p.kill()
+                return {"code": "download_failed",
+                        "error": "Platform download exceeded {}s".format(int(_DOWNLOAD_TIMEOUT)),
+                        "hint": "Run it yourself: " + " ".join(cmd)}
+        rc = p.wait(timeout=120)
+    except Exception as e:
+        try:
+            p.kill()
+        except Exception:
+            pass
+        return {"code": "download_failed", "error": "Platform download failed: {}".format(e)}
+
+    if rc != 0:
+        why = " | ".join(list(tail)[-4:]) or "exit {}".format(rc)
+        return {"code": "download_failed",
+                "error": "xcodebuild -downloadPlatform iOS failed: " + why[:400],
+                "hint": "Run it yourself (it may ask for an admin password): " + " ".join(cmd)}
+    log("📱 iOS platform installed.")
+    return None
+
+
+def _ensure_device_on_runtime(version=None, log=print):
+    """Give a freshly installed runtime an iPhone if it arrived without one.
+
+    A runtime with no devices is invisible to every picker downstream, so a
+    successful download would still look like "no simulator found".
+    """
+    want = str(version).strip() if version else ""
+    try:
+        runtimes = json.loads(_simctl("list", "runtimes", "-j").stdout).get("runtimes", [])
+        devices = json.loads(_simctl("list", "devices", "available", "-j").stdout).get("devices", {})
+    except Exception:
+        return
+    pool = [r for r in runtimes
+            if r.get("isAvailable") and ".SimRuntime.iOS-" in str(r.get("identifier", ""))
+            and (not want or str(r.get("version", "")) == want
+                 or str(r.get("version", "")).startswith(want + "."))]
+    if not pool:
+        return
+    rt = max(pool, key=lambda r: _version_tuple(r.get("version", "0")))
+    if devices.get(rt["identifier"]):
+        return
+    iphone = next((t for t in rt.get("supportedDeviceTypes", [])
+                   if str(t.get("name", "")).startswith("iPhone")), None)
+    if not iphone:
+        return
+    name = "Auto-Use {}".format(iphone["name"])
+    log("📱 Creating {} — iOS {} installed with no devices.".format(name, rt.get("version")))
+    try:
+        _simctl("create", name, iphone["identifier"], rt["identifier"], timeout=180)
+    except Exception:
+        pass
+
+
+def _pick(want, exclude):
+    """Choose among the simulators Xcode can build to. Returns (device, error)."""
     try:
         out = _simctl("list", "devices", "available", "-j")
         devices_by_runtime = json.loads(out.stdout).get("devices", {})
     except Exception as e:
-        return None, {"error": f"simctl failed: {e}",
+        return None, {"code": "simctl_failed", "error": "simctl failed: {}".format(e),
                       "hint": "Simulation needs full Xcode (xcode-select -p should point at Xcode.app)."}
 
-    want = str(ios_version).strip() if ios_version else ""
-    candidates = []  # (version_tuple, version_str, device)
+    matching = []  # (version_tuple, version_str, device) — before exclude
     for runtime_key, devices in devices_by_runtime.items():
         version = _runtime_version(runtime_key)
         if version is None:
@@ -92,32 +252,114 @@ def resolve_simulator(ios_version=None, exclude=()):
         if want and not (version == want or version.startswith(want + ".")):
             continue
         for d in devices:
-            if d.get("udid") in exclude:
-                continue  # already claimed by another parallel task
-            candidates.append((_version_tuple(version), version, d))
+            matching.append((_version_tuple(version), version, d))
 
-    if not candidates:
-        installed = sorted({v for k in devices_by_runtime
-                            if (v := _runtime_version(k))}) or ["none"]
-        what = f'iOS {want}' if want else "any iOS runtime"
-        if exclude:
-            return None, {"error": f"Not enough simulators for {what} — "
-                                   f"{len(exclude)} already in use by other tasks",
-                          "hint": "Add devices in Xcode → Window → Devices and "
-                                  "Simulators, or run fewer tasks at once."}
-        return None, {"error": f"No simulator found for {what}",
-                      "hint": f"Installed runtimes: {', '.join(installed)}. "
-                              "Add more in Xcode → Settings → Components."}
+    installed = sorted({v for k in devices_by_runtime if (v := _runtime_version(k))})
+    # THE filter: what simctl lists is not what xcodebuild will accept. Drop the
+    # rest here so a run never picks a device it cannot build to.
+    targetable = _targetable_udids()
 
-    booted = [c for c in candidates if c[2].get("state") == "Booted"]
-    if booted:
-        _vt, version, d = max(booted, key=lambda c: c[0])
-    else:
-        newest = max(c[0] for c in candidates)
-        pool = [c for c in candidates if c[0] == newest]
-        iphones = [c for c in pool if c[2].get("name", "").startswith("iPhone")]
-        _vt, version, d = (iphones or pool)[0]
-    return {"udid": d["udid"], "name": d.get("name", "Simulator"), "version": version}, None
+    def _usable(pool):
+        return ([c for c in pool if str(c[2].get("udid", "")).upper() in targetable]
+                if targetable is not None else list(pool))
+
+    # Keep both views: whether EXCLUDE emptied the pool or Xcode did decides
+    # which of the two failures a parallel run is actually looking at.
+    usable = _usable(matching)
+    eligible = [c for c in usable if c[2].get("udid") not in exclude]
+
+    if eligible:
+        booted = [c for c in eligible if c[2].get("state") == "Booted"]
+        if booted:
+            _vt, version, d = max(booted, key=lambda c: c[0])
+        else:
+            newest = max(c[0] for c in eligible)
+            pool = [c for c in eligible if c[0] == newest]
+            iphones = [c for c in pool if c[2].get("name", "").startswith("iPhone")]
+            _vt, version, d = (iphones or pool)[0]
+        return {"udid": d["udid"], "name": d.get("name", "Simulator"), "version": version}, None
+
+    what = "iOS {}".format(want) if want else "any iOS runtime"
+    if usable:
+        # Xcode can build to something — the other tasks just took them all.
+        return None, {"code": "sims_exhausted",
+                      "error": "Not enough simulators for {} — {} already in use by other "
+                               "tasks".format(what, len(exclude)),
+                      "hint": "Add devices in Xcode → Window → Devices and Simulators, or run "
+                              "fewer tasks at once."}
+    if matching:
+        # Runtimes ARE installed and bootable; Xcode just can't build to them.
+        return None, {"code": "no_targetable", "installed": installed,
+                      "error": "Xcode cannot build to any installed simulator ({})".format(what),
+                      "hint": "simctl lists {} and can boot them — that store is system-wide — but "
+                              "the selected Xcode has no iOS platform support, so xcodebuild refuses "
+                              "every one. Run  bash ios_setup.sh  — it installs the missing platform (or do "
+                              "it by hand: xcodebuild -downloadPlatform iOS), and check "
+                              "`xcode-select -p` points at the Xcode you expect.".format(", ".join(installed) or "no runtimes")}
+    return None, {"code": "no_runtime",
+                  "error": "No simulator found for {}".format(what),
+                  "hint": "Installed runtimes: {}.".format(", ".join(installed) or "none")}
+
+
+def resolve_simulator(ios_version=None, exclude=(), allow_download=None, log=print):
+    """Pick (udid, name, version) for the run.
+
+    Prefers an already-Booted device; otherwise an iPhone on the newest runtime
+    THE SELECTED XCODE CAN BUILD TO — which is a smaller set than simctl lists,
+    see _targetable_udids. `ios_version` pins a runtime by prefix ("26" finds
+    26.5); naming one this Mac does not have installs it. `exclude` skips udids
+    already claimed by other parallel tasks.
+    Returns (device_dict, error_dict) — exactly one is None.
+    """
+    want = str(ios_version).strip() if ios_version else ""
+    if allow_download is None:
+        allow_download = _AUTO_DOWNLOAD
+
+    sim, err = _pick(want, exclude)
+    # A run downloads exactly one thing: a runtime the caller NAMED and this Mac
+    # does not have. Not "named but unbuildable" — that runtime is already on
+    # disk and refetching it changes nothing. Not the missing platform either:
+    # that is a one-time ~8 GB install and belongs to ios_setup.sh, never to a
+    # surprise mid-run.
+    if sim or not want or not allow_download or err.get("code") != "no_runtime":
+        return sim, err
+    # And a runtime only helps if Xcode can build to simulators at all. When it
+    # can build to none, the platform is what's missing — say so instead of
+    # spending gigabytes on a runtime that will be refused too.
+    targetable = _targetable_udids()
+    if targetable is not None and not targetable:
+        return None, {**err, "hint": (err.get("hint", "") + "  Note: Xcode cannot build to ANY "
+                      "simulator on this Mac, so installing a runtime alone will not help — run  "
+                      "bash ios_setup.sh  first, it installs the missing iOS platform.").strip()}
+
+    with _XCODE_LOCK:
+        if _pick(want, exclude)[0] is None:  # another task may have just done it
+            derr = _download_platform(want or None, log=log)
+            if derr:
+                return None, {**err, "hint": " ".join(
+                    p for p in (derr.get("error"), derr.get("hint")) if p)}
+            _ensure_device_on_runtime(want, log=log)
+            _targetable_udids(refresh=True)
+
+    sim, err = _pick(want, exclude)
+    return sim, (None if sim else err)
+
+
+def _require_targetable(sim, log=print):
+    """None when Xcode can build to this exact device, else an error dict.
+
+    Only the pinned-udid path needs this — resolve_simulator already filters.
+    Pinning a udid names a device that is already installed, so there is
+    nothing to download here: either Xcode can build to it or it cannot.
+    """
+    targetable = _targetable_udids()
+    if targetable is None or str(sim.get("udid", "")).upper() in targetable:
+        return None
+    return {"code": "no_targetable",
+            "error": "Xcode cannot build to {} (iOS {})".format(
+                sim.get("name", "that simulator"), sim.get("version", "?")),
+            "hint": "simctl can boot it, but the selected Xcode has no iOS platform support for "
+                    "that runtime. Install it with:  xcodebuild -downloadPlatform iOS"}
 
 
 class SimulatorSession:
@@ -289,9 +531,9 @@ class SimulatorSession:
     def activate(self, ios_version=None, udid=None, exclude=()):
         """Boot a simulator and start WDA on this session's port.
 
-        ios_version picks the runtime (newest installed when omitted); udid
-        pins an exact device and exclude skips devices other parallel tasks
-        already claimed."""
+        ios_version picks the runtime (newest Xcode can build to when omitted,
+        downloaded when named and missing); udid pins an exact device and
+        exclude skips devices other parallel tasks already claimed."""
         if not _WDA_PROJECT.exists():
             return {"ok": False, "state": "error",
                     "error": "WebDriverAgent project not found",
@@ -304,6 +546,8 @@ class SimulatorSession:
 
         if udid:
             sim, err = _named_simulator(udid)
+            if not err:
+                err = _require_targetable(sim)
         else:
             sim, err = resolve_simulator(ios_version, exclude=exclude)
         if err:
