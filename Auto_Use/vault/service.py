@@ -79,7 +79,11 @@ class VaultService:
     def _parse_element_line(self, line):
         """Parse element line to extract attributes"""
         try:
-            # Extract attributes from format: [1]<type="button", label="Back", value="", x="0", y="0", w="100", h="50" />
+            # Two tree dialects reach here:
+            #   iOS  : [1]<element_name="Instagram", type="application" />
+            #   older: [1]<type="button", label="Back", value="" />
+            # `element_name` is what ios/tree/element.py actually emits today, so
+            # read the label from either key rather than only `label=`.
             attrs = {}
             
             # Extract type
@@ -88,11 +92,13 @@ class VaultService:
                 end = line.find('"', start)
                 attrs['type'] = line[start:end]
             
-            # Extract label
-            if 'label="' in line:
-                start = line.find('label="') + 7
-                end = line.find('"', start)
-                attrs['label'] = line[start:end]
+            # Extract label (element_name= wins; it is the iOS spelling)
+            for key in ('element_name="', 'label="'):
+                if key in line:
+                    start = line.find(key) + len(key)
+                    end = line.find('"', start)
+                    attrs['label'] = line[start:end]
+                    break
             
             # Extract value
             if 'value="' in line:

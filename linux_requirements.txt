@@ -1,0 +1,26 @@
+# Requirements for element.py (Linux UI Element Scanner)
+#
+# Pillow is the only pip dependency. The scanner also needs PyGObject (gi) and
+# the AT-SPI/GTK typelibs, and those come from the distro:
+#
+#   sudo apt install python3-gi gir1.2-atspi-2.0 gir1.2-gtk-3.0
+#
+# There is no pip-only route, and installing PyGObject with pip does not
+# create one: Atspi-2.0.typelib and Gdk-3.0.typelib are GObject introspection
+# data under /usr/lib/<triplet>/girepository-1.0/, not Python packages, so
+# `from gi.repository import Atspi` still fails without the two gir1.2-*
+# packages. The pip build also drags in a compiler plus
+# libgirepository-2.0-dev, python3-dev and libcairo2-dev. It costs more and
+# removes nothing.
+#
+# The venv needs NO special treatment — no --system-site-packages, no
+# include-system-site-packages, no symlinking. A plain `python3 -m venv .venv`
+# works, because element.py locates the system gi itself when the venv cannot
+# see it (_add_system_gi_to_path). It only accepts a build whose compiled _gi
+# extension matches the running interpreter's ABI tag, and appends it to
+# sys.path, so venv packages keep priority and nothing gets shadowed.
+#
+# The one case that still needs you: the apt line above never having been run.
+# `python3 -m Auto_Use.linux.tree.test` says so if that is the problem.
+
+Pillow>=10.0

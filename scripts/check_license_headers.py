@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Ashish Yadav — https://gitlab.com/auto-use/auto-use
 """License header checker for AutoUse."""
 
 from __future__ import annotations
@@ -14,11 +14,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # does not contain a second literal copy of the header that would confuse
 # a naive duplicate detector.
 _COPYRIGHT_OWNER = "Ashish Yadav"
-_COPYRIGHT_PROJECT = "Auto-Use"
+_COPYRIGHT_URL = "https://gitlab.com/auto-use/auto-use"
 _COPYRIGHT_YEAR = "2026"
 
 EXPECTED_HEADER_LINES = [
-    f"# Copyright {_COPYRIGHT_YEAR} {_COPYRIGHT_OWNER} — {_COPYRIGHT_PROJECT}",
+    f"# Copyright {_COPYRIGHT_YEAR} {_COPYRIGHT_OWNER} — {_COPYRIGHT_URL}",
 ]
 
 # Used for duplicate detection. The copyright line is unique enough that
@@ -72,11 +72,7 @@ def tracked_python_files() -> list[Path]:
             continue
         if line in EXCLUDE_FILES:
             continue
-        path = REPO_ROOT / line
-        if not path.exists():
-            # git ls-files also lists tracked files deleted from the worktree.
-            continue
-        files.append(path)
+        files.append(REPO_ROOT / line)
     return files
 
 

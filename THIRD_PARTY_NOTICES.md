@@ -98,4 +98,4 @@ apply to the driver it talks to.
 
 If you believe something here is misattributed, under-attributed, or
 redistributed in a way its license does not permit, please open an issue at
-https://github.com/FunctionFreak/Auto-Use/issues — we will correct it promptly.
+https://gitlab.com/auto-use/auto-use/-/issues — we will correct it promptly.
