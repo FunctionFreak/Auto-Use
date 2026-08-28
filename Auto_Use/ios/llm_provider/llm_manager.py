@@ -125,85 +125,86 @@ def _main_tools(track: dict) -> list:
         _tool("open_app", {"value": {"type": "string"}},
               'Launch an installed application directly by name - faster than searching on the device. Use the special name "home" to return to the home screen.\n'
               '    1. Requirement: Typically call wait 2-3 seconds after this tool to allow loading.\n'
-              '    2. Format: {"type": "open_app", "value": "app name"}\n'
-              '    3. Examples:\n'
-              '        1. {"type": "open_app", "value": "disney+"}\n'
-              '        2. {"type": "open_app", "value": "home"}', track=track),
+              '    2. Success means the app is confirmed in the foreground (if the result says verified: false, confirm on the next screenshot). An unknown or ambiguous name returns an error naming the closest installed apps - re-issue with that exact name.\n'
+              '    3. Format: open_app {"value": "app name"}\n'
+              '    4. Examples:\n'
+              '        1. open_app {"value": "disney+"}\n'
+              '        2. open_app {"value": "home"}', track=track),
         _tool("wait", {"value": {"type": "string"}},
               'Pause before the next screen scan to allow UI loading. Never exceed 3 seconds at a time.\n'
-              '    1. Format: {"type": "wait", "value": "time in seconds"}\n'
+              '    1. Format: wait {"value": "time in seconds"}\n'
               '    2. Examples:\n'
-              '        1. {"type": "wait", "value": "3"}\n'
-              '        2. {"type": "wait", "value": "2"}', track=track),
+              '        1. wait {"value": "3"}\n'
+              '        2. wait {"value": "2"}', track=track),
         _tool("web", {"value": {"type": "string"}},
               'Delegate to a specialized AI that fetches real-time information and provides data at runtime. Use it for speed instead of browsing manually on the phone.\n'
-              '    1. Format: {"type": "web", "value": "search query"}\n'
+              '    1. Format: web {"value": "search query"}\n'
               '    2. Examples:\n'
-              '        1. {"type": "web", "value": "financial results of Nvidia Q4 2025"}\n'
-              '        2. {"type": "web", "value": "latest Netflix app version on the App Store"}', track=track),
+              '        1. web {"value": "financial results of Nvidia Q4 2025"}\n'
+              '        2. web {"value": "latest Netflix app version on the App Store"}', track=track),
         _tool("shell", {"value": {"type": "string"}},
               'Run a shell/zsh command on the host Mac where this agent is running - not on the iPhone. Use it to check information or perform actions on the host OS, then continue the task on the phone (e.g. photo sharing: read the photo names and details on the Mac first, then share those same photos from the phone). Accepts every shell command, including AppleScript via osascript.\n'
-              '    1. Format: {"type": "shell", "value": "command"}\n'
+              '    1. Format: shell {"value": "command"}\n'
               '    2. Examples:\n'
-              '        1. {"type": "shell", "value": "ls ~/Pictures/holiday | head -5"}\n'
-              '        2. {"type": "shell", "value": "osascript -e \'tell application \\"Finder\\" to get name of every file of desktop\'"}', track=track),
+              '        1. shell {"value": "ls ~/Pictures/holiday | head -5"}\n'
+              '        2. shell {"value": "osascript -e \'tell application \\"Finder\\" to get name of every file of desktop\'"}', track=track),
         _tool("todo_list", {"value": {"type": "string"}},
               'Create the ToDo task list (iteration 1 by default; you may also create/expand it later if complexity emerges). See <todo_capability>.', track=track),
         _tool("update_todo", {"value": {"type": "string"}},
               'Tasks are auto-numbered #1, #2, #3, etc. when saved.\n'
-              '    1. Update a task only after it is confirmed complete via <agent_history> and the effect is visible in the latest input (image or any relevant tag); one item at a time.\n'
-              '    2. Example: {"type": "update_todo", "value": "1"}', track=track),
+              '    1. Update a task only after it is confirmed complete via <agent_history> and the effect is visible in the latest input (image or any relevant tag); one item per call.\n'
+              '    2. Example: update_todo {"value": "1"}', track=track),
         _tool("vault", {"id": {"type": "integer"}, "value": {"type": "string"}},
               'Fill a secure credential into an element straight from the vault - three-part action like scroll: the element [id] and the credential kind (value: username/password/phone_number). The credential is typed automatically; secrets never appear in your context.\n'
               '    1. Critical: vault must be the ONLY action in the list, and it fills one element per step. This holds on EVERY step, including steps where thinking is `not required`.\n'
               '    2. Fill every required credential field (repeat vault across steps) before planning the next move.\n'
-              '    3. Format: {"type": "vault", "id": <element_id>, "value": "<credential_kind>"}\n'
+              '    3. Format: vault {"id": <element_id>, "value": "<credential_kind>"}\n'
               '    4. Examples:\n'
-              '        1. {"type": "vault", "id": 3, "value": "username"}\n'
-              '        2. {"type": "vault", "id": 4, "value": "password"}', track=track),
+              '        1. vault {"id": 3, "value": "username"}\n'
+              '        2. vault {"id": 4, "value": "password"}', track=track),
         _tool("video_player", {"value": {"type": "string"}},
               'Track and control full-screen video playback through the control center (works despite DRM screenshot restrictions). Commands: close, streaming (check whether content is playing), pause, play.\n'
-              '    1. Format: {"type": "video_player", "value": "one of: close/streaming/pause/play"}\n'
+              '    1. Format: video_player {"value": "one of: close/streaming/pause/play"}\n'
               '    2. Examples:\n'
-              '        1. {"type": "video_player", "value": "streaming"}\n'
-              '        2. {"type": "video_player", "value": "pause"}', track=track),
+              '        1. video_player {"value": "streaming"}\n'
+              '        2. video_player {"value": "pause"}', track=track),
         _tool("scratchpad", {"value": {"type": "string"}},
               'Record a verified checkpoint or any critical fact (file path, metric, finding). Follow <scratchpad> rules.\n'
               '    1. Write `value` in Markdown - inline only (`**bold**`, backticks), never a line break.\n'
-              '    2. Example: {"type": "scratchpad", "value": "**Key metric:** Disney+ revenue (Q3 2025) = **$2.1B**"}', track=track),
+              '    2. Example: scratchpad {"value": "**Key metric:** Disney+ revenue (Q3 2025) = **$2.1B**"}', track=track),
 
         # -- <tool_capability> #10 + <task_completion> -------------------------
         _tool("done", {"value": {"type": "string"}},
               'End the task with an end-to-end summary of what was achieved. Dedicated final step - never combine with any other action; do cleanup and ToDo/scratchpad updates in the step before.\n'
               '    1. Write `value` in Markdown - headings, `-` bullets, `**bold**`, backticks and fenced code blocks as the summary needs them.\n'
               '    2. Examples:\n'
-              '        1. {"type": "done", "value": "**Netflix updated** to the latest version - login verified and version noted."}\n'
-              '        2. {"type": "done", "value": "**Message sent to John** - delivery confirmed on screen."}\n'
+              '        1. done {"value": "**Netflix updated** to the latest version - login verified and version noted."}\n'
+              '        2. done {"value": "**Message sent to John** - delivery confirmed on screen."}\n'
               '    3. Only start completion after reviewing <agent_history> to confirm every requested task is finished.\n'
               '    4. Then do a final verification from the latest input (double-check the last steps match the request; if playback is DRM-blocked, verify via a video_player check).\n'
               '    5. Use `done` as a dedicated final step only:\n'
               '        1. Step 1 (no `done`): finish/cleanup + update ToDos/scratchpad.\n'
-              '        2. Step 2: output ONLY Format: {"type": "done", "value": "<end-to-end summary in markdown format>"}\n'
+              '        2. Step 2: output ONLY Format: done {"value": "<end-to-end summary in markdown format>"}\n'
               '    6. Never combine `done` with any other action/tool in the same step.', track=track),
 
         # -- <os_interaction> -------------------------------------------------
         _tool("click", {"id": {"type": "integer"}},
               'Tap the centre of an element by its [id].\n'
               '    1. Examples:\n'
-              '        1. {"type": "click", "id": 4}\n'
-              '        2. {"type": "click", "id": 23}', track=track),
+              '        1. click {"id": 4}\n'
+              '        2. click {"id": 23}', track=track),
         _tool("input", {"id": {"type": "integer"}, "value": {"type": "string"}},
               'Type into an element by its [id]. Existing text in the field is auto-deleted before typing.\n'
               '    1. Examples:\n'
-              '        1. {"type": "input", "id": 3, "value": "Hi, how are you"}\n'
-              '        2. {"type": "input", "id": 4, "value": "conjuring"}', track=track),
+              '        1. input {"id": 3, "value": "Hi, how are you"}\n'
+              '        2. input {"id": 4, "value": "conjuring"}', track=track),
         _tool("scroll", {"id": {"type": "integer"}, "value": {"type": "string"}},
               'Swipe within an element\'s bounds - three-part action: the element [id] and the direction (value: up/down/left/right).\n'
               '    1. To reveal content below the visible area, scroll "up"; to reveal content above, scroll "down".\n'
               '    2. To reveal content on the right, scroll "left"; to reveal content on the left, scroll "right".\n'
               '    3. Examples:\n'
-              '        1. {"type": "scroll", "id": 3, "value": "up"}\n'
-              '        2. {"type": "scroll", "id": 7, "value": "left"}', track=track),
+              '        1. scroll {"id": 3, "value": "up"}\n'
+              '        2. scroll {"id": 7, "value": "left"}', track=track),
     ]
 
 

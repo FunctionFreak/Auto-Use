@@ -11,7 +11,7 @@ PROVIDER = "anthropic"
 MODEL = "claude-haiku-4.5" #refer to the model name correctly from model_list.txt.
 # Your task here
 task = """
-close the video player please use tool
+login to now
 """
 conversation=True
 

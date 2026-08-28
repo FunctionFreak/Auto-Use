@@ -162,7 +162,7 @@ class ControllerView:
                         }
 
                 elif action_type == "open_app":
-                    app_name = action_item.get("value", "")
+                    app_name = str(action_item.get("value") or "").strip()
                     logger.info(f"Opening application: {app_name}")
 
                     # Special 'home' case — return to the home screen
@@ -185,23 +185,31 @@ class ControllerView:
                             }
                     else:
                         try:
-                            success = app_launcher_service.launch_app(app_name)
+                            launch = app_launcher_service.launch_app(app_name)
                         except Exception as e:
                             logger.error(f"✗ App launch failed: {str(e)}")
-                            success = False
-                        if success:
-                            logger.info(f"Successfully opened {app_name}")
-                            result = {"status": "success", "action": "tool", "tool": "open_app", "app": app_name}
+                            launch = {"ok": False, "message": f"App launch raised: {e}"}
+                        # Report what was ACTUALLY launched (resolved display
+                        # name + bundle id), never just the query - and success
+                        # only when the launcher confirmed the foreground app.
+                        result = {
+                            "status": "success" if launch.get("ok") else "error",
+                            "action": "tool",
+                            "tool": "open_app",
+                            "requested": app_name,
+                            "message": launch.get("message", ""),
+                        }
+                        if launch.get("display_name"):
+                            result["app"] = launch["display_name"]
+                            result["bundle_id"] = launch["bundle_id"]
+                        if launch.get("ok"):
+                            if launch.get("verified") is False:
+                                result["verified"] = False
+                            logger.info(f"Opened {result.get('app', app_name)}")
                             results.append(result)
                         else:
-                            logger.error(f"Failed to open {app_name}")
-                            return {
-                                "status": "error",
-                                "action": "tool",
-                                "tool": "open_app",
-                                "app": app_name,
-                                "message": "No application found. Verify the app name from the home screen. If it is not installed, download it or find an alternative."
-                            }
+                            logger.error(f"Failed to open {app_name}: {result['message']}")
+                            return result
 
                 elif action_type == "wait":
                     wait_time = float(action_item.get("value", "1"))
