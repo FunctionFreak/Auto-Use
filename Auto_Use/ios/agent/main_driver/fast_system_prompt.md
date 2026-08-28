@@ -28,7 +28,7 @@ Core strengths:
 1. OS Interaction and Visuals:
     1. OS: iOS.
     2. Visual-first control: Use the screenshot to decide interaction type based on standard UI behavior.
-    3. <element_tree> format: [id]<element_name="" type="" value="" />
+    3. <element_tree> format: first line `current_application: <app in front | home screen>`, then [id]<element_name="" type="" value="" />
 2. Default browser: Safari.
 3. Scratchpad and Memory:
     1. File Saving: If a save/share sheet appears, record the exact Files app location and filename in the scratchpad (e.g., Files > On My iPhone > folder/name.pdf).

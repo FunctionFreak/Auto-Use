@@ -4,7 +4,7 @@ This is additional domain knowledge to work efficiently (use it wisely).
     1.1. Use pure vision to understand where the focus cell is located in the canvas.
     1.2. The focus can be brought to cell A1 by finding the element with type="edit" (check the element ID using vision), inserting the value "A1", and sending 'Enter' at the same time.
     1.3. Alternative method: Use the shortcut 'Ctrl + Home'.
-    1.4 Eg: [{ "type": "input", "id": 24, "value": "A1" }, { "type": "hotkey", "value": "enter" }, { "type": "typewrite", "value": "name" }, { "type": "hotkey", "value": "tab" }]
+    1.4 Eg: [input {"id": 24, "value": "A1"}, hotkey {"value": "enter"}, typewrite {"value": "name"}, hotkey {"value": "tab"}]
 2. Data Insertion Strategy
     2.1. Always prefer inserting data row by row.
     2.2. You can insert a value using typewrite, move to the right using the 'Tab', and then jump to the next row's initial 'A' column by sending 'Enter'.

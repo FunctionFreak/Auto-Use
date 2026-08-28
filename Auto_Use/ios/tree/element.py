@@ -244,6 +244,10 @@ class UIElementScanner:
         # Store scan data in memory
         self.element_tree_text = ""
         self.image_base64 = None
+        # The app in front, from the page source's root XCUIElementTypeApplication
+        # ("" on the home screen). Read for free on every scan; the skills
+        # lookup keys on it, and the tree's first line shows it to the model.
+        self.application_name = ""
 
     def _fetch_screenshot(self, out):
         """Fetch the screenshot and run every pixel step that does NOT need the
@@ -364,6 +368,9 @@ class UIElementScanner:
                 # Parse JSON and get XML
                 xml_string = response.json()['value']
                 root = ET.fromstring(xml_string)
+                # SpringBoard (home screen, or a system alert hosting the root) is not an app.
+                _app = (root.get('name') or '').strip()
+                self.application_name = '' if _app.lower() == 'springboard' else _app
                 
                 # Get enabled element types
                 enabled_types = [v['type'] for k, v in config['element_types'].items() if v['enabled']]
@@ -564,8 +571,10 @@ class UIElementScanner:
                     else:
                         element_lines.append(f'{indent}[{index}]<element_name="{label}", type="{element_type}" />\n')
                 
-                # Store in memory
-                self.element_tree_text = ''.join(element_lines)
+                # Store in memory - first line names the app in front
+                self.element_tree_text = (
+                    f"current_application: {self.application_name or 'home screen'}\n"
+                    + ''.join(element_lines))
                 # Send element tree to vault
                 vault_service.update_element_tree(self.element_tree_text)
                 t_tree = time.perf_counter()

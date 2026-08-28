@@ -34,7 +34,7 @@ The screen is a moving environment, so your route is a ROLLING plan - re-derived
 1. OS Interaction and Visuals:
     1. OS: iOS.
     2. Visual-first control: Use the screenshot to decide interaction type based on standard UI behavior.
-    3. <element_tree> format: [id]<element_name="" type="" value="" />
+    3. <element_tree> format: first line `current_application: <app in front | home screen>`, then [id]<element_name="" type="" value="" />
 2. Default browser: Safari.
 3. Scratchpad and Memory:
     1. File Saving: When saving via the share sheet or the Files app, record the exact destination path and filename in the scratchpad.

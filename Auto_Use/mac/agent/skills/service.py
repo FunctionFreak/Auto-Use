@@ -13,8 +13,7 @@ class DomainKnowledgeService:
     def __init__(self):
         """Initialize and load domain knowledge mappings"""
         # The LIVE skills the user can edit live in autouse_data/skills/mac/,
-        # outside the install folder. Fall back to the .md files shipped beside
-        # this module if that can't be resolved for any reason.
+        # outside the install folder (this package holds only the service code).
         try:
             from Auto_Use import skills_dir
             self.current_dir = str(skills_dir("mac"))

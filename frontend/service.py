@@ -2844,14 +2844,17 @@ def open_github():
 
 # =============================================================================
 # Flask routes — skills (the Skills stage's Computer-use tab: list / preview /
-# delete the active platform's Auto_Use/<platform>_use/agent/skills/*.md, so
+# delete the active platform's autouse_data/skills/<platform>/*.md, so
 # the same code serves windows on Windows and mac on Mac)
 # =============================================================================
 def _skills_dir():
     """The active platform's skill-markdown folder — autouse_data/skills/
-    <windows|mac>/, OUTSIDE the install folder so uninstalling never deletes
-    the user's edited skills."""
-    return skills_dir()
+    <windows|mac|ios>/, OUTSIDE the install folder so uninstalling never
+    deletes the user's edited skills. `?platform=ios` selects the iOS folder
+    (iOS is driven from a Mac, so it is never the host default)."""
+    from flask import request
+    plat = (request.args.get("platform") or "").strip().lower() if request else ""
+    return skills_dir("ios" if plat == "ios" else None)
 
 
 def _safe_skill_path(name):
