@@ -107,12 +107,14 @@ class DomainKnowledgeService:
         os_patterns = self.mappings.get("os", {})
         
         app_lower = application_name.lower()
-        
+
+        # Longest matching key wins (same rule as the browser matcher), so a
+        # user's "Google Chrome" skill beats the shipped "chrome" -> browser.md.
+        best_match, best_length = "", 0
         for app_pattern, md_file in os_patterns.items():
-            if app_pattern.lower() in app_lower:
-                return md_file
-        
-        return ""
+            if app_pattern.lower() in app_lower and len(app_pattern) > best_length:
+                best_match, best_length = md_file, len(app_pattern)
+        return best_match
     
     def _load_knowledge_file(self, filename: str) -> str:
         """Load content from .md knowledge file"""

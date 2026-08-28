@@ -492,3 +492,19 @@ body.skills-open.cli-stage #cliContainer {
 .skills-save:hover { background: rgba(80, 165, 230, 1); }
 .skills-cancel:active,
 .skills-save:active { transform: scale(0.97); }
+
+/* Add form: only the active tab's field row shows; the error sits left of
+   the buttons and reads as a quiet inline note. */
+.skills-add-fields[hidden] { display: none; }
+.skills-add-error:empty { display: none; }     /* buttons stay centred until there is an error */
+.skills-add-error {
+    flex: 1;
+    align-self: center;
+    font-size: clamp(11px, 1.1vw, 13px);
+    color: #c0392b;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.skills-save:disabled { opacity: 0.6; cursor: default; }

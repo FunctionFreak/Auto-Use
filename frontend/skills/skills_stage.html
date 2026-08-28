@@ -1,19 +1,19 @@
 <!-- Skills stage — mounted INTO #zoneBigCenter (the full-grid container that
      shows one thing at a time). skills.js reveals it when the composer's Skills
      icon is clicked and hides the Agent Notes so the two never overlap.
-     COMPUTER USE tab is live: it lists the active platform's
-     Auto_Use/<platform>_use/agent/skills/*.md via /api/skills (windows on
-     Windows, mac on Mac), with per-file preview and delete; the + button
-     swaps in the add form (whose Save is still design-only, and whose Cancel
-     returns to the list). MOBILE USE keeps the plain design-only form, where
-     Cancel closes the stage. -->
+     ONE panel serves both tabs: COMPUTER USE lists the host platform's
+     autouse_data/skills/<mac|windows>/*.md, MOBILE USE lists
+     autouse_data/skills/ios/*.md (/api/skills?platform=ios). Each row previews
+     on click (Edit / Save in the preview), the bin deletes, and + opens the add
+     form - Computer asks for a link or application, Mobile for the app's name
+     and bundle id - whose Save writes the .md (named after the app / domain) AND registers
+     it in skills.json. -->
 <div class="skills-stage" id="skillsStage" aria-label="Skills">
 
     <div class="skills-stage-inner">
 
-        <!-- Tabs row: Computer use / Mobile use (segmented control, soft
-             rectangle) with "+ Add skills" (white rounded-square plus badge +
-             label, design-only for now) sitting just to its right. -->
+        <!-- Tabs row: Computer use / Mobile use (segmented control) with
+             "+ Add skills" just to its right and Close on the far right. -->
         <div class="skills-tabs-row">
             <div class="skills-tabs" role="tablist" aria-label="Skill target">
                 <button class="skills-tab active" data-tab="computer" role="tab" aria-selected="true" type="button">
@@ -39,19 +39,16 @@
             </button>
         </div>
 
-        <!-- Computer use panel — three sub-views, swapped by skills.js:
-             LIST (default) → the platform's skill .md files, PREVIEW → one
-             file's markdown read-only, ADD → the original form (via +). -->
-        <div class="skills-form active" data-form="computer" role="tabpanel">
+        <!-- The panel: three sub-views swapped by skills.js - LIST (default),
+             PREVIEW (one file, read-only until Edit), ADD (via +). -->
+        <div class="skills-form active" data-form="skills" role="tabpanel">
 
             <!-- LIST: one row per file; click the name to preview, bin deletes -->
             <div class="skills-view active" data-view="list">
                 <div class="skills-list" id="skillsList" aria-label="Saved skills"></div>
             </div>
 
-            <!-- PREVIEW: header = back button + file name + Edit / Save (top
-                 right; Edit swaps the body for the editable twin below, Save
-                 PUTs it back and returns to read-only). Back discards. -->
+            <!-- PREVIEW: header = back button + file name + Edit / Save. -->
             <div class="skills-view" data-view="preview">
                 <div class="skills-preview-head">
                     <button class="skills-back" type="button" aria-label="Back to skills list" title="Back">
@@ -67,50 +64,36 @@
                 <textarea class="skills-preview-body skills-preview-editbox" id="skillsPreviewEdit" hidden spellcheck="false"></textarea>
             </div>
 
-            <!-- ADD: the original two-input + write-area form (Save design-only) -->
+            <!-- ADD: the field row differs per tab; the skill text and the
+                 buttons are shared. Save = POST /api/skills[?platform=ios]. -->
             <div class="skills-view" data-view="add">
-                <div class="skills-row">
+                <div class="skills-row skills-add-fields" data-for="computer">
                     <div class="skills-field">
-                        <label class="skills-field-label">Link / Application</label>
-                        <input type="text" class="skills-input" placeholder="https://…  or  application name" autocomplete="off" />
+                        <label class="skills-field-label" for="skillsAddTarget">Link / Application</label>
+                        <input type="text" class="skills-input" id="skillsAddTarget" placeholder="https://…  or  application name (the file is named after it)" autocomplete="off" />
+                    </div>
+                </div>
+                <div class="skills-row skills-add-fields" data-for="mobile" hidden>
+                    <div class="skills-field">
+                        <label class="skills-field-label" for="skillsAddApp">Application</label>
+                        <input type="text" class="skills-input" id="skillsAddApp" placeholder="name on the home screen, e.g. Instagram" autocomplete="off" />
                     </div>
                     <div class="skills-field">
-                        <label class="skills-field-label">Skill name</label>
-                        <input type="text" class="skills-input" placeholder="Name this skill" autocomplete="off" />
+                        <label class="skills-field-label" for="skillsAddBundle">Bundle id</label>
+                        <input type="text" class="skills-input" id="skillsAddBundle" placeholder="optional, e.g. com.burbn.instagram" autocomplete="off" />
                     </div>
                 </div>
                 <div class="skills-field skills-field-grow">
-                    <label class="skills-field-label">Skill</label>
-                    <textarea class="skills-textarea" placeholder="Write the skill here…"></textarea>
+                    <label class="skills-field-label" for="skillsAddText">Skill</label>
+                    <textarea class="skills-textarea" id="skillsAddText" placeholder="Write the skill here…"></textarea>
                 </div>
                 <div class="skills-actions">
+                    <span class="skills-add-error" id="skillsAddError" role="alert"></span>
                     <button class="skills-cancel" type="button">Cancel</button>
-                    <button class="skills-save" type="button">Save</button>
+                    <button class="skills-save" id="skillsAddSave" type="button">Save</button>
                 </div>
             </div>
 
-        </div>
-
-        <!-- Mobile use form -->
-        <div class="skills-form" data-form="mobile" role="tabpanel" hidden>
-            <div class="skills-row">
-                <div class="skills-field">
-                    <label class="skills-field-label">Application / File name</label>
-                    <input type="text" class="skills-input" placeholder="application or file name" autocomplete="off" />
-                </div>
-                <div class="skills-field">
-                    <label class="skills-field-label">Skill name</label>
-                    <input type="text" class="skills-input" placeholder="Name this skill" autocomplete="off" />
-                </div>
-            </div>
-            <div class="skills-field skills-field-grow">
-                <label class="skills-field-label">Skill</label>
-                <textarea class="skills-textarea" placeholder="Write the skill here…"></textarea>
-            </div>
-            <div class="skills-actions">
-                <button class="skills-cancel" type="button">Cancel</button>
-                <button class="skills-save" type="button">Save</button>
-            </div>
         </div>
 
     </div>

@@ -5,10 +5,11 @@
 //      container that shows ONE thing at a time. Clicking the icon reveals the
 //      stage (and hides Agent Notes so they never overlap); clicking it again
 //      makes the stage vanish from the container.
-// COMPUTER USE tab is live: default view lists the active platform's
-// agent/skills/*.md through service.py (/api/skills — windows or mac
-// picked server-side), rows preview on click and delete via the bin; + swaps in
-// the add form. Save is still design-only; MOBILE USE is design-only too.
+// Both tabs are live and share ONE panel (list | preview | add): COMPUTER USE
+// lists the host platform's skills (/api/skills — windows or mac picked
+// server-side), MOBILE USE lists the iOS ones (/api/skills?platform=ios).
+// Rows preview on click (Edit/Save), the bin deletes, + opens the add form
+// whose Save POSTs the .md and registers it in skills.json.
 (function () {
     'use strict';
 
@@ -57,10 +58,20 @@
         resetStage();
     }
 
-    // ── Computer-use tab: live skills list / preview / delete ──────────
-    // The computer panel holds three sub-views (list | preview | add) that the
-    // helpers below swap; the list and preview are fed by service.py, which
-    // resolves the right skills folder for the OS (windows / mac).
+    // ── Skills panel: live list / preview / edit / delete / add ─────────
+    // One panel holds three sub-views (list | preview | add) that the helpers
+    // below swap. The ACTIVE TAB decides which folder service.py serves:
+    // Computer -> the host platform (windows / mac), Mobile -> ios.
+    var currentTab = 'computer';
+    function platformQuery() { return currentTab === 'mobile' ? '?platform=ios' : ''; }
+
+    // The composer's Computer/Mobile picker paints data-mode on its wrap
+    // (agent_mode.js); open Skills on the matching tab.
+    function composerIsMobile() {
+        var wrap = document.getElementById('agentModeWrap') || document.querySelector('.agent-mode-wrap');
+        var mode = wrap ? (wrap.dataset.mode || wrap.getAttribute('data-mode') || '') : '';
+        return mode === 'mobile';
+    }
 
     var BIN_SVG =
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
@@ -71,7 +82,7 @@
 
     function computerPanel() {
         var stage = stageEl();
-        return stage ? stage.querySelector('.skills-form[data-form="computer"]') : null;
+        return stage ? stage.querySelector('.skills-form') : null;
     }
 
     // Every view change bumps viewToken so an in-flight preview fetch from a
@@ -129,7 +140,7 @@
     var listReqId = 0;
     function refreshSkillsList() {
         var id = ++listReqId;
-        fetch('/api/skills')
+        fetch('/api/skills' + platformQuery())
             .then(function (r) { return r.json(); })
             .then(function (d) { if (id === listReqId) renderSkillsList((d && d.skills) || []); })
             .catch(function () { if (id === listReqId) renderSkillsList([]); });
@@ -140,7 +151,7 @@
         function land(content) {
             if (token === viewToken) showPreview(name, content);
         }
-        fetch('/api/skills/' + encodeURIComponent(name))
+        fetch('/api/skills/' + encodeURIComponent(name) + platformQuery())
             .then(function (r) { return r.json(); })
             .then(function (d) {
                 land((d && typeof d.content === 'string')
@@ -186,7 +197,7 @@
         var token = viewToken;             // if the user navigates away before the
                                            // PUT resolves, don't touch the new view
                                            // (the file itself still saved fine)
-        fetch('/api/skills/' + encodeURIComponent(name), {
+        fetch('/api/skills/' + encodeURIComponent(name) + platformQuery(), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ content: content })
@@ -215,30 +226,107 @@
 
     // Idempotent server-side; refresh the list whether or not it succeeded.
     function deleteSkill(name) {
-        fetch('/api/skills/' + encodeURIComponent(name), { method: 'DELETE' })
+        fetch('/api/skills/' + encodeURIComponent(name) + platformQuery(), { method: 'DELETE' })
             .catch(function () {})
             .then(function () { refreshSkillsList(); });
     }
 
-    // Default state every time the stage opens: Computer tab active, + visible,
-    // list view showing a fresh fetch of the skill files.
-    function resetStage() {
+    // Select a tab: paint the segmented control, show that tab's add fields,
+    // and land on a fresh list of ITS folder.
+    function selectTab(which) {
         var stage = stageEl();
         if (!stage) return;
+        currentTab = (which === 'mobile') ? 'mobile' : 'computer';
         stage.querySelectorAll('.skills-tab').forEach(function (t) {
-            var on = (t.dataset.tab === 'computer');
+            var on = (t.dataset.tab === currentTab);
             t.classList.toggle('active', on);
             t.setAttribute('aria-selected', on ? 'true' : 'false');
         });
-        stage.querySelectorAll('.skills-form').forEach(function (f) {
-            var on = (f.dataset.form === 'computer');
-            f.classList.toggle('active', on);
-            f.hidden = !on;
+        stage.querySelectorAll('.skills-add-fields').forEach(function (row) {
+            row.hidden = (row.dataset.for !== currentTab);
         });
-        var add = stage.querySelector('.skills-add');
-        if (add) add.hidden = false;
+        setEditMode(false);
+        clearAddForm();
+        var list = document.getElementById('skillsList');
+        if (list) list.innerHTML = '';              // no other-platform row is clickable while fetching
         showComputerView('list');
         refreshSkillsList();
+    }
+
+    function clearAddForm() {
+        ['skillsAddTarget', 'skillsAddApp', 'skillsAddBundle', 'skillsAddText'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+        setAddError('');
+    }
+
+    function setAddError(msg) {
+        var el = document.getElementById('skillsAddError');
+        if (el) el.textContent = msg || '';
+    }
+
+    function val(id) {
+        var el = document.getElementById(id);
+        return el ? el.value.trim() : '';
+    }
+
+    // Save on the add form: POST the skill + its skills.json mapping for the
+    // active tab (the server names the file after the app / domain), then
+    // return to the (refreshed) list.
+    var addInFlight = false;
+    function saveNewSkill() {
+        if (addInFlight) return;
+        var body = { content: val('skillsAddText') };
+        if (currentTab === 'mobile') {
+            body.app = val('skillsAddApp');
+            body.bundle_id = val('skillsAddBundle');
+            if (!body.app) { setAddError('Enter the app name as it appears on the home screen.'); return; }
+        } else {
+            body.target = val('skillsAddTarget');
+            if (!body.target) { setAddError('Enter a link or application name.'); return; }
+        }
+        if (!body.content) { setAddError('Write the skill text.'); return; }
+        setAddError('');
+        addInFlight = true;
+        var btn = document.getElementById('skillsAddSave');
+        if (btn) btn.disabled = true;
+        var token = viewToken, tab = currentTab;   // a later navigation must not be yanked
+        fetch('/api/skills' + platformQuery(), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        })
+            .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+            .then(function (res) {
+                var created = !!(res.ok && res.d && res.d.status === 'created');
+                if (token !== viewToken) {          // user moved on: only refresh the list
+                    if (created && tab === currentTab) refreshSkillsList();
+                    return;
+                }
+                if (created) {
+                    clearAddForm();
+                    showComputerView('list');
+                    refreshSkillsList();
+                } else {
+                    setAddError((res.d && res.d.error) || 'Couldn’t save the skill.');
+                }
+            })
+            .catch(function () { if (token === viewToken) setAddError('Couldn’t save the skill.'); })
+            .then(function () {
+                addInFlight = false;
+                if (btn) btn.disabled = false;
+            });
+    }
+
+    // Default state every time the stage opens: the tab matching the
+    // composer's Computer/Mobile picker, list view, fresh fetch.
+    function resetStage() {
+        var stage = stageEl();
+        if (!stage) return;
+        var add = stage.querySelector('.skills-add');
+        if (add) add.hidden = false;
+        selectTab(composerIsMobile() ? 'mobile' : 'computer');
     }
 
     // Drop the Skills stage but leave the container to whoever else uses it
@@ -277,31 +365,19 @@
         var stage = stageEl();
         if (!stage) return;
 
-        // Tabs — swap the active tab + its form. The + button only belongs to
-        // the Computer tab (Mobile is just the form), so it hides with it.
-        var tabs = stage.querySelectorAll('.skills-tab');
-        var forms = stage.querySelectorAll('.skills-form');
+        // Tabs — both live; each switches the folder the panel serves.
         var addBtn = stage.querySelector('.skills-add');
-        tabs.forEach(function (tab) {
+        stage.querySelectorAll('.skills-tab').forEach(function (tab) {
             tab.addEventListener('click', function () {
-                var which = tab.dataset.tab;
-                tabs.forEach(function (t) {
-                    var on = (t === tab);
-                    t.classList.toggle('active', on);
-                    t.setAttribute('aria-selected', on ? 'true' : 'false');
-                });
-                forms.forEach(function (f) {
-                    var on = (f.dataset.form === which);
-                    f.classList.toggle('active', on);
-                    f.hidden = !on;
-                });
-                if (addBtn) addBtn.hidden = (which !== 'computer');
+                if (tab.dataset.tab !== currentTab) selectTab(tab.dataset.tab);   // re-clicking the active tab keeps your edits
             });
         });
 
         // + shows the add form; ← in the preview goes back to the list
         // (dropping any unsaved edit — Save is the explicit keep).
-        if (addBtn) addBtn.addEventListener('click', function () { showComputerView('add'); });
+        if (addBtn) addBtn.addEventListener('click', function () { setAddError(''); showComputerView('add'); });
+        var addSave = stage.querySelector('#skillsAddSave');
+        if (addSave) addSave.addEventListener('click', saveNewSkill);
         stage.querySelectorAll('.skills-back').forEach(function (btn) {
             btn.addEventListener('click', function () {
                 setEditMode(false);
@@ -320,13 +396,9 @@
         if (editBtn) editBtn.addEventListener('click', function () { setEditMode(true); });
         if (saveBtn) saveBtn.addEventListener('click', saveEdit);
 
-        // Cancel: the Computer form is a sub-view reached via +, so its Cancel
-        // returns to the file list; Mobile's still closes the whole stage.
-        stage.querySelectorAll('.skills-form[data-form="computer"] .skills-cancel').forEach(function (btn) {
-            btn.addEventListener('click', function () { showComputerView('list'); });
-        });
-        stage.querySelectorAll('.skills-form[data-form="mobile"] .skills-cancel').forEach(function (btn) {
-            btn.addEventListener('click', closeSkills);
+        // Cancel on the add form returns to the file list.
+        stage.querySelectorAll('.skills-cancel').forEach(function (btn) {
+            btn.addEventListener('click', function () { clearAddForm(); showComputerView('list'); });
         });
     }
 
