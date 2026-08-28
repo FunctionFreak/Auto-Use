@@ -89,17 +89,15 @@
     padding-bottom: clamp(8px, 1vw, 12px);
 }
 
-/* Auto Use brand logo (the rounded app icon, /logo_rounded.png), top-left of
-   the bar. aspect-ratio matches the file's real pixels (376 x 348) so the box
-   is reserved at the right width before the image loads — no reflow of the
-   header when it arrives. The shadow lifts the tile off the bar, whose cream
-   is close to the icon's own background; it is the source artwork's shadow
-   scaled down ~10x for this size, since at 4px/6px offsets it would read as a
-   smudge on a 34px mark. */
+/* Auto Use brand logo (/logo.png, the 480x480 app icon), top-left of the
+   bar. aspect-ratio matches the file's real pixels so the box is reserved at
+   the right width before the image loads — no reflow of the header when it
+   arrives. The shadow lifts the tile off the bar, whose cream is close to the
+   icon's own background. */
 .left-bar-logo {
     height: clamp(26px, 3vw, 34px);
     width: auto;
-    aspect-ratio: 376 / 348;
+    aspect-ratio: 1 / 1;
     flex-shrink: 0;
     display: block;
     object-fit: contain;

@@ -1,9 +1,10 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 import json
 import requests
 import base64
 from typing import Dict, Any, Optional
+from .. import LLM_HTTP_TIMEOUT
 
 class GroqProvider:
     """Groq API provider for LLM interactions"""
@@ -57,7 +58,7 @@ class GroqProvider:
             data["tool_choice"] = "required"
         
         try:
-            response = requests.post(self.api_url, json=data, headers=headers)
+            response = requests.post(self.api_url, json=data, headers=headers, timeout=LLM_HTTP_TIMEOUT)
             response.raise_for_status()
             result = response.json()
             if self.tools:

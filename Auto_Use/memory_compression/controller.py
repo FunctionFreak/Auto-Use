@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 """CompressionController — runtime orchestration for the handoff compression
 agent (sibling agent/service.py builds the dump and makes the LLM call).

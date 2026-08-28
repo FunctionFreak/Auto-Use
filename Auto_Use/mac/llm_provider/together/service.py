@@ -1,8 +1,9 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 import json
 import requests
 from typing import Dict, Any, Optional
+from .. import LLM_HTTP_TIMEOUT
 
 class TogetherProvider:
     """Together AI API provider for LLM interactions (OpenAI-compatible chat completions)"""
@@ -64,14 +65,14 @@ class TogetherProvider:
             data["tool_choice"] = self._tool_choice
 
         try:
-            response = requests.post(self.api_url, json=data, headers=headers)
+            response = requests.post(self.api_url, json=data, headers=headers, timeout=LLM_HTTP_TIMEOUT)
             if response.status_code == 400 and self.tools and self._tool_choice == "required":
                 # Retry once with "auto". Remember it ONLY if that works — an
                 # unrelated 400 falls through and raises with its own body.
                 # The agent loop repairs the odd text-only turn ("no tool
                 # called"), so "auto" degrades gracefully.
                 data["tool_choice"] = "auto"
-                retry = requests.post(self.api_url, json=data, headers=headers)
+                retry = requests.post(self.api_url, json=data, headers=headers, timeout=LLM_HTTP_TIMEOUT)
                 if retry.ok:
                     self._tool_choice = "auto"
                     response = retry

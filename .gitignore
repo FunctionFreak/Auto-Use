@@ -40,6 +40,8 @@ conversations/
 # Distribution / packaging
 .Python
 build/
+build-sim/
+build-sim-*/
 develop-eggs/
 dist/
 downloads/
@@ -146,3 +148,5 @@ Auto_Use/ios_connector/paired_devices.json
 /Auto_Use/web/target
 /Auto_Use/mac/scratchpad
 /Auto_Use/web/scratchpad
+/Auto_Use/ios/scratchpad
+/Auto_Use/ios_connector/WebDriverAgent

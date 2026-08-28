@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 """
 service.py - Core iPhone interaction service via WebDriverAgent.
@@ -18,7 +18,8 @@ class ControllerService:
     """Service for executing iPhone actions via WebDriverAgent"""
 
     def __init__(self):
-        self.wda_url = "http://localhost:8100"
+        from Auto_Use.ios_connector.session import wda_url
+        self.wda_url = wda_url()
         self.elements = {}
         self.session_id = None
 

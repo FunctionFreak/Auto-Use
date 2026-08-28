@@ -1,4 +1,4 @@
-// Copyright 2026 Ashish Yadav — Auto-Use
+// Copyright 2026 Cursortouch — Auto-Use
 
 //! Low-level browser control — shared helpers for every tool.
 //!
@@ -15,7 +15,7 @@ use std::time::Duration;
 use pyo3::prelude::*;
 use serde_json::{Map, Value};
 
-use crate::agent::browser::{truthy, SResult, ScanErr, ScannerInner};
+use crate::browser::{truthy, SResult, ScanErr, ScannerInner};
 use crate::agent::main_driver::view::py_str_of;
 
 /// [1] is the page itself on every scan — the scanner reserves it. It is a
@@ -237,11 +237,11 @@ pub fn with_box<T: Send>(
 }
 
 /// `release_all_inputs()` — kept because the agent loop calls it on every
-/// stop path. Currently a no-op, and deliberately so: the only action that
-/// can leave a button pressed is `hold_click`, and that press lives inside
-/// the scanner binary's own CDP session, which this side has no command to
-/// reach into. The leak is bounded — Chrome drops the press when the page
-/// navigates, and the scanner is torn down at the end of the run.
+/// stop path. Still a no-op, but for a better reason than before: the only
+/// action that can leave a button pressed is `hold_click`, and its press and
+/// release are now two calls in one synchronous function on this side's own
+/// session (see controller/click). There is no longer a window in which the
+/// button is down and this side has no way to lift it.
 pub struct ControllerService;
 
 impl ControllerService {

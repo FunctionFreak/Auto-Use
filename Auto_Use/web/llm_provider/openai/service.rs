@@ -1,4 +1,4 @@
-// Copyright 2026 Ashish Yadav — Auto-Use
+// Copyright 2026 Cursortouch — Auto-Use
 
 //! OpenAI API provider. The Python original went through the openai SDK;
 //! this speaks to the same /v1/chat/completions endpoint directly — the
@@ -98,7 +98,7 @@ impl OpenAIProvider {
         let mut message = Map::new();
         message.insert(
             "content".into(),
-            if crate::agent::browser::truthy(&content) { content } else { json!("") },
+            if crate::browser::truthy(&content) { content } else { json!("") },
         );
         if self.tools.is_some() {
             message.insert(

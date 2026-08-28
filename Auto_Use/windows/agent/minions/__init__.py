@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 # Minion sub-agent package.
 # Mirrors the coder/ package structure:

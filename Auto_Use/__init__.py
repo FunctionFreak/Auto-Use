@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 """Auto Use package root — and the single source of truth for WHERE the user's
 data lives.
@@ -97,6 +97,52 @@ def data_root() -> Path:
     override = (os.environ.get(ENV_DATA_DIR) or "").strip()
     root = Path(override).expanduser() if override else _base_dir() / DATA_DIR_NAME
     return _ensure(root)
+
+
+BROWSER_PROFILES_DIR = "browser_profiles"
+DEFAULT_BROWSER_PROFILE = "default"
+
+
+def normalize_profile_name(name) -> str:
+    """A browser profile name, or ValueError.
+
+    The name becomes a path segment under `data_root()`, which is a tree this
+    codebase deletes from — so this REJECTS rather than sanitizes. Quietly
+    mapping "../../etc" to "etc" would be worse than an error: it would delete
+    or overwrite something the caller never named.
+    """
+    text = str(name or "").strip().lower()
+    if not text:
+        return DEFAULT_BROWSER_PROFILE
+    if len(text) > 64 or text.startswith("."):
+        raise ValueError(f"browser profile name {text!r} must be 1-64 chars and not start with '.'")
+    if any(c not in "abcdefghijklmnopqrstuvwxyz0123456789._-" for c in text):
+        raise ValueError(
+            f"browser profile name {text!r} may only contain letters, digits, '.', '_' and '-'"
+        )
+    if text in ("_tmp", ".", ".."):
+        raise ValueError(f"browser profile name {text!r} is reserved")
+    return text
+
+
+def browser_profile_dir(name=None) -> Path:
+    """The Chrome user-data-dir for a named browser profile, created if absent.
+
+    <data_root>/browser_profiles/<name>/chrome
+
+    Chrome owns and litters its user-data-dir, so it is nested one level down:
+    that leaves room beside it for our own files, and makes "reset this
+    profile" a delete of `chrome/` rather than of the profile's identity.
+
+    This is what makes the agent arrive already logged in. Cookies,
+    localStorage and IndexedDB live in here and survive between runs, so a site
+    the agent signed into once does not have to be signed into again — which
+    matters far more than any fingerprint tuning, because a login wall is where
+    a web agent usually stops.
+    """
+    root = data_root() / BROWSER_PROFILES_DIR / normalize_profile_name(name)
+    _ensure(root)
+    return _ensure(root / "chrome")
 
 
 def install_dir() -> Path:

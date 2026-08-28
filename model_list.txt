@@ -84,18 +84,5 @@ kimi-k3                   low       yes
 
 
 --------------------------------------------------------------
-PROVIDER = "together"
---------------------------------------------------------------
-MODEL name                thinking  vision
---------------------------------------------------------------
-inkling                   -         yes
-muse-glimmer-30b          -         yes
-minimax-m3                -         yes
-
-(together has no native web search: the `web` tool hands the query
-to the browser agent on the same model and returns its report.)
-
-
---------------------------------------------------------------
-33 models across 7 providers.
+30 models across 6 providers.
 --------------------------------------------------------------

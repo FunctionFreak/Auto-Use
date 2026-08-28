@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 # Auto_Use/mac/controller/tool/open_app.py
 # macOS version — open or bring-to-front any .app bundle

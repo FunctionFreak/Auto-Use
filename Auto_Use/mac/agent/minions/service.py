@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 """
 Minion Sub-Agent Service — read-only scout sub-agent loop (macOS).

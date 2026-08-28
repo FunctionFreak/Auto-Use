@@ -1,4 +1,4 @@
-// Copyright 2026 Ashish Yadav — Auto-Use
+// Copyright 2026 Cursortouch — Auto-Use
 
 //! Google Gemini API provider. The Python original went through the
 //! google-genai SDK; this speaks the same generateContent REST API directly —

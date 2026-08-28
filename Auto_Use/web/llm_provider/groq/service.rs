@@ -1,4 +1,4 @@
-// Copyright 2026 Ashish Yadav — Auto-Use
+// Copyright 2026 Cursortouch — Auto-Use
 
 //! Groq API provider.
 
@@ -83,7 +83,7 @@ fn normalize_tool_response(result: &Value) -> Value {
     json!({
         "choices": [{
             "message": {
-                "content": if crate::agent::browser::truthy(&content) { content } else { json!("") },
+                "content": if crate::browser::truthy(&content) { content } else { json!("") },
                 "tool_calls": calls,
             }
         }],

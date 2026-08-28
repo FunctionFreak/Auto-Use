@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 """Handoff compression agent — turns the main agent's in-run step history into
 ONE plain-text handoff document (see sibling system_prompt.md).

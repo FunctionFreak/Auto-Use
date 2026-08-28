@@ -1,4 +1,4 @@
-// Copyright 2026 Ashish Yadav — Auto-Use
+// Copyright 2026 Cursortouch — Auto-Use
 
 //! LLMManager — routes requests to the correct LLM provider.
 //!
@@ -22,7 +22,7 @@ use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::prelude::*;
 use serde_json::{json, Map, Value};
 
-use crate::agent::browser::truthy;
+use crate::browser::truthy;
 use crate::agent::main_driver::view::py_str_of;
 use crate::llm_provider::{anthropic, google, groq, openai, openrouter, perplexity, together};
 

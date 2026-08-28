@@ -1,4 +1,4 @@
-// Copyright 2026 Ashish Yadav — Auto-Use
+// Copyright 2026 Cursortouch — Auto-Use
 
 //! LLM Provider module for managing different language model providers —
 //! the Rust analog of `llm_provider/__init__.py`. One folder per provider,
@@ -6,6 +6,7 @@
 //! Python package used.
 
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -92,7 +93,28 @@ fn agent() -> &'static ureq::Agent {
         let config = rustls::ClientConfig::builder()
             .with_root_certificates(roots)
             .with_no_client_auth();
-        ureq::AgentBuilder::new().tls_config(Arc::new(config)).build()
+        // ureq's defaults leave read and write UNBOUNDED. A provider that
+        // accepts the TCP+TLS handshake and then goes silent therefore hangs
+        // `send_string` forever — inside `py.detach`, so the step never ends,
+        // the retry ladder never runs, and the Stop flag is never read again.
+        // The agent could only be killed from outside.
+        //
+        // The bounds are per-socket-operation, not a total-request cap, and
+        // that difference is deliberate: these are non-streaming calls, so the
+        // provider sends NOTHING while the model is still generating, and a
+        // "total 30s" cap would kill a legitimately slow reasoning response
+        // that was seconds from arriving. READ covers that whole quiet
+        // generation window, so it is generous; it exists to turn "forever"
+        // into "bounded, then the 3-attempt retry" — not to police slowness.
+        // WRITE stalls only when the upload (screenshots, so megabytes) stops
+        // moving. A timeout surfaces as an ordinary Err out of `post_json`,
+        // which the callers' retry loops already treat as a failed attempt.
+        ureq::AgentBuilder::new()
+            .tls_config(Arc::new(config))
+            .timeout_connect(Duration::from_secs(15))
+            .timeout_read(Duration::from_secs(180))
+            .timeout_write(Duration::from_secs(60))
+            .build()
     })
 }
 

@@ -1,20 +1,19 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 #this main.py give terminal interface to the user to interact with the agent for ui refer app.py
 from Auto_Use.agent_launcher import run_agent
 
-# Configuration
-MODE = "computer use"  # "computer use" (this PC) / "shell use" (CLI agent straight to the terminal) / "web use" (CDP-controlled Chrome) / "mobile use, ios" / "mobile use, android"
-PROVIDER = "together"
-MODEL = "minimax-m3" #refer to the model name correctly from model_list.txt.
+# Configuration (check the agent_operation.md for more details)
+MODE = "mobile use, ios"  # "computer use" (this PC) / "shell use" (CLI agent straight to the terminal) / "web use" (CDP-controlled Chrome) / "mobile use, ios" / "mobile use, android"
+DEVICE = "hardware"       # "simulation" (iOS Simulator) / "hardware" (paired iPhone)
+IOS_VERSION = None        # simulation only — e.g. "26.5"; ignored on hardware
+PROVIDER = "anthropic"
+MODEL = "claude-haiku-4.5" #refer to the model name correctly from model_list.txt.
 # Your task here
 task = """
-what isthe price of nvdia share 
+close the video player please use tool
 """
 conversation=True
-# Optional flags — conversation saving, speed ("quality"/"fast"), headless
-# Chrome, and running MULTIPLE tasks in parallel — are documented in
-# agent_operation.md.
 
 # Run the agent
 run_agent(
@@ -22,7 +21,10 @@ run_agent(
     provider=PROVIDER,
     model=MODEL,
     task=task,
+    device=DEVICE,
+    ios_version=IOS_VERSION,
     external_terminal=True,
+    save_conversation=conversation,
 )
 
 # Response is displayed inside process_request

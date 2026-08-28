@@ -1,4 +1,4 @@
-// Copyright 2026 Ashish Yadav — Auto-Use
+// Copyright 2026 Cursortouch — Auto-Use
 
 //! Crate root — the module behind `Auto_Use.web.agent`.
 //!
@@ -13,20 +13,29 @@ use pyo3::prelude::*;
 
 // One crate for the whole web side — every subdirectory's .rs files compile
 // into this single cdylib (one target/, one agent_native.so, both at web/).
-// web/tree's element binary can fold in as a second build target when it
-// converts.
+// Nothing here builds a second binary: the page scanner used to, and is a
+// module now.
 pub mod agent {
-    pub mod browser;
     pub mod main_driver;
 }
+// The browser session keeps its own directory: web/browser/browser.rs. The
+// #[path] lets the file keep its name while the module stays `crate::browser`.
+#[path = "browser/browser.rs"]
+pub mod browser;
 pub mod controller;
+// The page scanner. It used to build as a second binary of this package and
+// run as a subprocess; it is a plain module now, reading pages over the one
+// CDP session browser.rs owns.
+pub mod tree {
+    pub mod element;
+}
 pub mod llm_provider;
 
 pyo3::create_exception!(
     agent_native,
     ScannerError,
     pyo3::exceptions::PyRuntimeError,
-    "The scanner binary failed, refused a command, or stopped answering."
+    "The page scanner failed, or the browser stopped answering."
 );
 
 /// Auto_Use/web — the directory holding this extension module, resolved
@@ -51,10 +60,27 @@ pub fn web_dir(py: Python<'_>) -> PyResult<&'static PathBuf> {
     Ok(DIR.get_or_init(|| dir))
 }
 
-/// Auto_Use/web/agent — kept as a helper because every asset path the agent
-/// reads (glow.*, main_driver prompts) lives under it.
+/// The Chrome user-data-dir for a named browser profile, asked of Python.
+///
+/// Rust cannot answer this itself: `Auto_Use/__init__.py` handles the
+/// compiled-vs-dev base directory and the AUTOUSE_DATA_DIR override, and a
+/// second definition of "where is autouse_data" drifting apart from that one
+/// is the exact bug that module exists to prevent.
+pub fn browser_profile_dir(py: Python<'_>, name: Option<&str>) -> PyResult<PathBuf> {
+    let module = py.import("Auto_Use")?;
+    let dir = module.call_method1("browser_profile_dir", (name,))?;
+    Ok(PathBuf::from(dir.str()?.extract::<String>()?))
+}
+
+/// Auto_Use/web/agent — kept as a helper because the main_driver prompts the
+/// agent reads live under it.
 pub fn agent_dir(py: Python<'_>) -> PyResult<PathBuf> {
     Ok(web_dir(py)?.join("agent"))
+}
+
+/// Auto_Use/web/browser — browser.rs and the glow assets it injects (glow/).
+pub fn browser_dir(py: Python<'_>) -> PyResult<PathBuf> {
+    Ok(web_dir(py)?.join("browser"))
 }
 
 #[pymodule]
@@ -62,12 +88,12 @@ fn agent_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     use agent::main_driver::view;
 
     m.add("ScannerError", m.py().get_type::<ScannerError>())?;
-    m.add("CHROME_PORT", agent::browser::CHROME_PORT)?;
-    m.add_class::<agent::browser::BrowserScanner>()?;
-    m.add_function(pyo3::wrap_pyfunction!(agent::browser::launch_chrome, m)?)?;
-    m.add_function(pyo3::wrap_pyfunction!(agent::browser::is_blank_page, m)?)?;
-    m.add_function(pyo3::wrap_pyfunction!(agent::browser::blank_html, m)?)?;
-    m.add_function(pyo3::wrap_pyfunction!(agent::browser::ensure_tab, m)?)?;
+    m.add("CHROME_PORT", browser::CHROME_PORT)?;
+    m.add_class::<browser::BrowserScanner>()?;
+    m.add_function(pyo3::wrap_pyfunction!(browser::launch_chrome, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(browser::is_blank_page, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(browser::blank_html, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(browser::ensure_tab, m)?)?;
 
     m.add_class::<agent::main_driver::service::AgentService>()?;
     m.add_class::<llm_provider::llm_manager::LLMManager>()?;

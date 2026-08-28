@@ -1,4 +1,4 @@
-// Copyright 2026 Ashish Yadav — Auto-Use
+// Copyright 2026 Cursortouch — Auto-Use
 
 //! NATIVE TRANSCRIPT CODEC + display formatter — Rust port of view.py.
 //!
@@ -78,7 +78,7 @@ pub fn ensure_ascii(s: &str) -> String {
 }
 
 /// Python truthiness for a JSON value (shared with browser.rs).
-pub use crate::agent::browser::truthy;
+pub use crate::browser::truthy;
 
 /// Python `str()` of a JSON value ("None"/"True"/"False", numbers via repr).
 pub fn py_str_of(v: &Value) -> String {

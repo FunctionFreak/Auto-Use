@@ -1,9 +1,10 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 import os
 import sys
 import requests
 from dotenv import load_dotenv
+from Auto_Use.mac.llm_provider import LLM_HTTP_TIMEOUT
 
 load_dotenv()
 
@@ -45,7 +46,8 @@ def web_search(query, model, api_key=None):
                     {"role": "user", "content": query}
                 ],
                 "plugins": [{"id": "web", "engine": "exa", "max_results": 20}]
-            }
+            },
+            timeout=LLM_HTTP_TIMEOUT
         )
         response.raise_for_status()
         return response.json()['choices'][0]['message']['content']

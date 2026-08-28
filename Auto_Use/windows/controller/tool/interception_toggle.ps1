@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 #
 # Licensed under the MIT License. See the LICENSE file in the project root
 # for the full license text.

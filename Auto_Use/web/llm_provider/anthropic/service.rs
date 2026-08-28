@@ -1,11 +1,11 @@
-// Copyright 2026 Ashish Yadav — Auto-Use
+// Copyright 2026 Cursortouch — Auto-Use
 
 //! Anthropic API provider.
 
 use serde_json::{json, Map, Value};
 
 use super::view::{get_sampling_params, get_thinking_params};
-use crate::agent::browser::truthy;
+use crate::browser::truthy;
 use crate::llm_provider::{api_url, args_dict, post_json, SCREENSHOT_MEDIA_TYPE};
 
 /// Flatten a message content field (string, or list of content blocks) to

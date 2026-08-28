@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 # Auto_Use/ios/controller/tool/__init__.py
 from .open_app import app_launcher_service

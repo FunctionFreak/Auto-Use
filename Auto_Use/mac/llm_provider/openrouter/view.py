@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 # Model mappings for OpenRouter provider
 # Maps user-friendly names to actual API model names

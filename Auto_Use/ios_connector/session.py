@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 """Paired-device registry + WDA session toggle.
 
@@ -38,6 +38,28 @@ from pathlib import Path
 WDA_BUNDLE_ID = "com.autouse.WebDriverAgentRunner.xctrunner"
 WDA_PORT = 8100
 WDA_STATUS_URL = f"http://127.0.0.1:{WDA_PORT}/status"
+
+# Which iOS target the current process is driving — "hardware" (paired iPhone)
+# or "simulation" (sim_session). Whichever session activates last sets it;
+# tools that need non-WDA device access read it (open_app's installed-apps
+# scan picks pymobiledevice3 vs simctl from here).
+active_target = {"kind": "hardware", "udid": None}
+
+
+def wda_port() -> int:
+    """WDA port for THIS process. 8100 unless AUTOUSE_WDA_PORT says otherwise.
+
+    Parallel simulator tasks each get their own simulator + their own WDA, so
+    the parent hands every child process its port through the environment."""
+    try:
+        return int(os.environ.get("AUTOUSE_WDA_PORT") or WDA_PORT)
+    except (TypeError, ValueError):
+        return WDA_PORT
+
+
+def wda_url() -> str:
+    """Base URL of the WDA this process talks to (http://localhost:<port>)."""
+    return f"http://localhost:{wda_port()}"
 
 _IS_COMPILED = bool(getattr(sys, "frozen", False)) or ("__compiled__" in globals())
 
@@ -102,21 +124,36 @@ def is_paired(udid) -> bool:
 
 
 # ───────────────────────────── pymobiledevice3 ────────────────────────────────
+def _pmd3_candidates():
+    """Every place pymobiledevice3 can legitimately live, in priority order."""
+    root = Path(__file__).resolve().parents[2]   # <checkout>/Auto_Use/ios_connector/
+    out = []
+    override = os.environ.get("AUTOUSE_PMD3")
+    if override:
+        out.append(Path(override))
+    out.append(Path(sys.executable).parent / "pymobiledevice3")
+    # THE VENV THE SETUP SCRIPTS INSTALL INTO. Whoever launches the app decides
+    # sys.executable — a shell without the venv active, an IDE's interpreter,
+    # the venv's own base python — and none of that should make the tooling
+    # "missing" when it is sitting right here in the checkout.
+    for venv in (".venv", "venv", "env"):
+        out.append(root / venv / "bin" / "pymobiledevice3")
+    out.append(Path.home() / "Desktop" / "wda_setup" / "venv" / "bin" / "pymobiledevice3")
+    return out
+
+
 def _pmd3_base():
     """argv prefix that runs pymobiledevice3, or None. Forgiving search:
-    env override, next-to-executable, PATH, known dev venv, python -m."""
-    override = os.environ.get("AUTOUSE_PMD3")
-    if override and Path(override).exists():
-        return [override]
-    cand = Path(sys.executable).parent / "pymobiledevice3"
-    if cand.exists():
-        return [str(cand)]
+    env override, next-to-executable, the checkout's venv, PATH, dev venv, -m."""
+    for cand in _pmd3_candidates():
+        try:
+            if cand.exists():
+                return [str(cand)]
+        except OSError:
+            continue
     found = shutil.which("pymobiledevice3")
     if found:
         return [found]
-    dev = Path.home() / "Desktop" / "wda_setup" / "venv" / "bin" / "pymobiledevice3"
-    if dev.exists():
-        return [str(dev)]
     try:
         import pymobiledevice3  # noqa: F401
         return [sys.executable, "-m", "pymobiledevice3"]
@@ -196,9 +233,14 @@ class WDASession:
         """Fresh session for `udid` (default: newest paired device)."""
         base = _pmd3_base()
         if not base:
-            return {"ok": False, "state": "error",
+            # Name the interpreter: "not found" is almost always "found, but you
+            # launched the app with a different Python", and only this line says so.
+            return {"ok": False, "state": "error", "code": "no_pmd3",
                     "error": "pymobiledevice3 not found",
-                    "hint": "Pair a device in Settings first — that installs the tooling."}
+                    "hint": (f"running under {sys.executable} — looked beside it, in the "
+                             "checkout's .venv/, and on PATH. Install it with:  bash ios_setup.sh  "
+                             "or start the app with the venv's Python:  "
+                             "source .venv/bin/activate && python app.py")}
         if not udid:
             devs = paired_devices()
             if not devs:
@@ -206,11 +248,19 @@ class WDASession:
                         "error": "No paired device",
                         "hint": "Pair your iPhone in Settings → Connect Device."}
             udid = devs[0]["udid"]
+        active_target.update({"kind": "hardware", "udid": udid})
         with self._lock:
             if self._udid == udid and self._wda_up():
                 return {"ok": True, "state": "connected", "udid": udid}
             self._stop_locked()
             self._free_port()
+            if self._wda_up():
+                # Something else already serves WDA on the port (a leftover
+                # simulator session) — refuse rather than silently drive it.
+                return {"ok": False, "state": "error", "code": "port_busy",
+                        "error": f"Port {WDA_PORT} is already serving another WDA "
+                                 "(a simulator session?)",
+                        "hint": "Close it (quit Simulator / kill xcodebuild), then retry."}
             self._udid = udid
             env = dict(os.environ)
             env["PYMOBILEDEVICE3_UDID"] = udid
@@ -245,8 +295,12 @@ class WDASession:
             # That's what makes the "Automation Running" overlay vanish right
             # away — killing only the Mac-side processes leaves the phone
             # session lingering ~30s until testmanagerd times it out. The
-            # server drops the connection mid-response by design; any outcome
-            # is fine, the local kills below are the guarantee.
+            # request never returns: WDA frees its HTTP server while still
+            # replying, so the runner segfaults (a use-after-free in the
+            # vendored RoutingHTTPServer). On a phone that is invisible and the
+            # process was exiting anyway; the local kills below are the
+            # guarantee. The SIMULATOR path deliberately does NOT do this —
+            # there the same crash pops a macOS dialog (see sim_session.py).
             if self._udid is not None:
                 try:
                     urllib.request.urlopen(

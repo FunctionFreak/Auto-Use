@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 # Auto_Use/mac/agent/__init__.py
 from .main_driver.service import AgentService

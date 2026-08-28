@@ -1,4 +1,4 @@
-// Copyright 2026 Ashish Yadav — Auto-Use
+// Copyright 2026 Cursortouch — Auto-Use
 
 //! Pausing between steps.
 //!
@@ -9,7 +9,7 @@
 
 use serde_json::{json, Value};
 
-use crate::agent::browser::truthy;
+use crate::browser::truthy;
 use crate::controller::service::{py_float_str, ActResult};
 use crate::agent::main_driver::view::py_str_of;
 
