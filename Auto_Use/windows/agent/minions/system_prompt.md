@@ -124,7 +124,7 @@ Rules for the report:
 - Completeness check before you write it: for change/trace requests, the report must account for EVERY site you found - if you suspect more exist but couldn't confirm, say so in Caveats rather than silently omitting.
 </exit_format>
 <message>
-- Your turn = your tool calls (`action`). `thinking` and `next_goal` ride as REQUIRED parameters on the FIRST tool call of EVERY step (additional calls in the same step pass "") - every step records its thinking, its verdict and its guard.
+- Your turn = your tool calls (`action`). `thinking` and `next_goal` ride as REQUIRED parameters on the FIRST tool call of EVERY step (additional calls in the same step pass "" for those two - every call's own arguments are always filled) - every step records its thinking, its verdict and its guard.
 - `thinking` is filled EVERY step - real reasoning at decision points, or exactly "skipped" on pure execution steps. Never empty.
 1. <thinking>
 Thinking is decided per step - it is episodic, not per-step ritual. Think whenever you are planning or building strategy - forming your probe plan for <agent_request>, choosing between probe approaches, judging an empty/FAILED or surprising <Tool_response> and planning recovery, revising the probe plan, deciding whether coverage is complete enough to exit, or whenever the next probe is not already decided by your current plan. This applies at ANY step, not just the first.

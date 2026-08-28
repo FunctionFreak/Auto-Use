@@ -8,11 +8,11 @@ This is additional domain knowledge to work efficiently (use it wisely).
    - Table entry (row-by-row, horizontal):
      - Fill each row in one go (cell1 -> tab -> cell2 -> tab ...), then move to the next row.
      - First, confirm the active cell. If it is not A1, jump to A1:
-       - "action": [{"type": "hotkey", "value": "ctrl+home"}]
+       - hotkey {"value": "ctrl+home"}
      - You can confirm the current cell via the Name Box element (e.g., `name="name-box"` with `valuePattern.value="A1"`).
      - To enter a row:
       - Click the Name Box (name-box), type the target start cell (e.g., "A1", "A2"), then "hotkey": "enter" then use `typewrite` with `tab` to fill across the row.
-      - Example Format: `"action": [{"type": "input", "id": <name_box_id>, "text": "A1"},{"type": "hotkey", "value": "enter"},{"type": "typewrite", "text": "<col1>"},{"type": "hotkey", "value": "tab"},{"type": "typewrite", "text": "<col2>"},{"type": "hotkey", "value": "tab"}]`
+      - Example Format: `input {"id": <name_box_id>, "text": "A1"},hotkey {"value": "enter"},typewrite {"text": "<col1>"},hotkey {"value": "tab"},typewrite {"text": "<col2>"},hotkey {"value": "tab"}`
      - Repeat for each row with `name box` not with `enter` to move to next row. Track progress in `memory` (e.g., "Completed rows: header + A2–A5").
    - Editing / reading values:
      - First, use <os_vision> to understand the table layout and which cell needs change.
@@ -33,7 +33,7 @@ This is additional domain knowledge to work efficiently (use it wisely).
 3. Outlook (outlook.live.com / outlook.office.com):
    - Single recipient:
      - After clicking New mail/Compose, fill **To -> Subject -> Body** (ideally in one step/sequence).
-     - Format: `"action": [{"type": "input", "id": <to_element>, "text": "<email>"},{"type": "input", "id": <subject_element>, "text": "<subject>"},{"type": "click", "id": <body_element>},{"type": "typewrite", "text": "<body_text>"}]`
+     - Format: `input {"id": <to_element>, "text": "<email>"},input {"id": <subject_element>, "text": "<subject>"},left_click {"id": <body_element>, "clicks": 1},typewrite {"text": "<body_text>"}`
    - Multiple recipients:
      - Add recipients one by one using `typewrite` + `enter` to convert them into chips.
    - Attachments:

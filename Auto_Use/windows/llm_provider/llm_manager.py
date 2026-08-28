@@ -168,7 +168,7 @@ _MAIN_TRACK_PARAMS = {
 # spent on the action, which is the whole point of fast mode. Memory alone
 # carries the verdict and whatever the next step needs to know.
 _MAIN_TRACK_PARAMS_FAST = {
-    "memory": 'Your ONLY reasoning field: the verdict on what the last action did to the screen, plus the context the next step needs (app/screen state, resolved [id]s, key values). Keep it tight. Fill on the FIRST tool call of the step; pass "" on every additional call in the same step.',
+    "memory": 'Follow the <memory> rules - if the last action FAILED verification, open with one short clause naming the failure (skip it entirely when it passed). Then the context that matters next: current app/screen state, key ids used with their (name/type/valuePattern.value/active), and any tool name + purpose + important result. Then the forward plan: "Now: <immediate step> (ToDo: <task_name>). Plan: <next 2-3 steps>. Then: <very next step>." END with the predicted visible change of THIS step\'s action prefixed "Expect:", so the next step can verify against the new screenshot. 3-5 concise lines. Fill on the FIRST tool call of the step; pass "" on every additional call in the same step.',
 }
 
 
@@ -201,10 +201,10 @@ CODER_TOOLS = [
           r"""Any native PowerShell command.
 - Always include `input` parameter. Use `""` when no input needed. Use actual values when program requires user input (input(), Read-Host, prompts, etc.)
 - If a result returns `error: permission_dialog`, a Windows UAC / elevation prompt is blocking the command and couldn't be auto-clicked. Do NOT blindly retry — report it to the user and ask them to grant Auto Use the elevation it needs (run as administrator), then retry once they confirm.
-- Format: "action": [{"type": "shell", "command": "your_command", "input": ""}]
+- Format: shell {"command": "your_command", "input": ""}
 - Example:
-  1. "action": [{"type": "shell", "command": "tree /f", "input": ""}]
-  2. "action": [{"type": "shell", "command": "python calc.py", "input": "5\n10\n"}]"""),
+  1. shell {"command": "tree /f", "input": ""}
+  2. shell {"command": "python calc.py", "input": "5\n10\n"}"""),
 
     _tool("view", {"path": {"type": "string"},
                    "start": {"type": "integer"},
@@ -215,18 +215,18 @@ CODER_TOOLS = [
 - Whole-file mode caps at 2000 lines. If the file is larger, you'll get the first 2000 plus a footer showing the total line count — re-call with `start`/`end` to read other sections.
 - Files larger than 5 MB are refused. Use `grep` with `head_limit` instead.
 - Output line numbers reflect the file's real line numbers (e.g. `[400] line text` when you view starting at 400), so `write`/`replace` can use them directly without offset arithmetic.
-- Format: "action": [{"type": "view", "path": "file_path", "start": 0, "end": 0}]
+- Format: view {"path": "file_path", "start": 0, "end": 0}
 - Examples:
   1. Whole file (small):
-     "action": [{"type": "view", "path": "src/auth.py", "start": 0, "end": 0}]
+     view {"path": "src/auth.py", "start": 0, "end": 0}
   2. Section after a grep hit at line 412:
-     "action": [{"type": "view", "path": "src/auth.py", "start": 400, "end": 440}]
+     view {"path": "src/auth.py", "start": 400, "end": 440}
   3. Project file via absolute path:
-     "action": [{"type": "view", "path": "C:\\Users\\you\\projects\\app\\src\\main.py", "start": 0, "end": 0}]
+     view {"path": "C:\\Users\\you\\projects\\app\\src\\main.py", "start": 0, "end": 0}
   4. Pair pattern — grep first, then view a narrow range:
-     Step 1: "action": [{"type": "grep", "pattern": "process_request\\(", "path": "", "glob": "*.py", "output_mode": "content", "case_insensitive": false, "head_limit": 10, "context": 0}]
+     Step 1: grep {"pattern": "process_request\\(", "path": "", "glob": "*.py", "output_mode": "content", "case_insensitive": false, "head_limit": 10, "context": 0}
      (grep returns `Auto_Use\\windows\\agent\\cli\\service.py:233: ...`)
-     Step 2: "action": [{"type": "view", "path": "Auto_Use\\windows\\agent\\cli\\service.py", "start": 220, "end": 260}]"""),
+     Step 2: view {"path": "Auto_Use\\windows\\agent\\cli\\service.py", "start": 220, "end": 260}"""),
 
     _tool("grep", {"pattern": {"type": "string"},
                    "path": {"type": "string"},
@@ -244,16 +244,16 @@ CODER_TOOLS = [
   - `files_with_matches` — one path per line. Use to find which files to `view` next.
   - `count` — `path: N` per file (only files with N ≥ 1). Use for distribution / sanity checks.
 - Binary files, files larger than 8 MB, and lines longer than 200 chars are auto-skipped/truncated to keep output bounded.
-- Format: "action": [{"type": "grep", "pattern": "regex", "path": "dir_or_file", "glob": "*.py", "output_mode": "content", "case_insensitive": false, "head_limit": 50, "context": 0}]
+- Format: grep {"pattern": "regex", "path": "dir_or_file", "glob": "*.py", "output_mode": "content", "case_insensitive": false, "head_limit": 50, "context": 0}
 - Examples:
   1. Find callers of `process_request`:
-     "action": [{"type": "grep", "pattern": "process_request\\(", "path": "", "glob": "*.py", "output_mode": "content", "case_insensitive": false, "head_limit": 30, "context": 0}]
+     grep {"pattern": "process_request\\(", "path": "", "glob": "*.py", "output_mode": "content", "case_insensitive": false, "head_limit": 30, "context": 0}
   2. Files importing `requests`:
-     "action": [{"type": "grep", "pattern": "^import requests|^from requests", "path": "", "glob": "*.py", "output_mode": "files_with_matches", "case_insensitive": false, "head_limit": 100, "context": 0}]
+     grep {"pattern": "^import requests|^from requests", "path": "", "glob": "*.py", "output_mode": "files_with_matches", "case_insensitive": false, "head_limit": 100, "context": 0}
   3. Count TODOs case-insensitively:
-     "action": [{"type": "grep", "pattern": "TODO|FIXME", "path": "", "glob": "", "output_mode": "count", "case_insensitive": true, "head_limit": 50, "context": 0}]
+     grep {"pattern": "TODO|FIXME", "path": "", "glob": "", "output_mode": "count", "case_insensitive": true, "head_limit": 50, "context": 0}
   4. Match with surrounding lines:
-     "action": [{"type": "grep", "pattern": "raise ValueError", "path": "src", "glob": "*.py", "output_mode": "content", "case_insensitive": false, "head_limit": 20, "context": 2}]"""),
+     grep {"pattern": "raise ValueError", "path": "src", "glob": "*.py", "output_mode": "content", "case_insensitive": false, "head_limit": 20, "context": 2}"""),
 
     _tool("glob", {"pattern": {"type": "string"},
                    "path": {"type": "string"},
@@ -261,11 +261,11 @@ CODER_TOOLS = [
           r"""Find files by name pattern. Results are sorted newest-first (by modification time) so recently-edited files surface first.
 - All fields required. Use `path: ""` for sandbox cwd; raise `head_limit` when you need to see everything.
 - Like `grep`, `path` accepts both relative (sandbox-cwd-anchored) and absolute paths. To list files in a project elsewhere on disk, pass that project's absolute path. Returned paths are relative to the `path` you specified. Noise dirs (`venv`, `.git`, `node_modules`, etc.) are skipped.
-- Format: "action": [{"type": "glob", "pattern": "**/*.ext", "path": "base_dir", "head_limit": 100}]
+- Format: glob {"pattern": "**/*.ext", "path": "base_dir", "head_limit": 100}
 - Examples:
-  1. All Python files: "action": [{"type": "glob", "pattern": "**/*.py", "path": "", "head_limit": 200}]
-  2. Recently-changed YAML in configs/: "action": [{"type": "glob", "pattern": "**/*.yaml", "path": "configs", "head_limit": 20}]
-  3. Top-level test files: "action": [{"type": "glob", "pattern": "test_*.py", "path": "", "head_limit": 50}]"""),
+  1. All Python files: glob {"pattern": "**/*.py", "path": "", "head_limit": 200}
+  2. Recently-changed YAML in configs/: glob {"pattern": "**/*.yaml", "path": "configs", "head_limit": 20}
+  3. Top-level test files: glob {"pattern": "test_*.py", "path": "", "head_limit": 50}"""),
 
     _tool("write", {"path": {"type": "string"},
                     "line": {"type": "integer"},
@@ -278,11 +278,11 @@ CODER_TOOLS = [
   - Empty file: use `line: 1`.
   - Append at end: use the last line number shown by `view`.
   - Insert in the middle: use the exact line number where new content should begin.
-- Format: "action": [{"type": "write", "path": "file_path", "line": N, "content": "..."}]
+- Format: write {"path": "file_path", "line": N, "content": "..."}
 - Examples:
-  1. "action": [{"type": "write", "path": "scr/script.py", "line": 1, "content": "def add(a, b):\n    return a + b\n"}]
-  2. "action": [{"type": "write", "path": "src/script.py", "line": 11, "content": "def subtract(a, b):\n    return a - b\n"}]
-  3. "action": [{"type": "write", "path": "src/script.py", "line": 3, "content": "    print('calculating...')\n"}]"""),
+  1. write {"path": "scr/script.py", "line": 1, "content": "def add(a, b):\n    return a + b\n"}
+  2. write {"path": "src/script.py", "line": 11, "content": "def subtract(a, b):\n    return a - b\n"}
+  3. write {"path": "src/script.py", "line": 3, "content": "    print('calculating...')\n"}"""),
 
     _tool("replace", {"path": {"type": "string"},
                       "line": {"type": "integer"},
@@ -294,15 +294,15 @@ CODER_TOOLS = [
 - `old_block`: the exact block of code currently in the file (multi-line, must match precisely).
 - `new_block`: the replacement block (can be more or fewer lines than old_block).
 - Multiple `replace`s in one action are supported and safe — the controller validates `old_block` against the actual file content before writing, so any line drift fails loudly with a `mismatch at line X` error rather than corrupting the file. When batching same-file replaces, order them **bottom-up** (highest line first) so earlier replaces don't shift the line numbers below them. Replaces in different files are always safe to batch.
-- Format: "action": [{"type": "replace", "path": "file_path", "line": 5, "old_block": "line5\nline6\nline7", "new_block": "new_line5\nnew_line6"}]
+- Format: replace {"path": "file_path", "line": 5, "old_block": "line5\nline6\nline7", "new_block": "new_line5\nnew_line6"}
 - Example:
-  1. "action": [{"type": "replace", "path": "src/app.py", "line": 10, "old_block": "def add(a, b):\n    return a + b", "new_block": "def add(a, b):\n    result = a + b\n    print(result)\n    return result"}]"""),
+  1. replace {"path": "src/app.py", "line": 10, "old_block": "def add(a, b):\n    return a + b", "new_block": "def add(a, b):\n    result = a + b\n    print(result)\n    return result"}"""),
 
     _tool("web", {"value": {"type": "string"}},
           r"""Perform a web search across multiple sites automatically.
 - The result arrives ONCE, in the next step's <tool> block, and is NOT kept in your history — on that step, DIGEST it: write each finding you need later as its own `scratchpad` entry. Those entries are folded back into the web step's memory as its durable result; anything you don't record is gone.
-- Format: "action": [{"type": "web", "value": "query"}]
-- Example: "action": [{"type": "web", "value": "fetch the latest available LangChain package version for Groq to install"}]"""),
+- Format: web {"value": "query"}
+- Example: web {"value": "fetch the latest available LangChain package version for Groq to install"}"""),
 
     _tool("plan", {"op": {"type": "string", "enum": ["set", "add", "edit"]},
                    "from": {"type": "integer"},
@@ -315,12 +315,12 @@ CODER_TOOLS = [
 - Edit ranges always use the `[N]` line numbers from the LATEST <plan no="N"> in input — they shift after every op.
 - Write `value` as PLAIN content — never write your own line numbers or a revision marker; the `[N]` numbering and the `no="N"` revision are stamped automatically. The tool response is a bare `plan updated`; the refreshed, renumbered render is always present in the current step's <persistent_memory> as <plan no="N">.
 - CONTENT FORMAT: write a real structured document, NOT a flat numbered list. Use `#` / `##` markdown headings for sections (e.g. Goal, Findings, Steps, Verification), real newlines (`\n`) between lines, and indentation for sub-points. Put concrete `path:line` anchors inline. A bare "1) do X\n2) do Y" is wrong — that's a ToDo, not a plan.
-- Format: "action": [{"type": "plan", "op": "set", "from": 0, "to": 0, "value": "..."}]
+- Format: plan {"op": "set", "from": 0, "to": 0, "value": "..."}
 - Examples:
   1. Full plan (note the headings, newlines, indentation, and inline anchors):
-     "action": [{"type": "plan", "op": "set", "from": 0, "to": 0, "value": "# Goal\nSwitch the scratchpad cache to an LRU so it stops growing unbounded.\n\n# Findings\n- Cache write lives at service.py:233 (plain dict).\n- Callers: api.py:41, worker.py:88.\n\n# Steps\n## 1. Replace the cache impl\n- service.py:233 — swap dict for functools.lru_cache-backed store.\n## 2. Update callers\n- api.py:41 — adjust call to new signature.\n- worker.py:88 — same.\n\n# Verification\n- .\\.autouse_verify\\test_cache.py — 6 cases incl. empty input + eviction."}]
-  2. Append a section: "action": [{"type": "plan", "op": "add", "from": 0, "to": 0, "value": "\n# Follow-up\n- Migrate config flag — settings.py:12."}]
-  3. Surgical edit (replace the two lines under Update callers): "action": [{"type": "plan", "op": "edit", "from": 12, "to": 13, "value": "- api.py:41 — adjust call to new signature.\n- worker.py:88 — already uses the new signature; no change needed."}]"""),
+     plan {"op": "set", "from": 0, "to": 0, "value": "# Goal\nSwitch the scratchpad cache to an LRU so it stops growing unbounded.\n\n# Findings\n- Cache write lives at service.py:233 (plain dict).\n- Callers: api.py:41, worker.py:88.\n\n# Steps\n## 1. Replace the cache impl\n- service.py:233 — swap dict for functools.lru_cache-backed store.\n## 2. Update callers\n- api.py:41 — adjust call to new signature.\n- worker.py:88 — same.\n\n# Verification\n- .\\.autouse_verify\\test_cache.py — 6 cases incl. empty input + eviction."}
+  2. Append a section: plan {"op": "add", "from": 0, "to": 0, "value": "\n# Follow-up\n- Migrate config flag — settings.py:12."}
+  3. Surgical edit (replace the two lines under Update callers): plan {"op": "edit", "from": 12, "to": 13, "value": "- api.py:41 — adjust call to new signature.\n- worker.py:88 — already uses the new signature; no change needed."}"""),
 
     _tool("todo_list", {"value": {"type": "string"}},
           r"""Create the tracking to-do list, derived from the plan.
@@ -329,19 +329,19 @@ CODER_TOOLS = [
   - Right after minions report: think → write the plan (`plan` op set) from `<user_request>` + minion findings (ignore typos) → then write the ToDo from that plan.
 - `todo_list` OVERWRITES and re-numbers the whole list. So write it ONCE (right after the plan), before completing any items; after that, advance it with `update_todo` only. Small plan revisions (add/edit) usually need NO ToDo change — re-issue `todo_list` only if the task list itself genuinely re-scopes, and then re-mark items already done.
 - Tasks are auto-numbered as #1, #2, #3, etc. when saved.
-- Format: "action": [{"type": "todo_list", "value": "Objective: <corrected_user_request>\n- [ ] <task naming file/approach>\n- [ ] <task 2>"}]"""),
+- Format: todo_list {"value": "Objective: <corrected_user_request>\n- [ ] <task naming file/approach>\n- [ ] <task 2>"}"""),
 
     _tool("update_todo", {"value": {"type": "string"}},
           r"""Only update once cross verfied thoroughly. Mark a ToDo item complete by providing its #number.
-- Update only after the task is confirmed complete; mark one item at a time.
+- Update only after the task is confirmed complete; mark one item per call.
 - Provide only the task number to mark complete.
-- Format: "action": [{"type": "update_todo", "value": "task number #x"}]
-- Example: "action": [{"type": "update_todo", "value": "2"}]"""),
+- Format: update_todo {"value": "task number #x"}
+- Example: update_todo {"value": "2"}"""),
 
     _tool("wait", {"value": {"type": "string"}},
           r"""Pause the pipeline for x seconds.
-- Format: "action": [{"type": "wait", "value": "2"}]
-- Example: "action": [{"type": "wait", "value": "2"}]"""),
+- Format: wait {"value": "2"}
+- Example: wait {"value": "2"}"""),
 
     _tool("scratchpad", {"value": {"type": "string"}},
           r"""Your durable note store — verified checkpoints AND any key fact you may need later. Write an entry immediately after something is confirmed. If multiple facts are confirmed in one step, emit one separate `scratchpad` call per fact.
@@ -355,26 +355,26 @@ CODER_TOOLS = [
   - exact file save paths + filenames (especially "Save As" / PDF exports)
 - `value` is ONE line — a single verified note. Don't batch several facts into one entry.
 - Write `value` in Markdown — inline only (`**bold**`, backticks, links), never a line break.
-- Format: "action": [{"type": "scratchpad", "value": "<one-line verified note in markdown format>"}]
+- Format: scratchpad {"value": "<one-line verified note in markdown format>"}
 - Examples:
-  1. "action": [{"type": "scratchpad", "value": "**Done:** fixed all indentation errors in `app.py`"}]
-  2. "action": [{"type": "scratchpad", "value": "**Key metric:** Disney+ revenue (Q3 2025) = **$2.1 Billion**"}]
+  1. scratchpad {"value": "**Done:** fixed all indentation errors in `app.py`"}
+  2. scratchpad {"value": "**Key metric:** Disney+ revenue (Q3 2025) = **$2.1 Billion**"}
   3. Two facts confirmed in one step — two separate calls:
-     "action": [{"type": "scratchpad", "value": "**Verified:** parser handles empty input — **6/6** cases pass"}, {"type": "scratchpad", "value": "**Saved:** report exported to `C:\\Users\\me\\Desktop\\q3_report.pdf`"}]"""),
+     scratchpad {"value": "**Verified:** parser handles empty input — **6/6** cases pass"}, scratchpad {"value": "**Saved:** report exported to `C:\\Users\\me\\Desktop\\q3_report.pdf`"}"""),
 
     _tool("minion", {"value": {"type": "string"}},
           r"""Read-only scout. **Don't explore the codebase yourself — send a minion.** It explores the filesystem, traces cross-file connections, and returns ONE structured summary anchored to `path:line`. You never see the intermediate reads — your context stays clean for editing.
 - **Rule**: minion handles exploration + connection-tracing. You handle editing (`write`/`replace`).
 - **When to send one (any of these → minion, not your own reading):** you need to understand code before editing it; you'd otherwise grep/glob/view more than ~2 times; you're tracing a symbol / caller / dependency across files; or you're mapping an unfamiliar directory. Your own `grep`/`view` are for quick re-checks of something a minion already surfaced — not first-time exploration.
 - **Phrase the value as a question or objective — NEVER as instructions about which tools to use.** The minion is self-capable and picks its own tools internally. Do NOT write things like "use grep…" / "use shell…" / "use glob…" / "use view…" — just say what you want to know. The minion will figure out how to find it.
-- Format: "action": [{"type": "minion", "value": "<self-contained question a fresh agent can act on>"}]
+- Format: minion {"value": "<self-contained question a fresh agent can act on>"}
 - Multiple minions in one action run in parallel; your loop pauses until all return as `<minion_completed>` blocks.
 - **Trust the summary.** Don't re-read files yourself unless the summary is explicitly incomplete. The minion cannot edit — once you have its report, apply the change.
 - Good examples (state what you want, not how to get it):
-  1. "action": [{"type": "minion", "value": "find every caller of _read_scratchpad_from_file — exact path:line for each."}]
-  2. "action": [{"type": "minion", "value": "list all imports of ScratchpadService under Auto_Use/windows/ with line numbers + direct usages."}]
-  3. "action": [{"type": "minion", "value": "give me a list of all files and directories under C:\\Users\\me\\Downloads with a one-line summary of each."}]
-  4. Parallel: "action": [{"type": "minion", "value": "Q1..."}, {"type": "minion", "value": "Q2..."}, {"type": "minion", "value": "Q3..."}]
+  1. minion {"value": "find every caller of _read_scratchpad_from_file — exact path:line for each."}
+  2. minion {"value": "list all imports of ScratchpadService under Auto_Use/windows/ with line numbers + direct usages."}
+  3. minion {"value": "give me a list of all files and directories under C:\\Users\\me\\Downloads with a one-line summary of each."}
+  4. Parallel: minion {"value": "Q1..."}, minion {"value": "Q2..."}, minion {"value": "Q3..."}
 - Anti-pattern (do NOT write): `"Please use the shell or glob tool to list all files in X"` — you ASK what you need; the minion picks what to RUN. Correct version: `"give me a list of all files in X"`."""),
 
     _tool("exit", {"value": {"type": "string"}},
@@ -385,7 +385,7 @@ CODER_TOOLS = [
   - Step 1 (no `exit`): confirm <verification> passed with concrete proof and ALL throwaway check files (`.\.autouse_verify\`) are deleted; finish/cleanup + update ToDos/scratchpad.
   - Step 2: call `exit` — the only call in its turn.
 - Write `value` in Markdown — headings, `-` bullets, `**bold**`, backticks and fenced code blocks as the summary needs them.
-- Format: "action": [{"type": "exit", "value": "<end-to-end summary in markdown format>"}]"""),
+- Format: exit {"value": "<end-to-end summary in markdown format>"}"""),
 ]
 
 # MINION TOOLS — the minion's read-only subset (shell/view/grep/glob/
@@ -397,16 +397,16 @@ MINION_TOOLS = [
                     "input": {"type": "string"}},
           r"""Native PowerShell - **READ-ONLY commands only** (e.g. `Get-ChildItem`, `tree /f`, `Test-Path`, `Get-Item`, `Select-String -SimpleMatch -List`). Never run anything that writes, deletes, moves, or otherwise mutates state. Always include `input: ""`.
 - If a result returns `error: permission_dialog`, a Windows UAC / elevation prompt blocked the command and couldn't be auto-clicked. Don't retry blindly - note it in your final report (the parent agent needs to run Auto Use with the elevation it requires) and continue with what you can.
-- Format: "action": [{"type": "shell", "command": "your_command", "input": ""}]
+- Format: shell {"command": "your_command", "input": ""}
 - Allowed examples:
-  1. "action": [{"type": "shell", "command": "tree /f", "input": ""}]
-  2. "action": [{"type": "shell", "command": "Get-ChildItem -Recurse -Filter *.py | Select-Object -First 20", "input": ""}]
-  3. "action": [{"type": "shell", "command": "Get-ChildItem -Recurse -Depth 2 -Directory", "input": ""}]
+  1. shell {"command": "tree /f", "input": ""}
+  2. shell {"command": "Get-ChildItem -Recurse -Filter *.py | Select-Object -First 20", "input": ""}
+  3. shell {"command": "Get-ChildItem -Recurse -Depth 2 -Directory", "input": ""}
 - **Forbidden** (do NOT emit - these mutate state):
-  1. "action": [{"type": "shell", "command": "Set-Content ...", "input": ""}]
-  2. "action": [{"type": "shell", "command": "Remove-Item ...", "input": ""}]
-  3. "action": [{"type": "shell", "command": "echo hi > a.txt", "input": ""}]
-  4. "action": [{"type": "shell", "command": "New-Item ...", "input": ""}]"""),
+  1. shell {"command": "Set-Content ...", "input": ""}
+  2. shell {"command": "Remove-Item ...", "input": ""}
+  3. shell {"command": "echo hi > a.txt", "input": ""}
+  4. shell {"command": "New-Item ...", "input": ""}"""),
 
     _tool("view", {"path": {"type": "string"},
                    "start": {"type": "integer"},
@@ -417,18 +417,18 @@ MINION_TOOLS = [
 - Whole-file mode caps at 2000 lines. If the file is larger, you'll get the first 2000 plus a footer showing the total line count - re-call with `start`/`end` to read other sections.
 - Files larger than 5 MB are refused. Use `grep` with `head_limit` instead.
 - Output line numbers reflect the file's real line numbers (e.g. `[400] line text` when you view starting at 400) - quote them exactly in your final report.
-- Format: "action": [{"type": "view", "path": "file_path", "start": 0, "end": 0}]
+- Format: view {"path": "file_path", "start": 0, "end": 0}
 - Examples:
   1. Whole file (small):
-     "action": [{"type": "view", "path": "src/auth.py", "start": 0, "end": 0}]
+     view {"path": "src/auth.py", "start": 0, "end": 0}
   2. Section after a grep hit at line 412:
-     "action": [{"type": "view", "path": "src/auth.py", "start": 400, "end": 440}]
+     view {"path": "src/auth.py", "start": 400, "end": 440}
   3. Project file via absolute path:
-     "action": [{"type": "view", "path": "C:\\Users\\you\\projects\\app\\src\\main.py", "start": 0, "end": 0}]
+     view {"path": "C:\\Users\\you\\projects\\app\\src\\main.py", "start": 0, "end": 0}
   4. Pair pattern - grep first, then view a narrow range:
-     Step 1: "action": [{"type": "grep", "pattern": "process_request\\(", "path": "", "glob": "*.py", "output_mode": "content", "case_insensitive": false, "head_limit": 10, "context": 0}]
+     Step 1: grep {"pattern": "process_request\\(", "path": "", "glob": "*.py", "output_mode": "content", "case_insensitive": false, "head_limit": 10, "context": 0}
      (grep returns `Auto_Use\\windows\\agent\\cli\\service.py:233: ...`)
-     Step 2: "action": [{"type": "view", "path": "Auto_Use\\windows\\agent\\cli\\service.py", "start": 220, "end": 260}]"""),
+     Step 2: view {"path": "Auto_Use\\windows\\agent\\cli\\service.py", "start": 220, "end": 260}"""),
 
     _tool("grep", {"pattern": {"type": "string"},
                    "path": {"type": "string"},
@@ -446,16 +446,16 @@ MINION_TOOLS = [
   - `content` - `path:line: matching_text` (default; use when you want to read matches)
   - `files_with_matches` - list of paths only (use to find which files to view next)
   - `count` - `path: N` per file (use for distribution / sanity check)
-- Format: "action": [{"type": "grep", "pattern": "regex", "path": "dir_or_file", "glob": "*.py", "output_mode": "content", "case_insensitive": false, "head_limit": 50, "context": 0}]
+- Format: grep {"pattern": "regex", "path": "dir_or_file", "glob": "*.py", "output_mode": "content", "case_insensitive": false, "head_limit": 50, "context": 0}
 - Examples:
   1. Find callers of `process_request`:
-     "action": [{"type": "grep", "pattern": "process_request\\(", "path": "", "glob": "*.py", "output_mode": "content", "case_insensitive": false, "head_limit": 30, "context": 0}]
+     grep {"pattern": "process_request\\(", "path": "", "glob": "*.py", "output_mode": "content", "case_insensitive": false, "head_limit": 30, "context": 0}
   2. Files importing `requests`:
-     "action": [{"type": "grep", "pattern": "^import requests|^from requests", "path": "", "glob": "*.py", "output_mode": "files_with_matches", "case_insensitive": false, "head_limit": 100, "context": 0}]
+     grep {"pattern": "^import requests|^from requests", "path": "", "glob": "*.py", "output_mode": "files_with_matches", "case_insensitive": false, "head_limit": 100, "context": 0}
   3. Count TODOs case-insensitively:
-     "action": [{"type": "grep", "pattern": "TODO|FIXME", "path": "", "glob": "", "output_mode": "count", "case_insensitive": true, "head_limit": 50, "context": 0}]
+     grep {"pattern": "TODO|FIXME", "path": "", "glob": "", "output_mode": "count", "case_insensitive": true, "head_limit": 50, "context": 0}
   4. Match with surrounding lines:
-     "action": [{"type": "grep", "pattern": "raise ValueError", "path": "src", "glob": "*.py", "output_mode": "content", "case_insensitive": false, "head_limit": 20, "context": 2}]
+     grep {"pattern": "raise ValueError", "path": "src", "glob": "*.py", "output_mode": "content", "case_insensitive": false, "head_limit": 20, "context": 2}
 - Tactics for coverage: anchor on the definition first (`def `/`class `/`function `/`=` shapes) then widen to bare usages; if a symbol might be imported under an alias, also grep `import.*<name>` and `as <alias>`; if a first pattern returns nothing, broaden (drop the `(`, make it case-insensitive, widen the path/glob) rather than concluding it's absent."""),
 
     _tool("glob", {"pattern": {"type": "string"},
@@ -464,11 +464,11 @@ MINION_TOOLS = [
           r"""Find files by name pattern. Results are sorted newest-first (by modification time) so recently-edited files surface first.
 - All fields required. Use `path: ""` for sandbox cwd; raise `head_limit` when you need to see everything.
 - Like `grep`, `path` accepts both relative and absolute paths. Returned paths are relative to the `path` you specified. Noise dirs (`venv`, `.git`, `node_modules`, etc.) are skipped.
-- Format: "action": [{"type": "glob", "pattern": "**/*.ext", "path": "base_dir", "head_limit": 100}]
+- Format: glob {"pattern": "**/*.ext", "path": "base_dir", "head_limit": 100}
 - Examples:
-  1. All Python files: "action": [{"type": "glob", "pattern": "**/*.py", "path": "", "head_limit": 200}]
-  2. Recently-changed YAML in configs/: "action": [{"type": "glob", "pattern": "**/*.yaml", "path": "configs", "head_limit": 20}]
-  3. Top-level test files: "action": [{"type": "glob", "pattern": "test_*.py", "path": "", "head_limit": 50}]"""),
+  1. All Python files: glob {"pattern": "**/*.py", "path": "", "head_limit": 200}
+  2. Recently-changed YAML in configs/: glob {"pattern": "**/*.yaml", "path": "configs", "head_limit": 20}
+  3. Top-level test files: glob {"pattern": "test_*.py", "path": "", "head_limit": 50}"""),
 
     _tool("scratchpad", {"value": {"type": "string"}},
           r"""Your durable note store while exploring. Every verified finding goes here immediately so the final exit report can be assembled from it without re-reading files.
@@ -481,16 +481,16 @@ MINION_TOOLS = [
   - exact code snippets you want to quote in the report (also note the file's language/extension so the fence tag - e.g. ```python - is ready at exit time)
   - open questions you still need to answer before exit
 - Write `value` in Markdown — inline only (`**bold**`, backticks around `path:line` and symbols), never a line break.
-- Format: "action": [{"type": "scratchpad", "value": "<one-line verified note in markdown format>"}]
+- Format: scratchpad {"value": "<one-line verified note in markdown format>"}
 - Examples:
-  1. "action": [{"type": "scratchpad", "value": "`Auto_Use/windows/agent/service.py:254` — `_read_scratchpad_from_file` definition"}]
-  2. "action": [{"type": "scratchpad", "value": "`Auto_Use/windows/controller/view.py:620` — `action_type == \"scratchpad\"` routing branch"}]
-  3. "action": [{"type": "scratchpad", "value": "**Still to verify:** any other callers of `_read_scratchpad_from_file` outside `agent/service.py`"}]"""),
+  1. scratchpad {"value": "`Auto_Use/windows/agent/service.py:254` — `_read_scratchpad_from_file` definition"}
+  2. scratchpad {"value": "`Auto_Use/windows/controller/view.py:620` — `action_type == \"scratchpad\"` routing branch"}
+  3. scratchpad {"value": "**Still to verify:** any other callers of `_read_scratchpad_from_file` outside `agent/service.py`"}"""),
 
     _tool("exit", {"value": {"type": "string"}},
           r"""Deliver your final findings report to the parent CLI agent and end the loop. **This is the only way to terminate.** The `value` must follow the `<exit_format>` template.
 - Write `value` in Markdown — headings, `-` bullets, `**bold**`, backticks and fenced code blocks as the report needs them.
-- Format: "action": [{"type": "exit", "value": "<structured report in markdown format>"}]
+- Format: exit {"value": "<structured report in markdown format>"}
 - Must be a standalone action - no other tool calls in the same step."""),
 ]
 
@@ -591,65 +591,65 @@ def _main_tools(track: dict) -> list:
         _tool("open_app", {"value": {"type": "string"}},
               'Open an installed application. No manual search required within the OS. If the app is already running, its existing window is brought to the foreground (restored if minimized) instead of launching a duplicate instance - the result reports mode "focused" vs "launched".\n'
               '    1. Requirement: after "launched", call wait 3 seconds to allow loading; after "focused" the UI is already loaded, a 1-second wait is enough.\n'
-              '    3. Example: {"type": "open_app", "value": "spotify"}', track=track),
+              '    3. Example: open_app {"value": "spotify"}', track=track),
         _tool("wait", {"value": {"type": "string"}},
               'Pause execution to allow UI loading or to trigger a fresh screen scan.\n'
-              '    2. Example: {"type": "wait", "value": "2"}', track=track),
+              '    2. Example: wait {"value": "2"}', track=track),
         _tool("web", {"value": {"type": "string"}},
               'Delegate to a specialized AI to fetch real-time information and provide data at runtime. Use this for speed instead of manual browsing.\n'
-              '    2. Example: {"type": "web", "value": "financial result of nvidia Q4 2025"}', track=track),
+              '    2. Example: web {"value": "financial result of nvidia Q4 2025"}', track=track),
         _tool("cli_agent", {"value": {"type": "string"}},
               'Delegate a task to the CLI agent.\n'
-              '    1. Format: {"type": "cli_agent", "value": "instruction"}', track=track),
+              '    1. Format: cli_agent {"value": "instruction"}', track=track),
         _tool("cli_await", {"value": {"type": "string"}},
               'Hold pipeline until CLI agent finishes (use only for strict dependencies).\n'
-              '    1. Format: {"type": "cli_await", "value": "Reason"}', track=track),
+              '    1. Format: cli_await {"value": "Reason"}', track=track),
         _tool("shell", {"value": {"type": "string"}},
               'Run a PowerShell command for fast execution to achieve the goal.\n'
-              '    1. Example: {"type": "shell", "value": "Clear-RecycleBin -Force"}', track=track),
+              '    1. Example: shell {"value": "Clear-RecycleBin -Force"}', track=track),
         _tool("todo_list", {"value": {"type": "string"}},
               'Create the ToDo task list (iteration 1 by default; you may also create/expand it later if complexity emerges). See <todo_capability>.\n'
-              '    Format: {"type":"todo_list","value":"Objective: <goal>\\n- [ ] task_1\\n- [ ] task_2"} (auto-numbered).', track=track),
+              '    Format: todo_list {"value":"Objective: <goal>\\n- [ ] task_1\\n- [ ] task_2"} (auto-numbered).', track=track),
         _tool("update_todo", {"value": {"type": "string"}},
               'Tasks are auto-numbered #1, #2, #3, etc. when saved.\n'
-              '    1. Update (only after confirmed complete via <agent_history> and the effect is visible in the latest input - image or any relevant tag; one item at a time)\n'
-              '    2. Example: {"type": "update_todo", "value": "1"}', track=track),
+              '    1. Update (only after confirmed complete via <agent_history> and the effect is visible in the latest input - image or any relevant tag; one item per call)\n'
+              '    2. Example: update_todo {"value": "1"}', track=track),
         _tool("scratchpad", {"value": {"type": "string"}},
               'Record a verified checkpoint or any critical fact (file path, metric, finding). Follow <scratchpad> rules.\n'
               '    1. Write `value` in Markdown - inline only (`**bold**`, backticks), never a line break.\n'
-              '    2. Example: {"type": "scratchpad", "value": "**Key metric:** Disney+ revenue (Q3 2025) = **$2.1B**"}', track=track),
+              '    2. Example: scratchpad {"value": "**Key metric:** Disney+ revenue (Q3 2025) = **$2.1B**"}', track=track),
         _tool("left_click", {"id": {"type": "integer"}, "clicks": {"type": "integer"}},
               'left mouse click. clicks=1: single click, clicks=2: double click (open files/folders), clicks=3: triple click (OCR_TEXT).\n'
-              '    1. Example: {"type": "left_click", "id": 8, "clicks": 2}\n'
-              '    2. Sequence example: [{"type": "left_click", "id": 9, "clicks": 1}, {"type": "left_click", "id": 10, "clicks": 1}]', track=track),
+              '    1. Example: left_click {"id": 8, "clicks": 2}\n'
+              '    2. Sequence example: left_click {"id": 9, "clicks": 1}, left_click {"id": 10, "clicks": 1}', track=track),
         _tool("right_click", {"id": {"type": "integer"}, "clicks": {"type": "integer"}},
               'right mouse click, open context menu/options.\n'
-              '    1. Example: {"type": "right_click", "id": 9 , "clicks": 1}', track=track),
+              '    1. Example: right_click {"id": 9 , "clicks": 1}', track=track),
         _tool("input", {"id": {"type": "integer"}, "text": {"type": "string"}},
               'type into an element.\n'
-              '    1. Example: {"type": "input", "id": 9, "text": "hi, how are you"}', track=track),
+              '    1. Example: input {"id": 9, "text": "hi, how are you"}', track=track),
         _tool("typewrite", {"text": {"type": "string"}},
               'type into the currently focused area when no element is available.\n'
               '    1. Does not auto-delete; use backspace if needed.\n'
-              '    2. Example: {"type": "typewrite", "text": "hi, how are you"}', track=track),
+              '    2. Example: typewrite {"text": "hi, how are you"}', track=track),
         _tool("scroll", {"id": {"type": "integer"}, "direction": {"type": "string"}},
               'scroll an element in a direction (`up/down/left/right`).\n'
-              '    1. Example: {"type": "scroll", "id": 9, "direction": "up"}', track=track),
+              '    1. Example: scroll {"id": 9, "direction": "up"}', track=track),
         _tool("hotkey", {"value": {"type": "string"}},
               'OS hotkeys (max 3 keys pairs). Applies to `<Front_screen>`.\n'
               '    1. Use only for OS-level shortcut combinations (e.g., `ctrl+c`, `alt+f4`, `win+down`).\n'
               '    2. Examples:\n'
-              '        1. {"type": "hotkey", "value": "enter"}\n'
-              '        2. {"type": "hotkey", "value": "ctrl+shift+s"}', track=track),
+              '        1. hotkey {"value": "enter"}\n'
+              '        2. hotkey {"value": "ctrl+shift+s"}', track=track),
         _tool("screenshot", {"id": {"type": "integer"}, "clicks": {"type": "integer"}},
               'Capture a UI element part as an image and copy it to the clipboard for pasting elsewhere.\n'
               '    1. It takes a screenshot without annotation, so do not trigger it to capture the magenta element number.\n'
               '    2. Image is ready to paste with ctrl+v. The clicks field is a dummy (always 1).\n'
-              '    3. Example: {"type": "screenshot", "id": 15, "clicks": 1}', track=track),
+              '    3. Example: screenshot {"id": 15, "clicks": 1}', track=track),
         _tool("done", {"value": {"type": "string"}},
               'Use `done` as a dedicated final step only, after reviewing <agent_history> to confirm every requested task is finished and doing a final visual verification from the latest image.\n'
               '    1. Step 1 (no `done`): finish/cleanup + update ToDos/scratchpad.\n'
-              '    2. Step 2: output ONLY Format: {"type": "done", "value": "<end-to-end summary in markdown format>"}\n'
+              '    2. Step 2: output ONLY Format: done {"value": "<end-to-end summary in markdown format>"}\n'
               '    3. Write `value` in Markdown - headings, `-` bullets, `**bold**`, backticks and fenced code blocks as the summary needs them.\n'
               '    4. Never combine `done` with any other action/tool in the same step.', track=track),
     ]

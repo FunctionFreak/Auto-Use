@@ -90,24 +90,24 @@ fn main_tools(track: &[(String, String)]) -> Vec<Value> {
     vec![
         tool("new_tab", &[("value", json!({"type": "string"}))],
              r#"Open a new browser tab. ALWAYS recommended when the current tab already holds task-relevant content - never hijack an occupied tab; check <all_tabs> first.
-  1. Format: {"type": "new_tab", "value": "<url_or_empty>"} - keep value "" to open a blank tab when the destination url is unknown.
+  1. Format: new_tab {"value": "<url_or_empty>"} - keep value "" to open a blank tab when the destination url is unknown.
   2. Examples:
-    1. {"type": "new_tab", "value": "https://www.amazon.com"}
-    2. {"type": "new_tab", "value": ""} - a blank tab, for when the destination url is not known yet
+    1. new_tab {"value": "https://www.amazon.com"}
+    2. new_tab {"value": ""} - a blank tab, for when the destination url is not known yet
   3. A page landing in a new tab is a NEW SURFACE: survey before routing deep (see <thinking>)."#, track),
 
         tool("switch_tab", &[("id", json!({"type": "integer"}))],
              r#"Switch to a tab that is already open, making it current so the next scan and every following action land on it.
-  1. Format: {"type": "switch_tab", "id": <n_from_all_tabs>}
-  2. Example: {"type": "switch_tab", "id": 2}
+  1. Format: switch_tab {"id": <n_from_all_tabs>}
+  2. Example: switch_tab {"id": 2}
   3. `id` is the [n] from <all_tabs>, NOT an [id] from <element_tree>. They are separate numberings that both look like small integers.
   4. Prefer this over re-opening a page you already have: switching keeps that tab's session, scroll position and half-filled forms, while a fresh new_tab throws all of it away.
   5. The tab you land on is a NEW SURFACE: survey before routing deep (see <thinking>)."#, track),
 
         tool("close_tab", &[("id", json!({"type": "integer"}))],
              r#"Close a tab that is open, removing it from <all_tabs>. Everything it held - session, scroll position, half-filled forms - is gone for good.
-  1. Format: {"type": "close_tab", "id": <n_from_all_tabs>}
-  2. Example: {"type": "close_tab", "id": 3}
+  1. Format: close_tab {"id": <n_from_all_tabs>}
+  2. Example: close_tab {"id": 3}
   3. `id` is the [n] from <all_tabs>, NOT an [id] from <element_tree>.
   4. Use it to tidy up a tab whose job is finished. NEVER close a tab that still holds task-relevant state; if in doubt, leave it open - an extra tab costs nothing, a closed one cannot be reopened.
   5. Closing the CURRENT tab moves you to a neighbouring tab. The LAST remaining tab cannot be closed - the action FAILS and says so; navigate it with `update_tab` instead.
@@ -115,18 +115,18 @@ fn main_tools(track: &[(String, String)]) -> Vec<Value> {
 
         tool("update_tab", &[("value", json!({"type": "string"}))],
              r#"Navigate the CURRENT tab to a url, replacing whatever it is showing. Same tab, new page - nothing is opened and nothing is closed.
-  1. Format: {"type": "update_tab", "value": "<url>"}
-  2. Example: {"type": "update_tab", "value": "https://www.wikipedia.org"}
+  1. Format: update_tab {"value": "<url>"}
+  2. Example: update_tab {"value": "https://www.wikipedia.org"}
   3. Use it when the current page has served its purpose and the tab can be reused: undoing a wrong turn, following a url you can construct directly, or leaving a redirect you did not want.
   4. NOT for a page you still need - that is `new_tab`, which leaves this one open. And never type a url into the browser's address bar or a new-tab search box: those are browser chrome, not page elements, so they carry no [id] and typing there is not a page interaction. `update_tab` is how you navigate.
   5. The page that loads is a NEW SURFACE: survey before routing deep (see <thinking>)."#, track),
 
         tool("navigate_tab", &[("value", json!({"type": "string", "enum": ["back", "forward", "reload"]}))],
              r#"Move the CURRENT tab without naming a destination - step through its history, or re-request the page it is on. Same tab throughout.
-  1. Format: {"type": "navigate_tab", "value": "<back|forward|reload>"}
+  1. Format: navigate_tab {"value": "<back|forward|reload>"}
   2. Examples:
-    1. {"type": "navigate_tab", "value": "back"} - return to the previous page, e.g. from a product page to the results you opened it from
-    2. {"type": "navigate_tab", "value": "reload"} - re-request the same url for a fresh copy of the page
+    1. navigate_tab {"value": "back"} - return to the previous page, e.g. from a product page to the results you opened it from
+    2. navigate_tab {"value": "reload"} - re-request the same url for a fresh copy of the page
   3. "back" undoes a wrong turn while keeping the page you came from intact - the results list, its scroll position and its filters are all still there, which re-searching would throw away. Prefer it over rebuilding a page you already had.
   4. "forward" only exists after a "back": it returns to the page you left.
   5. "reload" is for a page that is stuck or stale: a spinner that never resolved, a list that did not update after your action, a transient error page. It is NOT a verification step - it discards unsaved form input and closes any open dialog, so read the page first and reload only when a fresh load is genuinely what you need.
@@ -135,41 +135,41 @@ fn main_tools(track: &[(String, String)]) -> Vec<Value> {
 
         tool("click", &[("id", json!({"type": "integer"})), ("times", json!({"type": "integer"}))],
              r#"Single click on an interactable element (default click, nothing more).
-  1. Format: {"type": "click", "id": <id_from_element_tree>, "times": <1_or_2>}
+  1. Format: click {"id": <id_from_element_tree>, "times": <1_or_2>}
   2. Positive examples:
-    1. {"type": "click", "id": 19, "times": 1} - a normal single click
-    2. {"type": "click", "id": 7, "times": 2} - a DOUBLE click on the same element
+    1. click {"id": 19, "times": 1} - a normal single click
+    2. click {"id": 7, "times": 2} - a DOUBLE click on the same element
   3. Negative examples (NEVER emit these):
-    1. {"type": "click", "id": 0, "times": 1} - WRONG: 0 is not a real element id; always use an [id] from the current <element_tree>
-    2. {"type": "click", "id": 19, "times": 3} - WRONG: `times` above 2 is meaningless; use 1, or 2 for a double click
+    1. click {"id": 0, "times": 1} - WRONG: 0 is not a real element id; always use an [id] from the current <element_tree>
+    2. click {"id": 19, "times": 3} - WRONG: `times` above 2 is meaningless; use 1, or 2 for a double click
   4. Clicking a `collapsed` element expands it; its children arrive in the NEXT <element_tree>.
   5. `times` 1 is the normal case and what nearly every web control wants. Use 2 only where a double click is genuinely the gesture: a file-manager style row that opens on double click, selecting a word inside a text field. Values above 2 are clamped to 2.
   6. `times` 2 is ONE double-click gesture, not two clicks. If you actually want two separate clicks, emit two `click` calls with "times": 1 - a toggle pressed twice ends up back where it started."#, track),
 
         tool("hold_click", &[("id", json!({"type": "integer"})), ("time", json!({"type": "integer"}))],
              r#"Press and hold the element for a duration, then release.
-  1. Format: {"type": "hold_click", "id": <id_from_element_tree>, "time": <seconds>} - `time` is the hold duration in seconds.
-  2. Example: {"type": "hold_click", "id": 19, "time": 2}
+  1. Format: hold_click {"id": <id_from_element_tree>, "time": <seconds>} - `time` is the hold duration in seconds.
+  2. Example: hold_click {"id": 19, "time": 2}
   3. Use for press-and-hold controls ("hold to confirm" buttons, human-verification holds); for a normal click use `click`."#, track),
 
         tool("input", &[("id", json!({"type": "integer"})), ("value", json!({"type": "string"})), ("enter", json!({"type": "boolean"}))],
              r#"Clear the element, then type the value into it.
-  1. Format: {"type": "input", "id": <id_from_element_tree>, "value": "<text_to_type>", "enter": <true_or_false>}
+  1. Format: input {"id": <id_from_element_tree>, "value": "<text_to_type>", "enter": <true_or_false>}
   2. Positive examples:
-    1. {"type": "input", "id": 21, "value": "iphone 16", "enter": false} - fill the field, do not submit
-    2. {"type": "input", "id": 21, "value": "iphone 16", "enter": true} - fill AND submit, in one action
+    1. input {"id": 21, "value": "iphone 16", "enter": false} - fill the field, do not submit
+    2. input {"id": 21, "value": "iphone 16", "enter": true} - fill AND submit, in one action
   3. Negative examples (NEVER emit these):
-    1. {"type": "input", "id": 0, "value": "iphone 16", "enter": false} - WRONG: 0 is not a real element id; always use an [id] from the current <element_tree>
-    2. {"type": "input", "id": 21, "value": "", "enter": false} - WRONG: an empty value types nothing; it only clears the field
+    1. input {"id": 0, "value": "iphone 16", "enter": false} - WRONG: 0 is not a real element id; always use an [id] from the current <element_tree>
+    2. input {"id": 21, "value": "", "enter": false} - WRONG: an empty value types nothing; it only clears the field
   4. "enter": true presses Enter after typing - use it to submit searches/forms in the same action. There is no separate key tool here, so this is the ONLY way to submit a search box or a single-field form - never fill a field and stop before the submit that completes it.
   5. Use false when the field is one of several: an early Enter submits a half-filled form."#, track),
 
         tool("scroll", &[("id", json!({"type": "integer"})), ("direction", json!({"type": "string", "enum": ["up", "down", "left", "right"]}))],
              r#"Bring off-screen content into view. Changes only WHAT IS VISIBLE - nothing is activated, opened or submitted.
-  1. Format: {"type": "scroll", "id": <id_from_element_tree>, "direction": "<up|down|left|right>"}
+  1. Format: scroll {"id": <id_from_element_tree>, "direction": "<up|down|left|right>"}
   2. Examples:
-    1. {"type": "scroll", "id": 1, "direction": "down"} - the whole page down one screenful
-    2. {"type": "scroll", "id": 14, "direction": "down"} - scroll the list/panel/dropdown that [14] sits inside, leaving the page where it is
+    1. scroll {"id": 1, "direction": "down"} - the whole page down one screenful
+    2. scroll {"id": 14, "direction": "down"} - scroll the list/panel/dropdown that [14] sits inside, leaving the page where it is
   3. `id` picks WHICH surface moves, because the scroll is delivered AT that element and whatever scrolls around it takes it. [1] is the page itself. For a list, dropdown, sidebar, panel, table or carousel, pass the [id] of ANY element you can see INSIDE it and that region scrolls while the page stays put - the container never needs an [id] of its own.
   4. One scroll moves about three quarters of the visible surface, so consecutive scrolls overlap and nothing is skipped.
   5. The result says whether anything actually moved. "NO EFFECT - nothing moved" means that surface is at its end in that direction: do not repeat it - change direction, change region, or scroll [1].
@@ -177,19 +177,19 @@ fn main_tools(track: &[(String, String)]) -> Vec<Value> {
 
         tool("wait", &[("value", json!({"type": "string"}))],
              r#"Pause execution to allow page loading or to trigger a fresh page scan.
-  1. Format: {"type": "wait", "value": "<seconds>"}
-  2. Example: {"type": "wait", "value": "2"}
+  1. Format: wait {"value": "<seconds>"}
+  2. Example: wait {"value": "2"}
   3. Rarely needed: the scanner already waits for the page to stop fetching before every scan. Use it for something that is NOT network work - an animation settling, a countdown on the page - not for ordinary page loads."#, track),
 
         tool("scratchpad", &[("value", json!({"type": "string"}))],
              r#"Your durable note store - the record of MILESTONES ACHIEVED plus any key fact you need later. Follow <scratchpad>.
-  1. Format: {"type": "scratchpad", "value": "<one_line_verified_note>"}
+  1. Format: scratchpad {"value": "<one_line_verified_note>"}
   2. Examples:
-    1. Smaller milestone: {"type": "scratchpad", "value": "**Milestone:** signed in to amazon.com - account menu shows the user name"}
-    2. Smaller milestone: {"type": "scratchpad", "value": "**Milestone:** filters applied - 128GB + Prime delivery + 4 stars and up"}
-    3. Greater milestone: {"type": "scratchpad", "value": "**Done:** order placed on amazon.com - confirmation **#114-2698**"}
-    4. Key fact: {"type": "scratchpad", "value": "Product page: https://www.amazon.com/dp/B0DGHYDZR9 - iPhone 16 128GB"}
-    5. Answer: {"type": "scratchpad", "value": "**Key metric:** Disney+ revenue (Q3 2025) = **$2.1B**"}
+    1. Smaller milestone: scratchpad {"value": "**Milestone:** signed in to amazon.com - account menu shows the user name"}
+    2. Smaller milestone: scratchpad {"value": "**Milestone:** filters applied - 128GB + Prime delivery + 4 stars and up"}
+    3. Greater milestone: scratchpad {"value": "**Done:** order placed on amazon.com - confirmation **#114-2698**"}
+    4. Key fact: scratchpad {"value": "Product page: https://www.amazon.com/dp/B0DGHYDZR9 - iPhone 16 128GB"}
+    5. Answer: scratchpad {"value": "**Key metric:** Disney+ revenue (Q3 2025) = **$2.1B**"}
   3. Write a milestone the moment one lands, at EVERY size. A smaller milestone (signed in, filters applied, the right product page reached, one form section filled, a cookie wall cleared) is recorded exactly like a greater one (order placed, booking confirmed, the answer to <user_request> found). The small ones are what tell a later step how far the route already got - without them a re-route restarts from zero.
   4. Only write after visual confirmation on the CURRENT page - never assume an action landed.
   5. One fact per call, one line. If several things are confirmed in the same step, emit one separate `scratchpad` call for each - never batch them into one entry.
@@ -199,18 +199,18 @@ fn main_tools(track: &[(String, String)]) -> Vec<Value> {
 
         tool("todo_list", &[("value", json!({"type": "string"}))],
              r#"Create or re-capture the ToDo. Follow <todo_capability>.
-  1. Format: {"type": "todo_list", "value": "Objective: <goal>\n- [ ] <task_1>\n- [ ] <task_2>"}
-  2. Example: {"type": "todo_list", "value": "Objective: buy an iPhone 16 on amazon\n- [ ] open amazon.com\n- [ ] search for iphone 16\n- [ ] place the order"}"#, track),
+  1. Format: todo_list {"value": "Objective: <goal>\n- [ ] <task_1>\n- [ ] <task_2>"}
+  2. Example: todo_list {"value": "Objective: buy an iPhone 16 on amazon\n- [ ] open amazon.com\n- [ ] search for iphone 16\n- [ ] place the order"}"#, track),
 
         tool("update_todo", &[("value", json!({"type": "string"}))],
              r#"Mark ONE task complete - only after its effect is visually confirmed in the current input.
-  1. Format: {"type": "update_todo", "value": "<task_number>"}
-  2. Example: {"type": "update_todo", "value": "1"}"#, track),
+  1. Format: update_todo {"value": "<task_number>"}
+  2. Example: update_todo {"value": "1"}"#, track),
 
         tool("done", &[("value", json!({"type": "string"}))],
              r#"Ends the loop - the completion tool. Follow <task_completion>: a dedicated final step, never combined with any other action.
-  1. Format: {"type": "done", "value": "<end_to_end_summary>"}
-  2. Example: {"type": "done", "value": "Opened amazon.com, searched for the iPhone 16 128GB and recorded its price: $799"}"#, track),
+  1. Format: done {"value": "<end_to_end_summary>"}
+  2. Example: done {"value": "Opened amazon.com, searched for the iPhone 16 128GB and recorded its price: $799"}"#, track),
     ]
 }
 

@@ -26,7 +26,7 @@ This is additional domain knowledge to work efficiently (use it wisely).
         5.2.3. Now you can use `typewrite` to override the selected line. You can also add any extra lines below it during this step.
         5.2.4. Be extremely careful while editing lines; always check the indentation.
         5.2.5. Example Scenario: Suppose there is an error on line 5 where the code incorrectly starts with "dt" instead of "df". In the image and element tree, this word is identified as `[108]<Word="dt", type="OCR_TEXT", active="True", visibility="full" />`. The action sequence to highlight and replace this line would be:
-            5.2.5.1. [{"type": "left_click", "id": 108, "clicks": 2}, {"type": "hotkey", "value": "shift+end"}, {"type": "typewrite", "value": "df = pd.read_csv('ultimate_student_productivity_dataset_5000.csv')"}]
+            5.2.5.1. [left_click {"id": 108, "clicks": 2}, hotkey {"value": "shift+end"}, typewrite {"text": "df = pd.read_csv('ultimate_student_productivity_dataset_5000.csv')"}]
     5.3. Alternative Method: You may use the terminal to edit cell lines, but remember that the final executed code must reside within the notebook cells, not just in terminal scripts.
 6. Explicitly determine if the error originates from the newly written code or from previously executed cells.
     6.1. Ensure you run the cell immediately after writing the code before assessing any errors.
