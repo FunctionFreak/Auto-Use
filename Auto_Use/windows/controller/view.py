@@ -525,7 +525,7 @@ class ControllerView:
                     loading_thread.start()
 
                     try:
-                        web_service = WebService(self.provider, self.model, self.api_key)
+                        web_service = WebService(self.provider, self.model, self.api_key, stop_event=self.stop_event)
                         web_result = web_service.search(query)
                     finally:
                         self._stop_loading = True
@@ -1269,7 +1269,7 @@ class ControllerView:
                 loading_thread.start()
                 
                 try:
-                    web_service = WebService(self.provider, self.model, self.api_key)
+                    web_service = WebService(self.provider, self.model, self.api_key, stop_event=self.stop_event)
                     web_result = web_service.search(query)
                 finally:
                     self._stop_loading = True

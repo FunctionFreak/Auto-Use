@@ -750,8 +750,7 @@ def get_llm_providers():
         anthropic_models  = importlib.import_module(f"{base}.anthropic.view").MODEL_MAPPINGS
         google_models     = importlib.import_module(f"{base}.google.view").MODEL_MAPPINGS
         perplexity_models = importlib.import_module(f"{base}.perplexity.view").MODEL_MAPPINGS
-        # Registered on mac (and the web agent) only so far — a missing module
-        # must drop just this provider, not the whole list.
+        # A missing module must drop just this provider, not the whole list.
         try:
             together_models = importlib.import_module(f"{base}.together.view").MODEL_MAPPINGS
         except ModuleNotFoundError:

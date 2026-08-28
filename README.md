@@ -544,7 +544,7 @@ at the machine. Discord and WhatsApp are scaffolded but not implemented.
 
 ## 🧠 Providers & models
 
-Seven providers, and support is **not** uniform across surfaces:
+Seven providers, supported on every surface:
 
 | Provider | Computer use (macOS) | Computer use (Windows) | Web agent | iOS |
 |---|:--:|:--:|:--:|:--:|
@@ -554,7 +554,7 @@ Seven providers, and support is **not** uniform across surfaces:
 | OpenAI | ✅ | ✅ | ✅ | ✅ |
 | OpenRouter | ✅ | ✅ | ✅ | ✅ |
 | Perplexity | ✅ | ✅ | ✅ | ✅ |
-| Together AI | ✅ | — | ✅ | — |
+| Together AI | ✅ | ✅ | ✅ | ✅ |
 
 Model names are listed in **[model_list.txt](model_list.txt)** — copy them exactly. A name that
 isn't on the list is not validated; it is forwarded verbatim and comes back as a 404.

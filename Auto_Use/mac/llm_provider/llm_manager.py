@@ -714,8 +714,7 @@ def tool_calls_to_steps(tool_calls: list, allowed=None, defaults_map=None, track
 # failed. Every name below exists in the matching provider view.py
 # MODEL_MAPPINGS on all three platforms (the old map's gpt-5.2 / gpt-5.1 /
 # claude-sonnet-4.5 did not, which is why the openai + anthropic fallbacks
-# could never succeed). Exception: together is registered on mac and the web
-# agent only (not windows/ios yet).
+# could never succeed).
 _CLI_FALLBACK_CANDIDATES = {
     # Single entry: groq now registers one model, so a user already on it has
     # nothing to fall back TO and correctly resolves to None. The tuple still

@@ -19,6 +19,8 @@ from .google.service import GoogleProvider
 from .google.view import get_model_info as get_google_model_info
 from .perplexity.service import PerplexityProvider
 from .perplexity.view import get_model_info as get_perplexity_model_info
+from .together.service import TogetherProvider
+from .together.view import get_model_info as get_together_model_info
 
 # Load environment variables
 load_dotenv()
@@ -36,8 +38,8 @@ load_dotenv()
 # thought signatures, OpenRouter reasoning blocks), needed to echo the turn
 # back exactly as the model produced it. Only these providers translate it;
 # for everyone else the key is stripped before the request is built, because
-# openai/groq/perplexity forward the message dicts to their API verbatim and
-# an unknown key there is a 400.
+# openai/groq/perplexity/together forward the message dicts to their API
+# verbatim and an unknown key there is a 400.
 _META_KEY = "provider_meta"
 _META_PROVIDERS = ("openrouter", "google")
 
@@ -400,6 +402,7 @@ class LLMManager:
                 "anthropic": "claude-sonnet-5",
                 "google": "gemini-3.1-pro-vertex" if is_vertex else "gemini-3.1-pro",
                 "perplexity": "gemini-3.1-pro",
+                "together": "minimax-m3",
             }
             _CLI_FALLBACK_MAP = {
                 # groq registers ONE model, which is already the primary above
@@ -413,6 +416,7 @@ class LLMManager:
                                                       # no longer accepts
                 "google": "gemini-3.6-flash-vertex" if is_vertex else "gemini-3.6-flash",
                 "perplexity": "gemini-3.6-flash",
+                "together": "inkling",
             }
             self._cli_fallback_model = _CLI_FALLBACK_MAP.get(self.provider)
             model = _CLI_MODEL_MAP.get(self.provider, model)
@@ -430,6 +434,8 @@ class LLMManager:
             model_info = get_google_model_info(model)
         elif self.provider == "perplexity":
             model_info = get_perplexity_model_info(model)
+        elif self.provider == "together":
+            model_info = get_together_model_info(model)
         else:
             model_info = {"api_name": model, "vision": True, "display_name": model}
         
@@ -533,6 +539,13 @@ class LLMManager:
                 raise ValueError("Perplexity API key not provided and not found in .env file")
             return PerplexityProvider(api_key, self.cli_agent, self.model_info,
                                       tools=native_tools_perplexity(registry) if native else None)
+        elif self.provider == "together":
+            # Priority: Runtime key > .env fallback
+            api_key = self.runtime_api_key or os.getenv('TOGETHER_API_KEY')
+            if not api_key:
+                raise ValueError("Together API key not provided and not found in .env file")
+            return TogetherProvider(api_key, self.cli_agent, self.model_info,
+                                    tools=native_tools_openai(registry) if native else None)
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
     
@@ -566,7 +579,7 @@ class LLMManager:
 
     def _strip_meta(self, messages: list) -> list:
         """Drop `provider_meta` from every message unless this provider knows
-        how to translate it. openai/groq/perplexity/anthropic forward the
+        how to translate it. openai/groq/perplexity/anthropic/together forward the
         message dicts to their API verbatim, and an unknown key there is a
         400."""
         if self.provider not in _META_PROVIDERS:
@@ -632,6 +645,8 @@ class LLMManager:
                 model_info = get_google_model_info(self._cli_fallback_model)
             elif self.provider == "perplexity":
                 model_info = get_perplexity_model_info(self._cli_fallback_model)
+            elif self.provider == "together":
+                model_info = get_together_model_info(self._cli_fallback_model)
             else:
                 raise last_error
             # Hot-swap model (provider stays the same, no re-init needed)

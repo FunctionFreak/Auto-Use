@@ -398,8 +398,8 @@ creates `conversation/` and `raw_reasoning/` when the flag is on, and calls
 ## What it is
 
 Together AI is an OpenAI-compatible provider with native tool calling and
-image input. Available in `"computer use"` (macOS) and `"web use"`; not on
-Windows/iOS yet. Set `TOGETHER_API_KEY` in `.env` (or save it in the app's
+image input. Available on every platform - `"computer use"` (macOS and
+Windows), `"web use"` and `"ios use"`. Set `TOGETHER_API_KEY` in `.env` (or save it in the app's
 Settings → API Keys).
 
 | `MODEL` (main.py) | Together model id |
@@ -410,21 +410,22 @@ Settings → API Keys).
 
 ## How the `web` tool works on Together
 
-Together has no native web search. When the mac agent calls its `web` tool
+Together has no native web search. When the desktop or iOS agent calls its `web` tool
 under `PROVIDER = "together"`, the query is handed to the **browser agent**
 (`Auto_Use/web`) running **headless on the same model**, and its final
 `done` report comes back as the web result. Expect that step to take a few
 minutes rather than seconds.
 
 - Runs in its own headless Chrome on port **9333** (`AUTOUSE_WEB_FALLBACK_PORT`)
-  — never the visible one `"web use"` uses — so it can't disturb the desktop
-  agent's screen.
+  with its own profile **web_fallback** (`AUTOUSE_WEB_FALLBACK_PROFILE`) — never
+  the visible one `"web use"` uses — so it can't disturb the desktop agent's
+  screen.
 - Wall-clock cap **15 min** (`AUTOUSE_WEB_FALLBACK_TIMEOUT`, seconds); the
   Stop button / Ctrl+C interrupts it.
 - Each run's `result.json` + `agent.log` are kept under
   `autouse_data/web_fallback/<run-id>/` for inspection.
 
-Implementation: [Auto_Use/mac/controller/tool/web/web_agent.py](Auto_Use/mac/controller/tool/web/web_agent.py).
+Implementation: `Auto_Use/{mac,windows,ios}/controller/tool/web/web_agent.py` (identical on all three).
 
 ---
 

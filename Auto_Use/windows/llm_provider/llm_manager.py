@@ -20,6 +20,8 @@ from .google.service import GoogleProvider
 from .google.view import get_model_info as get_google_model_info
 from .perplexity.service import PerplexityProvider
 from .perplexity.view import get_model_info as get_perplexity_model_info
+from .together.service import TogetherProvider
+from .together.view import get_model_info as get_together_model_info
 
 # Load environment variables
 load_dotenv()
@@ -37,8 +39,8 @@ load_dotenv()
 # thought signatures, OpenRouter reasoning blocks), needed to echo the turn
 # back exactly as the model produced it. Only these providers translate it;
 # for everyone else the key is stripped before the request is built, because
-# openai/groq/perplexity forward the message dicts to their API verbatim and
-# an unknown key there is a 400.
+# openai/groq/perplexity/together forward the message dicts to their API
+# verbatim and an unknown key there is a 400.
 _META_KEY = "provider_meta"
 _META_PROVIDERS = ("openrouter", "google")
 
@@ -781,6 +783,7 @@ _CLI_FALLBACK_CANDIDATES = {
     "anthropic":  ("claude-haiku-4.5", "claude-sonnet-5"),
     "google":     ("gemini-3.6-flash", "gemini-3.1-pro"),
     "perplexity": ("gemini-3.6-flash", "gpt-5.6-luna"),
+    "together":   ("minimax-m3", "inkling"),
 }
 
 
@@ -857,6 +860,7 @@ class LLMManager:
             "anthropic": get_anthropic_model_info,
             "google": get_google_model_info,
             "perplexity": get_perplexity_model_info,
+            "together": get_together_model_info,
         }.get(self.provider)
         if getter is None:
             return {"api_name": short_name, "vision": True, "display_name": short_name}
@@ -962,6 +966,13 @@ class LLMManager:
                 raise ValueError("Perplexity API key not provided and not found in .env file")
             return PerplexityProvider(api_key, self.cli_agent, self.model_info,
                                       tools=coder_tools_perplexity(registry) if native else None)
+        elif self.provider == "together":
+            # Priority: Runtime key > .env fallback
+            api_key = self.runtime_api_key or os.getenv('TOGETHER_API_KEY')
+            if not api_key:
+                raise ValueError("Together API key not provided and not found in .env file")
+            return TogetherProvider(api_key, self.cli_agent, self.model_info,
+                                    tools=coder_tools_openai(registry) if native else None)
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
     

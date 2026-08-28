@@ -43,6 +43,8 @@ def main():
                         help="Scopes web/scratchpad/{sid}/ for this agent")
     parser.add_argument("--result", type=str, default=None,
                         help="Path to write the result JSON when complete")
+    parser.add_argument("--browser-profile", type=str, default=None,
+                        help="Named Chrome profile dir (default profile when omitted)")
     args = parser.parse_args()
 
     result = {"status": "error", "message": "child crashed before the agent returned"}
@@ -59,6 +61,7 @@ def main():
             browser_port=args.browser_port,
             session_id=args.session_id,
             single_tab=True,
+            browser_profile=args.browser_profile,
         )
         result = agent.process_request(args.task)
         exit_code = 0
