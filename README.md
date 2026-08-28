@@ -458,6 +458,7 @@ target it is on — both paths end at the same endpoints.
 MODE        = "mobile use, ios"
 DEVICE      = "simulation"   # or "hardware"
 IOS_VERSION = None           # e.g. "26.5"; None = newest installed
+SIM_DEVICE = "iphone"        # "iphone" / "ipad" / exact simulator name; hardware uses the paired device as is
 ```
 
 Auto Use boots the simulator, starts WebDriverAgent on it, runs the task, then shuts

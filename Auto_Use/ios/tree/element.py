@@ -248,6 +248,36 @@ class UIElementScanner:
         # ("" on the home screen). Read for free on every scan; the skills
         # lookup keys on it, and the tree's first line shows it to the model.
         self.application_name = ""
+        # Form factor for the model's `current_device` line. Family comes from
+        # WDA /status (UIDevice idiom) - asked ONCE and kept for the run, since
+        # the root frame is the ACTIVE APP's frame and shrinks in Split View /
+        # Slide Over / iPhone-compat mode. Orientation comes from the full
+        # screenshot after the worker joins, for the same reason.
+        self._status_family = None   # cached "iPhone" | "iPad"
+        self.device_family = ""      # "iPhone" | "iPad" | "" (unknown)
+        self.orientation = ""        # "portrait" | "landscape" | ""
+
+    def _wda_device_family(self):
+        """'iPhone' | 'iPad' from WDA's session-less GET /status (value.device),
+        cached on first success; '' when it can't be read."""
+        if self._status_family:
+            return self._status_family
+        try:
+            r = requests.get(f"{wda_url}/status", timeout=3)
+            if r.status_code == 200:
+                dev = str(((r.json() or {}).get("value") or {}).get("device") or "").lower()
+                fam = {"ipad": "iPad", "iphone": "iPhone"}.get(dev, "")
+                if fam:
+                    self._status_family = fam
+                return fam
+        except Exception:
+            pass
+        return ""
+
+    def _compose_tree_text(self, body):
+        device_line = (f"current_device: {self.device_family} ({self.orientation})\n"
+                       if self.device_family and self.orientation else "")
+        return device_line + f"current_application: {self.application_name or 'home screen'}\n" + body
 
     def _fetch_screenshot(self, out):
         """Fetch the screenshot and run every pixel step that does NOT need the
@@ -398,6 +428,13 @@ class UIElementScanner:
                 if root.get('width') and root.get('height'):
                     xml_width = int(float(root.get('width') or 0))
                     xml_height = int(float(root.get('height') or 0))
+                # Provisional per scan; the screenshot refines orientation below.
+                self.orientation = ""
+                self.device_family = self._wda_device_family()
+                if xml_width > 0 and xml_height > 0:
+                    if not self.device_family:   # /status unreadable: shorter side (iPad >= 744pt)
+                        self.device_family = "iPad" if min(xml_width, xml_height) >= 700 else "iPhone"
+                    self.orientation = "landscape" if xml_width > xml_height else "portrait"
 
                 # Screen box used for the visibility test. Falls back to the
                 # same iPhone-12 logical size the scale factors below assume,
@@ -571,10 +608,9 @@ class UIElementScanner:
                     else:
                         element_lines.append(f'{indent}[{index}]<element_name="{label}", type="{element_type}" />\n')
                 
-                # Store in memory - first line names the app in front
-                self.element_tree_text = (
-                    f"current_application: {self.application_name or 'home screen'}\n"
-                    + ''.join(element_lines))
+                # Store in memory - header lines name the device and the app in front
+                tree_body = ''.join(element_lines)
+                self.element_tree_text = self._compose_tree_text(tree_body)
                 # Send element tree to vault
                 vault_service.update_element_tree(self.element_tree_text)
                 t_tree = time.perf_counter()
@@ -615,6 +651,10 @@ class UIElementScanner:
                     # Already downscaled and RGB-converted by the worker.
                     # Get actual image dimensions
                     img_width, img_height = image.size
+                    # The screenshot is the whole screen (the root frame is not,
+                    # in Split View) - it decides the orientation the model sees.
+                    self.orientation = "landscape" if img_width > img_height else "portrait"
+                    self.element_tree_text = self._compose_tree_text(tree_body)
                     
                     # Calculate scale factors
                     if xml_width > 0:

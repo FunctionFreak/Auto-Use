@@ -127,6 +127,7 @@ MODE = "web use"
 MODE = "mobile use, ios"
 DEVICE = "simulation"      # required for parallel — hardware can't split
 IOS_VERSION = None         # optional: pin a runtime, e.g. "26.5"
+SIM_DEVICE = "iphone"      # "iphone" / "ipad" / exact simulator name (simulation only)
 ```
 
 **2. Define the extra tasks** (below the main `task`). Use `None` for slots you
@@ -169,6 +170,7 @@ run_agent(
     task=task,
     device=DEVICE,                          # "simulation" — required for parallel
     ios_version=IOS_VERSION,
+    sim_device=SIM_DEVICE,
     save_conversation=conversation,
     extra_tasks=[task_2, task_3, task_4],
 )
@@ -454,6 +456,7 @@ simulator. Hardware is the explicit opt-in.
 MODE = "mobile use, ios"
 DEVICE = "simulation"   # or "hardware" for your paired iPhone
 IOS_VERSION = None      # simulation only — e.g. "26.5"; None = newest installed
+SIM_DEVICE = "iphone"   # simulation only — "iphone" / "ipad" / exact simulator name
 
 run_agent(
     mode=MODE,
@@ -462,6 +465,7 @@ run_agent(
     task=task,
     device=DEVICE,          # ← add this
     ios_version=IOS_VERSION,
+    sim_device=SIM_DEVICE,
     save_conversation=conversation,
 )
 ```
