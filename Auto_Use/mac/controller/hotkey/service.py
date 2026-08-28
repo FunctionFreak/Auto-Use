@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 # Auto_Use/mac/controller/hotkey/service.py
 # macOS version — keyboard shortcuts via pynput (Quartz CGEvent under the hood)

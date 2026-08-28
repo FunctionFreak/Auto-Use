@@ -1,4 +1,4 @@
-// Copyright 2026 Ashish Yadav — Auto-Use
+// Copyright 2026 Cursortouch — Auto-Use
 
 //! LLM Provider module for managing different language model providers —
 //! the Rust analog of `llm_provider/__init__.py`. One folder per provider,

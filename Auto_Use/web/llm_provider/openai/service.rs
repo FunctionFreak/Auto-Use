@@ -1,4 +1,4 @@
-// Copyright 2026 Ashish Yadav — Auto-Use
+// Copyright 2026 Cursortouch — Auto-Use
 
 //! OpenAI API provider. The Python original went through the openai SDK;
 //! this speaks to the same /v1/chat/completions endpoint directly — the

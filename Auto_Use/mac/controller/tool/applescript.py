@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 # Auto_Use/mac/controller/tool/applescript.py
 # macOS AppleScript tool — generic handler for any app

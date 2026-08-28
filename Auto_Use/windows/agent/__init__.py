@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 from .main_driver.service import AgentService
 from .main_driver.view import AgentResponseFormatter

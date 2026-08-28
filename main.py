@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 #this main.py give terminal interface to the user to interact with the agent for ui refer app.py
 from Auto_Use.agent_launcher import run_agent

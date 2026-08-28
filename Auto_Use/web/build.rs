@@ -1,4 +1,4 @@
-// Copyright 2026 Ashish Yadav — Auto-Use
+// Copyright 2026 Cursortouch — Auto-Use
 
 // Built with plain `cargo build` (no maturin), so the macOS extension-module
 // link args (-undefined dynamic_lookup) must be added here ourselves.

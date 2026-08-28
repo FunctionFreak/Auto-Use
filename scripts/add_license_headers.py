@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2026 Ashish Yadav — https://gitlab.com/auto-use/auto-use
+# Copyright 2026 Cursortouch — https://gitlab.com/auto-use/auto-use
 """Add or replace the copyright header on every .py file."""
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-_COPYRIGHT_OWNER = "Ashish Yadav"
+_COPYRIGHT_OWNER = "Cursortouch"
 _COPYRIGHT_URL = "https://gitlab.com/auto-use/auto-use"
 _COPYRIGHT_YEAR = "2026"
 

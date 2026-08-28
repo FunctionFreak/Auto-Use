@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 # Picks the right AgentService for the requested mode:
 #   mode = "computer use"     -> desktop agent for the host OS (mac / windows)

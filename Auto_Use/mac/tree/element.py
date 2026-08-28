@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 """
 macOS UI Element Scanner — drop-in replacement for Windows element.py

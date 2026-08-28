@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 # Auto_Use/mac/controller/service.py
 # macOS version — all mouse interactions via Quartz with proven approach:

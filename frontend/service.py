@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 """Backend service for the desktop app — the Flask server, every HTTP route, the
 agent run, the window.* push callbacks, and the provider/api-key/settings/path

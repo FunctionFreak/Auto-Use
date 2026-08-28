@@ -1,4 +1,4 @@
-// Copyright 2026 Ashish Yadav — Auto-Use
+// Copyright 2026 Cursortouch — Auto-Use
 
 //! Controller module for action block code routes — the Rust analog of
 //! `controller/__init__.py`. One service per tool folder; view.rs routes an

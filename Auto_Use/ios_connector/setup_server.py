@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 """Launcher for the existing WebDriverAgent setup UI (ios_connector/setup.py).
 

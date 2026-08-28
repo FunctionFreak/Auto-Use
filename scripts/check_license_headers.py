@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2026 Ashish Yadav — https://gitlab.com/auto-use/auto-use
+# Copyright 2026 Cursortouch — https://gitlab.com/auto-use/auto-use
 """License header checker for AutoUse."""
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Build the expected header from small pieces so this script's own source
 # does not contain a second literal copy of the header that would confuse
 # a naive duplicate detector.
-_COPYRIGHT_OWNER = "Ashish Yadav"
+_COPYRIGHT_OWNER = "Cursortouch"
 _COPYRIGHT_URL = "https://gitlab.com/auto-use/auto-use"
 _COPYRIGHT_YEAR = "2026"
 

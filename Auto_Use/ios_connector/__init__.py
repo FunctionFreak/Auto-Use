@@ -1,4 +1,4 @@
-# Copyright 2026 Ashish Yadav — Auto-Use
+# Copyright 2026 Cursortouch — Auto-Use
 
 # iOS connector package — the WebDriverAgent sign/build/install/trust tool
 # (setup.py + index.html) plus a small launcher (setup_server.ensure_running)
