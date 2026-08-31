@@ -13,8 +13,7 @@ class DomainKnowledgeService:
     def __init__(self):
         """Initialize and load domain knowledge mappings"""
         # The LIVE skills the user can edit live in autouse_data/skills/windows/,
-        # outside the install folder. Fall back to the .md files shipped beside
-        # this module if that can't be resolved for any reason.
+        # outside the install folder (this package holds only the service code).
         try:
             from Auto_Use import skills_dir
             self.current_dir = str(skills_dir("windows"))
@@ -108,12 +107,14 @@ class DomainKnowledgeService:
         os_patterns = self.mappings.get("os", {})
         
         app_lower = application_name.lower()
-        
+
+        # Longest matching key wins (same rule as the browser matcher), so a
+        # user's "Google Chrome" skill beats the shipped "chrome" -> browser.md.
+        best_match, best_length = "", 0
         for app_pattern, md_file in os_patterns.items():
-            if app_pattern.lower() in app_lower:
-                return md_file
-        
-        return ""
+            if app_pattern.lower() in app_lower and len(app_pattern) > best_length:
+                best_match, best_length = md_file, len(app_pattern)
+        return best_match
     
     def _load_knowledge_file(self, filename: str) -> str:
         """Load content from .md knowledge file"""

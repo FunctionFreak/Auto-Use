@@ -77,7 +77,7 @@ Each step includes:
 - The latest `next_goal` ("Doing: ... If ... → Next: ...") carries the guard its successor is judged against — read it first to know what you committed to.
 </agent_history>
 <message>
-- Your turn = your tool calls (`action`). `thinking` and `next_goal` ride as REQUIRED parameters on the FIRST tool call of EVERY step (additional calls in the same step pass "") — every step records its thinking, its verdict and its guard.
+- Your turn = your tool calls (`action`). `thinking` and `next_goal` ride as REQUIRED parameters on the FIRST tool call of EVERY step (additional calls in the same step pass "" for those two - every call's own arguments are always filled) — every step records its thinking, its verdict and its guard.
 - `thinking` is filled EVERY step: FULL at decision points, RECOVERY on failures, BRIEF (1–2 judgment lines) when a step misses <thinking>'s SKIP TEST only softly — or exactly "skipped" when it passes. Never empty.
 - Your thinking is NOT a reply to the user — the user never reads it mid-run. It is your private reasoning trace, written for your future self reading this conversation.
 1. <thinking>
@@ -119,7 +119,7 @@ When all three hold: set `thinking` to exactly "skipped" — nothing more — an
 - Anti-pattern: "I will now check the parent directory" is NOT thinking — that is `next_goal`'s "Doing", which you already wrote. Judge — don't narrate: say what the last result PROVED, not what you are about to do. If your thinking would merely restate "Doing", write "skipped" instead.
 </thinking>
 2. <next_goal>
-Purpose: verdict on the previous step + carry-forward context + this step's move + the success guard + the pre-committed next move. This is the plan edge the next step runs on. Passed as the `next_goal` PARAMETER on the FIRST tool call of every step — mandatory EVERY step (additional calls in the same step pass "").
+Purpose: verdict on the previous step + carry-forward context + this step's move + the success guard + the pre-committed next move. This is the plan edge the next step runs on. Passed as the `next_goal` PARAMETER on the FIRST tool call of every step — mandatory EVERY step (additional calls in the same step pass "" for `thinking` and `next_goal` - every call's own arguments are always filled).
 Rules:
 - OPEN with the labeled verdict (mandatory EVERY step): `memory: S<n> ok` or `memory: S<n> fail: <short why>` — your judgment of the previous step's guard against <Tool_response>. First step: `memory: S1 start`. Follow it with the key context to carry forward (the important result, errors, paths) — keep it tight. Then the labeled move: `next_goal: Doing: ...`.
 - Align with the top pending ToDo item; name it.

@@ -35,7 +35,7 @@ from pathlib import Path
 from flask import Flask, jsonify, send_from_directory
 
 # Where the user's data lives (autouse_data/, outside the install folder).
-from Auto_Use import api_key_file, skills_dir, data_root
+from Auto_Use import api_key_file, skills_dir, skills_platform, data_root
 
 # Resumable chat memory + per-chat token tracker. Platform-agnostic, pure-stdlib.
 from Auto_Use.agent_conversation.service import conversation
@@ -750,8 +750,7 @@ def get_llm_providers():
         anthropic_models  = importlib.import_module(f"{base}.anthropic.view").MODEL_MAPPINGS
         google_models     = importlib.import_module(f"{base}.google.view").MODEL_MAPPINGS
         perplexity_models = importlib.import_module(f"{base}.perplexity.view").MODEL_MAPPINGS
-        # Registered on mac (and the web agent) only so far — a missing module
-        # must drop just this provider, not the whole list.
+        # A missing module must drop just this provider, not the whole list.
         try:
             together_models = importlib.import_module(f"{base}.together.view").MODEL_MAPPINGS
         except ModuleNotFoundError:
@@ -2845,13 +2844,23 @@ def open_github():
 
 # =============================================================================
 # Flask routes — skills (the Skills stage's Computer-use tab: list / preview /
-# delete the active platform's Auto_Use/<platform>_use/agent/skills/*.md, so
+# delete the active platform's autouse_data/skills/<platform>/*.md, so
 # the same code serves windows on Windows and mac on Mac)
 # =============================================================================
+from werkzeug.exceptions import HTTPException
+
+
 def _skills_dir():
     """The active platform's skill-markdown folder — autouse_data/skills/
-    <windows|mac>/, OUTSIDE the install folder so uninstalling never deletes
-    the user's edited skills."""
+    <windows|mac|ios>/, OUTSIDE the install folder so uninstalling never
+    deletes the user's edited skills. `?platform=ios` selects the iOS folder
+    (iOS is driven from a Mac, so it is never the host default)."""
+    from flask import request, abort
+    plat = (request.args.get("platform") or "").strip().lower() if request else ""
+    if plat == "ios":
+        return skills_dir("ios")
+    if plat and plat != skills_platform():
+        abort(400, f"unknown platform '{plat}' - this host serves '{skills_platform()}' and 'ios'")
     return skills_dir()
 
 
@@ -2876,9 +2885,155 @@ def list_skills():
         d = _skills_dir()
         files = sorted((f.name for f in d.glob('*.md')), key=str.lower) if d.is_dir() else []
         return jsonify({'skills': files})
+    except HTTPException:
+        raise
     except Exception:
         debug_exception("list_skills")
         return jsonify({'skills': []})
+
+
+class _SkillsIndexError(Exception):
+    """skills.json exists but is not valid JSON - never overwrite it blindly."""
+
+
+def _load_skills_index(idx):
+    """skills.json as a dict ({} when absent). Raises _SkillsIndexError on a
+    corrupt file so the caller can refuse instead of wiping every mapping."""
+    if not idx.is_file():
+        return {}
+    try:
+        with open(idx, 'r', encoding='utf-8') as f:
+            loaded = json.load(f)
+    except Exception:
+        raise _SkillsIndexError()
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _save_skills_index(idx, data):
+    """Atomic rewrite - the agent falls back to empty mappings on a broken index."""
+    tmp = idx.with_suffix('.json.tmp')
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2)
+        f.write('\n')
+    os.replace(tmp, idx)
+
+
+_RESERVED_STEMS = re.compile(r'^(con|prn|aux|nul|com[1-9]|lpt[1-9])$', re.IGNORECASE)
+_HOST_RE = re.compile(r'^[a-z0-9-]+(\.[a-z0-9-]+)+$', re.IGNORECASE)
+# A dotted single word is an app, not a host, when its last label is a file /
+# code suffix rather than a TLD: "Xcode.app", "Node.js", "setup.exe".
+_NOT_TLD = {'app', 'exe', 'js', 'ts', 'py', 'sh', 'md', 'txt', 'dmg', 'pkg', 'msi', 'bat', 'zip'}
+
+
+def _skill_target(target):
+    """Classify the Computer add form's 'Link / Application' field the way the
+    agent's DomainKnowledgeService will look it up: ('browser', host) for a
+    URL / domain, ('os', app name) otherwise. A host is derived like the
+    matcher derives it from the omnibox (no scheme, userinfo, port, path,
+    query, fragment or www.) so the key actually matches at runtime."""
+    t = target.strip()
+    bare = re.sub(r'^[a-z][a-z0-9+.-]*://', '', t, flags=re.IGNORECASE)
+    host = re.split(r'[/?#]', bare, 1)[0].rsplit('@', 1)[-1]
+    host = re.sub(r':\d+$', '', host).strip().lower()
+    last = host.rsplit('.', 1)[-1] if '.' in host else ''
+    looks_url = ('://' in t or bare.lower().startswith('www.') or '/' in bare
+                 or (_HOST_RE.match(host) and last.isalpha() and last not in _NOT_TLD))
+    if not looks_url:
+        return 'os', t
+    if host.startswith('www.'):
+        host = host[4:]
+    return 'browser', host
+
+
+@app.route('/api/skills', methods=['POST'])
+def create_skill():
+    """Create a skill .md AND register it in skills.json so the agent loads it.
+    Body: {content, app?, bundle_id?, target?, name?}. Mobile (?platform=ios):
+    `app` (the name on the home screen, required) and optional `bundle_id`
+    map to the file under "apps". Computer: `target` is a URL/domain ->
+    "browser", else an app name -> "os" (the two maps DomainKnowledgeService
+    matches on). The file is named after the app / host unless `name` is
+    given. A key that already points at another skill is refused (409), and
+    the index is validated BEFORE the .md is written so a failure never
+    leaves an unregistered file behind."""
+    from flask import request
+    try:
+        data = request.get_json(silent=True) or {}
+        content = data.get('content')
+        is_mobile = (request.args.get('platform') or '').strip().lower() == 'ios'
+        app_name = str(data.get('app') or '').strip()
+        bundle_id = str(data.get('bundle_id') or '').strip()
+        target = str(data.get('target') or '').strip()
+        raw = str(data.get('name') or '').strip()
+        if not isinstance(content, str) or not content.strip():
+            return jsonify({'error': 'Write the skill text'}), 400
+
+        # The mappings this skill will own, in the agent's own index shape.
+        mappings = []                                  # (bucket, key)
+        if is_mobile:
+            if not app_name:
+                return jsonify({'error': 'The app name (as shown on the home screen) is required'}), 400
+            mappings.append(('apps', app_name))
+            if bundle_id:
+                mappings.append(('apps', bundle_id))
+            raw = raw or app_name
+        else:
+            if not target:
+                return jsonify({'error': 'Enter a link or application name'}), 400
+            bucket, key = _skill_target(target)
+            if not key:
+                return jsonify({'error': 'Could not read a domain from that link'}), 400
+            mappings.append((bucket, key))
+            raw = raw or (key.split('.')[0] if bucket == 'browser' else key)
+
+        # Bare filename only: spaces -> _, keep [A-Za-z0-9._-], force .md
+        stem = re.sub(r'[^A-Za-z0-9._-]+', '_', raw[:-3] if raw.lower().endswith('.md') else raw).strip('._-').lower()
+        if not stem or _RESERVED_STEMS.match(stem):
+            return jsonify({'error': 'Invalid skill name'}), 400
+        name = stem + '.md'
+        d = _skills_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / name
+        if p.exists():
+            return jsonify({'error': f'{name} already exists - open it and Edit instead'}), 409
+
+        # Validate the index and the keys before anything is written.
+        idx = d / 'skills.json'
+        try:
+            index = _load_skills_index(idx)
+        except _SkillsIndexError:
+            return jsonify({'error': 'skills.json is not valid JSON - fix it first'}), 500
+        for bucket, key in mappings:
+            m = index.get(bucket)
+            if isinstance(m, dict):
+                for existing, owner in m.items():
+                    if existing.lower() == key.lower() and owner != name:
+                        return jsonify({'error': f'"{existing}" already points at {owner} - edit that skill instead'}), 409
+
+        tmp = p.parent / (p.name + '.tmp')
+        with open(tmp, 'w', encoding='utf-8') as f:
+            f.write(content)
+        os.replace(tmp, p)
+        try:
+            for bucket, key in mappings:
+                m = index.get(bucket)
+                if not isinstance(m, dict):
+                    m = index[bucket] = {}
+                m[key] = name
+            _save_skills_index(idx, index)
+        except Exception:
+            # Never leave an unregistered .md the UI can't re-register.
+            try:
+                p.unlink()
+            except OSError:
+                pass
+            raise
+        return jsonify({'status': 'created', 'name': name, 'mapped': [k for _, k in mappings]})
+    except HTTPException:
+        raise                                   # _skills_dir's abort(400) for an unknown ?platform
+    except Exception:
+        debug_exception("create_skill")
+        return jsonify({'error': 'Failed to create'}), 500
 
 
 @app.route('/api/skills/<name>', methods=['GET'])
@@ -2890,6 +3045,8 @@ def get_skill(name):
             return jsonify({'error': 'Not found'}), 404
         with open(p, 'r', encoding='utf-8', errors='replace') as f:
             return jsonify({'name': name, 'content': f.read()})
+    except HTTPException:
+        raise
     except Exception:
         debug_exception("get_skill")
         return jsonify({'error': 'Failed'}), 500
@@ -2914,6 +3071,8 @@ def save_skill(name):
             f.write(content)
         os.replace(tmp, p)
         return jsonify({'status': 'saved'})
+    except HTTPException:
+        raise
     except Exception:
         debug_exception("save_skill")
         return jsonify({'error': 'Failed to save'}), 500
@@ -2949,6 +3108,8 @@ def delete_skill(name):
         except Exception:
             debug_exception("delete_skill_index")
         return jsonify({'status': 'deleted'})
+    except HTTPException:
+        raise
     except Exception:
         debug_exception("delete_skill")
         return jsonify({'error': 'Failed to delete'}), 500

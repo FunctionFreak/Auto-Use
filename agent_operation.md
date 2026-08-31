@@ -127,6 +127,7 @@ MODE = "web use"
 MODE = "mobile use, ios"
 DEVICE = "simulation"      # required for parallel — hardware can't split
 IOS_VERSION = None         # optional: pin a runtime, e.g. "26.5"
+SIM_DEVICE = "iphone"      # "iphone" / "ipad" / exact simulator name (simulation only)
 ```
 
 **2. Define the extra tasks** (below the main `task`). Use `None` for slots you
@@ -169,6 +170,7 @@ run_agent(
     task=task,
     device=DEVICE,                          # "simulation" — required for parallel
     ios_version=IOS_VERSION,
+    sim_device=SIM_DEVICE,
     save_conversation=conversation,
     extra_tasks=[task_2, task_3, task_4],
 )
@@ -398,8 +400,8 @@ creates `conversation/` and `raw_reasoning/` when the flag is on, and calls
 ## What it is
 
 Together AI is an OpenAI-compatible provider with native tool calling and
-image input. Available in `"computer use"` (macOS) and `"web use"`; not on
-Windows/iOS yet. Set `TOGETHER_API_KEY` in `.env` (or save it in the app's
+image input. Available on every platform - `"computer use"` (macOS and
+Windows), `"web use"` and `"ios use"`. Set `TOGETHER_API_KEY` in `.env` (or save it in the app's
 Settings → API Keys).
 
 | `MODEL` (main.py) | Together model id |
@@ -410,21 +412,22 @@ Settings → API Keys).
 
 ## How the `web` tool works on Together
 
-Together has no native web search. When the mac agent calls its `web` tool
+Together has no native web search. When the desktop or iOS agent calls its `web` tool
 under `PROVIDER = "together"`, the query is handed to the **browser agent**
 (`Auto_Use/web`) running **headless on the same model**, and its final
 `done` report comes back as the web result. Expect that step to take a few
 minutes rather than seconds.
 
 - Runs in its own headless Chrome on port **9333** (`AUTOUSE_WEB_FALLBACK_PORT`)
-  — never the visible one `"web use"` uses — so it can't disturb the desktop
-  agent's screen.
+  with its own profile **web_fallback** (`AUTOUSE_WEB_FALLBACK_PROFILE`) — never
+  the visible one `"web use"` uses — so it can't disturb the desktop agent's
+  screen.
 - Wall-clock cap **15 min** (`AUTOUSE_WEB_FALLBACK_TIMEOUT`, seconds); the
   Stop button / Ctrl+C interrupts it.
 - Each run's `result.json` + `agent.log` are kept under
   `autouse_data/web_fallback/<run-id>/` for inspection.
 
-Implementation: [Auto_Use/mac/controller/tool/web/web_agent.py](Auto_Use/mac/controller/tool/web/web_agent.py).
+Implementation: `Auto_Use/{mac,windows,ios}/controller/tool/web/web_agent.py` (identical on all three).
 
 ---
 
@@ -453,6 +456,7 @@ simulator. Hardware is the explicit opt-in.
 MODE = "mobile use, ios"
 DEVICE = "simulation"   # or "hardware" for your paired iPhone
 IOS_VERSION = None      # simulation only — e.g. "26.5"; None = newest installed
+SIM_DEVICE = "iphone"   # simulation only — "iphone" / "ipad" / exact simulator name
 
 run_agent(
     mode=MODE,
@@ -461,6 +465,7 @@ run_agent(
     task=task,
     device=DEVICE,          # ← add this
     ios_version=IOS_VERSION,
+    sim_device=SIM_DEVICE,
     save_conversation=conversation,
 )
 ```

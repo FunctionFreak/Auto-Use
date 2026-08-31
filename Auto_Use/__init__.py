@@ -154,8 +154,8 @@ def install_dir() -> Path:
 # =============================================================================
 # skills — the user-editable .md knowledge files
 # =============================================================================
-# autouse_data/skills/windows/ and .../mac/, seeded once from the defaults that
-# ship in Auto_Use/<pkg>/agent/skills/. Seeding happens ONLY when the folder is
+# autouse_data/skills/<windows|mac|ios>/ under data_root, seeded once from the
+# repo's autouse_data/skills/<plat>/ defaults. Seeding happens ONLY when the folder is
 # new, so a skill the user deletes in the UI stays deleted.
 # NOTE: the platform key and the package directory used to differ ("mac" vs
 # "macOS_use"), so a lookup map sat here. Since the packages were renamed to
@@ -164,8 +164,12 @@ def install_dir() -> Path:
 
 
 def skills_platform(value=None) -> str:
-    """'windows' | 'mac'. Accepts sys.platform or a package name."""
+    """'windows' | 'mac' | 'ios'. Accepts sys.platform or a package name.
+    iOS is driven from a Mac, so it is never the host default - only an
+    explicit "ios" selects its folder."""
     key = str(sys.platform if value is None else value).lower()
+    if key == "ios":
+        return "ios"
     return "mac" if ("darwin" in key or "mac" in key) else "windows"
 
 
@@ -209,12 +213,10 @@ def _shipped_skills(plat: str) -> dict:
     Source of truth is autouse_data/skills/<plat>/ in the repo — those files are
     tracked in git and packed into the binary, so the exe can populate a machine
     that has no <home>/autouse_data/skills/ yet. In a compiled build they arrive
-    as embedded blobs; in dev they're read straight off disk. Falls back to the
-    older Auto_Use/<pkg>/agent/skills/ copies if the packed set is missing."""
+    as embedded blobs; in dev they're read straight off disk. Auto_Use/<pkg>/
+    agent/skills/ holds only the matching service code, no skill files."""
     return (_skills_from_resources("autouse_data/skills/%s/" % plat)
-            or _skills_from_dir(_REPO_ROOT / "autouse_data" / "skills" / plat)
-            or _skills_from_resources("%s/agent/skills/" % plat)
-            or _skills_from_dir(_REPO_ROOT / "Auto_Use" / plat / "agent" / "skills"))
+            or _skills_from_dir(_REPO_ROOT / "autouse_data" / "skills" / plat))
 
 
 def vault_file() -> Path:
@@ -235,7 +237,7 @@ def vault_file() -> Path:
 
 
 def skills_dir(platform=None) -> Path:
-    """autouse_data/skills/<windows|mac>, seeded on first use."""
+    """autouse_data/skills/<windows|mac|ios>, seeded on first use."""
     plat = skills_platform(platform)
     d = data_root() / "skills" / plat
     if d.is_dir():

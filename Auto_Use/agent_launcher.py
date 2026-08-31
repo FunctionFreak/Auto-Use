@@ -4,10 +4,10 @@
 #   mode = "computer use"     -> desktop agent for the host OS (mac / windows)
 #   mode = "shell use"        -> CLI/coder agent for the host OS, straight to the
 #                                terminal (skips the main agent layer)
-#   mode = "mobile use, ios"  -> iPhone agent. By default it runs on an iOS
+#   mode = "mobile use, ios"  -> iOS agent (iPhone or iPad). By default it runs on an iOS
 #                                SIMULATOR (device="simulation", ios_version
 #                                picks the runtime); pass device="hardware" to
-#                                drive the paired iPhone instead. Either way the
+#                                drive the paired iPhone/iPad instead. Either way the
 #                                WDA connection is opened before the run and
 #                                closed after it (ios_connector).
 #   mode = "web use"          -> browser agent driving CDP-controlled Chrome
@@ -132,7 +132,7 @@ def _connect_iphone(poll_every=2.0, deadline=90.0):
             continue  # transient probe hiccup, keep polling (matches the UI)
         state = st.get("state")
         if state == "connected":
-            print(f"📱 iPhone connected ({st.get('udid', '')})")
+            print(f"📱 Paired device connected ({st.get('udid', '')})")
             return wda_session
         if state in ("error", "disconnected"):
             wda_session.deactivate()  # reap half-started processes, like the UI's fail path
@@ -143,8 +143,9 @@ def _connect_iphone(poll_every=2.0, deadline=90.0):
     raise RuntimeError(f"📱 iPhone connection timed out after {int(deadline)}s")
 
 
-def _connect_simulator(ios_version=None, poll_every=2.0, deadline=600.0):
-    """Boot an iOS Simulator and start WDA on it, then wait until it answers.
+def _connect_simulator(ios_version=None, poll_every=2.0, deadline=600.0, sim_device=None):
+    """Boot an iOS Simulator (sim_device: "iphone" / "ipad" / exact name) and
+    start WDA on it, then wait until it answers.
 
     Mirrors _connect_iphone (same activate/status/deactivate contract). The
     deadline is generous because the FIRST run compiles WebDriverAgent for the
@@ -152,7 +153,7 @@ def _connect_simulator(ios_version=None, poll_every=2.0, deadline=600.0):
     """
     from Auto_Use.ios_connector.sim_session import sim_session
 
-    res = sim_session.activate(ios_version)
+    res = sim_session.activate(ios_version, device=sim_device)
     if not res.get("ok"):
         detail = " — ".join(
             p for p in (res.get("error"), res.get("hint")) if p) or res.get("code") or res
@@ -200,16 +201,19 @@ def _ios_device_target(device):
 
 
 def run_agent(mode, provider, model, task, os=None,
-              device=None, ios_version=None,
+              device=None, ios_version=None, sim_device=None,
               save_conversation=False, external_terminal=False,
               extra_tasks=None, **agent_kwargs):
     """Create the AgentService for mode/os, run the task, return its response dict.
 
     device ("mobile use, ios" only): "simulation" (the default) runs on an iOS
     Simulator — ios_version picks the runtime (e.g. "26.5"; omitted = newest
-    installed, preferring an already-booted simulator). "hardware" drives the
-    paired iPhone with whatever iOS it runs (ios_version is ignored). Both
-    flags are ignored by every other mode.
+    installed) and sim_device picks the simulator: "iphone" (default), "ipad",
+    or an exact name such as "iPad Pro 11-inch (M5)" (an already-booted
+    simulator is reused only if it is that kind). "hardware" drives the paired
+    device - iPhone or iPad, whichever is paired - with whatever iOS it runs
+    (ios_version and sim_device are ignored). All three are ignored by every
+    other mode.
 
     extra_tasks ("web use" only): optional list of additional task strings
     (main.py's task_2, task_3, ...). Any non-empty entries make ALL tasks —
@@ -237,7 +241,7 @@ def run_agent(mode, provider, model, task, os=None,
             if _ios_device_target(device) == "hardware":
                 raise ValueError(
                     'extra tasks (task_2, task_3, ...) need one device per task — '
-                    'you only have one iPhone. Use device="simulation" (the '
+                    'you only have one paired device. Use device="simulation" (the '
                     'default), which gives each task its own simulator.'
                 )
             return run_parallel_sim_agents(
@@ -247,6 +251,7 @@ def run_agent(mode, provider, model, task, os=None,
                 save_conversation=save_conversation,
                 speed=agent_kwargs.get("speed"),
                 ios_version=ios_version,
+                sim_device=sim_device,
             )
         raise ValueError(
             f'extra tasks (task_2, task_3, ...) are only supported in "web use" '
@@ -263,12 +268,15 @@ def run_agent(mode, provider, model, task, os=None,
     if (kind, mobile_os) == ("mobile", "ios"):
         target = _ios_device_target(device)
         if target == "hardware":
+            if sim_device:
+                print('📱 sim_device is ignored with device="hardware" — the paired '
+                      'device is whatever it is (iPhone or iPad).')
             if ios_version:
                 print('📱 ios_version is ignored with device="hardware" — '
                       'the phone runs whatever iOS it has')
             phone = _connect_iphone()
         else:
-            phone = _connect_simulator(ios_version)
+            phone = _connect_simulator(ios_version, sim_device=sim_device)
     try:
         agent = AgentService(**_supported_kwargs(AgentService, kwargs))
         return agent.process_request(task)
@@ -279,7 +287,8 @@ def run_agent(mode, provider, model, task, os=None,
 
 
 def run_parallel_sim_agents(tasks, provider, model, save_conversation=False,
-                            speed=None, ios_version=None, connect_deadline=900.0):
+                            speed=None, ios_version=None, connect_deadline=900.0,
+                            sim_device=None):
     """Run N iOS tasks in parallel — one SIMULATOR per task, one agent each.
 
     The simulator counterpart of run_parallel_web_agents. Where web shares one
@@ -299,23 +308,52 @@ def run_parallel_sim_agents(tasks, provider, model, save_conversation=False,
     print(f"Running {n} iOS tasks in parallel — one simulator each")
 
     sessions = []  # (index, SimulatorSession, sim_info)
+    boot_threads = []
     try:
-        # 1. Claim a distinct simulator + port per task and start every WDA.
+        # 1. Claim a distinct simulator + port per task. Resolving is quick
+        #    (a simctl listing), so it runs in order and each pick excludes the
+        #    udids already taken - that is what keeps the claims distinct.
+        from Auto_Use.ios_connector.sim_session import resolve_simulator
         claimed = []
         for i in range(1, n + 1):
             port = WDA_PORT + i - 1
-            session = SimulatorSession(port=port, slot=i)
-            # Track it BEFORE activating: activate() boots a simulator and can
-            # still fail (or catch a Ctrl+C) afterwards, and only sessions in
-            # this list get shut down by the finally below.
-            sessions.append((i, session, None))
-            res = session.activate(ios_version, exclude=tuple(claimed))
-            if not res.get("ok"):
-                detail = " — ".join(p for p in (res.get("error"), res.get("hint")) if p)
+            sim, err = resolve_simulator(ios_version, exclude=tuple(claimed), device=sim_device)
+            if err:
+                detail = " — ".join(p for p in (err.get("error"), err.get("hint")) if p)
                 raise RuntimeError(f"📱 task {i}: {detail}")
-            claimed.append(res["udid"])
-            sessions[-1] = (i, session, res)
-            print(f"[task {i}] {res['name']} (iOS {res['version']}) on port {port}")
+            claimed.append(sim["udid"])
+            # Track it BEFORE activating: activate() boots a simulator and can
+            # still fail afterwards, and only sessions in this list get shut
+            # down by the finally below.
+            sessions.append((i, SimulatorSession(port=port, slot=i), sim))
+            print(f"[task {i}] {sim['name']} (iOS {sim['version']}) on port {port}")
+
+        # 1b. Boot them ALL AT ONCE. activate() blocks until its simulator has
+        #     finished booting (tens of seconds each, minutes on a cold
+        #     runtime), so doing it in sequence made a 3-task run wait for
+        #     three boots back to back. Each session has its own udid, port
+        #     and derived-data folder, so the boots and xcodebuilds don't
+        #     touch each other; the pinned-udid path skips re-resolution.
+        print(f"📱 Booting {n} simulators in parallel...")
+        outcomes = {}
+
+        def _activate(index, session, sim):
+            try:
+                outcomes[index] = session.activate(udid=sim["udid"])
+            except BaseException as e:            # never lose a thread's failure
+                outcomes[index] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+        boot_threads[:] = [threading.Thread(target=_activate, args=(i, session, sim), daemon=True)
+                           for i, session, sim in sessions]
+        for t in boot_threads:
+            t.start()
+        for t in boot_threads:
+            t.join()   # Ctrl+C lands here; the finally cancels the boots
+        for i, _session, _sim in sessions:
+            res = outcomes.get(i) or {"ok": False, "error": "activate() returned nothing"}
+            if not res.get("ok"):
+                detail = " — ".join(p for p in (res.get("error"), res.get("hint")) if p) or res.get("code")
+                raise RuntimeError(f"📱 task {i}: {detail}")
 
         # 2. Wait for all of them to answer (first run builds WDA — minutes).
         print("📱 Starting WebDriverAgent on each simulator...")
@@ -444,12 +482,23 @@ def run_parallel_sim_agents(tasks, provider, model, save_conversation=False,
         }
     finally:
         # Every simulator this run booted gets shut down — success, error or
-        # Ctrl+C — the same guarantee the single-task path gives.
-        for i, session, _sim in sessions:
-            try:
-                session.deactivate()
-            except Exception:
-                pass
+        # Ctrl+C — the same guarantee the single-task path gives. deactivate()
+        # also CANCELS a boot still running in its thread (activate re-checks
+        # ownership and starts no runner); wait for those threads, then
+        # deactivate once more so a runner spawned in the last instant before
+        # the cancel is reaped too.
+        def _close_all():
+            for i, session, _sim in sessions:
+                try:
+                    session.deactivate()
+                except Exception:
+                    pass
+        _close_all()
+        for t in boot_threads:
+            if t.is_alive():
+                t.join(timeout=15)
+        if any(t.is_alive() for t in boot_threads) or boot_threads:
+            _close_all()
         if sessions:
             print("📱 simulators closed")
 

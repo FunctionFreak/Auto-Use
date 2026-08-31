@@ -17,6 +17,7 @@ from .view import (AgentResponseFormatter, decode_step, encode_step,
                    snapshot_turn, compression_dump, compression_entry,
                    _looks_native)
 from ...tree.element import UIElementScanner, ELEMENT_CONFIG
+from ..skills import DomainKnowledgeService
 from ...controller import ControllerView
 
 # Run-boundary request markers: on resume, the bridge entry that ended the prior
@@ -93,6 +94,7 @@ class AgentService:
 
         # Initialize UI Element Scanner with optional frontend callback for image streaming
         self.scanner = UIElementScanner(ELEMENT_CONFIG, frontend_callback=frontend_callback)
+        self.skills = DomainKnowledgeService()
 
         # Store text callback for streaming agent responses to frontend
         self.text_callback = text_callback
@@ -290,6 +292,14 @@ class AgentService:
         """Save conversation snapshot to file - simple and direct"""
         if self.save_conversation:
             self._save_conversation_snapshot(messages, current_assistant_response, image_sent, interaction_count)
+
+    @staticmethod
+    def _persistent_memory(todo_list: str, scratchpad_content: str) -> str:
+        """<persistent_memory>: the agent's own ToDo + scratchpad, rebuilt
+        fresh every step - the tag the system prompt's <input> describes."""
+        scratch = (f"<scratchpad>\n{scratchpad_content}\n</scratchpad>"
+                   if scratchpad_content else "<scratchpad>none</scratchpad>")
+        return f"<persistent_memory>\n<todo_list>\n{todo_list}\n</todo_list>\n\n{scratch}\n</persistent_memory>"
 
     def _read_todo_from_file(self) -> str:
         """Read the current todo list from the task tracker's todo.md file"""
@@ -526,6 +536,7 @@ class AgentService:
                 annotated_image_base64 = None
                 image_sent = False
                 formatted_element_tree = ""
+                skills_block = ""
             else:
                 # Scan UI elements and get annotated screenshot
                 print(f"\n{'='*60}")
@@ -551,6 +562,12 @@ class AgentService:
 
                 # Wrap element tree in proper tags
                 formatted_element_tree = f"<element_tree>\n{element_tree_text}\n</element_tree>"
+                # Skills are matched against the screen we JUST scanned: the
+                # app in front is the root of the page source the scanner parsed.
+                skills_text = self.skills.get_knowledge(self.scanner.application_name)
+                skills_block = f"<skills>\n{skills_text}\n</skills>" if skills_text else ""
+                if skills_block:
+                    print(f"📘 skills: loaded for {self.scanner.application_name}")
 
             # Construct user message based on iteration
             if is_first_iteration:
@@ -562,7 +579,11 @@ class AgentService:
 {task}
 </user_request>
 """
+                if skills_block:
+                    user_message += f"\n{skills_block}\n"
                 user_message += f"\n{formatted_element_tree}"
+                if image_sent:
+                    user_message += "\n\n<image>Annotated screenshot with bounding boxes</image>"
             else:
                 # Fetch fresh todo from file system
                 todo_list = self._read_todo_from_file()
@@ -595,20 +616,7 @@ No image and element tree provided. Focus on digesting the web response below.
 {task}
 </user_request>
 
-<todo_list>
-{todo_list}
-</todo_list>"""
-
-                    if scratchpad_content:
-                        user_message += f"""
-
-<scratchpad>
-{scratchpad_content}
-</scratchpad>"""
-                    else:
-                        user_message += """
-
-<scratchpad>none</scratchpad>"""
+{self._persistent_memory(todo_list, scratchpad_content)}"""
 
                     image_sent = False
                     annotated_image_base64 = None
@@ -621,21 +629,12 @@ No image and element tree provided. Focus on digesting the web response below.
                     # Normal iteration - include full context
                     user_message += f"""
 
-<todo_list>
-{todo_list}
-</todo_list>"""
+{self._persistent_memory(todo_list, scratchpad_content)}"""
 
-                    # Always add scratchpad tag (with content or "none")
-                    if scratchpad_content:
+                    if skills_block:
                         user_message += f"""
 
-<scratchpad>
-{scratchpad_content}
-</scratchpad>"""
-                    else:
-                        user_message += f"""
-
-<scratchpad>none</scratchpad>"""
+{skills_block}"""
 
                     user_message += f"""
 

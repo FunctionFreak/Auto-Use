@@ -463,7 +463,7 @@ impl AgentService {
         text_callback=None, web_callback=None, shell_callback=None, cli_callback=None,
         tool_callback=None, token_callback=None, api_key=None, stop_event=None,
         prior_history=None, speed=None, headless=false, browser_port=None,
-        session_id=None, single_tab=false, **_extra))]
+        session_id=None, single_tab=false, browser_profile=None, **_extra))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
@@ -485,6 +485,7 @@ impl AgentService {
         browser_port: Option<Bound<'_, PyAny>>,
         session_id: Option<String>,
         single_tab: bool,
+        browser_profile: Option<String>,
         _extra: Option<Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let _ = cli_callback;
@@ -545,7 +546,12 @@ impl AgentService {
         // source of truth for where autouse_data lives, and it alone knows the
         // compiled-vs-dev split and the AUTOUSE_DATA_DIR override. Must happen
         // before py.detach — the detached closure holds no GIL.
-        let profile = crate::browser_profile_dir(py, None).ok();
+        // `browser_profile` names a separate user-data-dir (the `web` tool's
+        // browser-agent fallback passes "web_fallback") so a headless run never
+        // collides with a visible Chrome already holding the default profile —
+        // on Windows that collision is silent: Chrome hands the launch to the
+        // running instance and the debug port never opens.
+        let profile = crate::browser_profile_dir(py, browser_profile.as_deref()).ok();
         py.detach(move || {
             crate::browser::launch_chrome_impl(browser_port_num, headless_flag, profile)
         })

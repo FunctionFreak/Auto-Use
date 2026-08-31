@@ -83,6 +83,17 @@ grok-4.3                  low       yes
 kimi-k3                   low       yes
 
 
+
 --------------------------------------------------------------
-30 models across 6 providers.
+PROVIDER = "together"
+--------------------------------------------------------------
+MODEL name                thinking  vision
+--------------------------------------------------------------
+minimax-m3                default   yes
+inkling                   default   yes
+muse-glimmer-30b          default   yes
+
+
+--------------------------------------------------------------
+33 models across 7 providers.
 --------------------------------------------------------------

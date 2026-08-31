@@ -10,15 +10,22 @@ from .chatgpt import web_search as chatgpt_web_search
 from .anthropic import web_search as anthropic_web_search
 from .google_search import web_search as google_web_search
 from .perplexity_search import web_search as perplexity_web_search
+from .web_agent import web_search as web_agent_web_search, WebAgentSearchError
 from ....llm_provider.openrouter.view import get_model_info as get_openrouter_model_info
+
+# Providers with no native web-search API: the query goes to the browser
+# agent on the same provider+model instead (see web_agent.py). Explicit
+# membership, not a catch-all - a typo'd provider must still fail fast below.
+_BROWSER_FALLBACK_PROVIDERS = frozenset({"together"})
 
 
 class WebService:
     """Web service to route queries to appropriate provider"""
     
-    def __init__(self, provider: str, model: str, api_key: str = None, vertex: bool = False, vertex_project_id: str = None, vertex_location: str = None):
+    def __init__(self, provider: str, model: str, api_key: str = None, vertex: bool = False, vertex_project_id: str = None, vertex_location: str = None, stop_event=None):
         self.provider = provider.lower()
         self.api_key = api_key  # Runtime key from frontend (priority over .env)
+        self.stop_event = stop_event  # Only the browser-agent fallback can be interrupted
         # Auto-detect Vertex from model name (e.g. "gemini-3.1-pro-vertex")
         self.vertex = vertex or (self.provider == "google" and model and model.endswith("-vertex"))
         self.vertex_project_id = vertex_project_id
@@ -33,6 +40,11 @@ class WebService:
         
     def search(self, query: str) -> str:
         """Route web search to appropriate provider and format response as JSON object"""
+        # Single attempt: a browse run is minutes long, and the browser agent's
+        # own LLM manager already retries each call.
+        if self.provider in _BROWSER_FALLBACK_PROVIDERS:
+            return self._search_via_web_agent(query)
+
         # Retry up to 3 times with 1 second delay
         for attempt in range(3):
             try:
@@ -64,3 +76,15 @@ class WebService:
                     # Last attempt failed, return error
                     error_msg = f"Web service error: {str(e)}"
                     return f'''{{\ntool: web,\nstatus: error,\nquery: "{query}",\nNote: Search failed after 3 attempts,\nInformation: "{error_msg}"\n}}'''
+
+    def _search_via_web_agent(self, query: str) -> str:
+        """Same result shapes as the native path, produced by the browser agent."""
+        try:
+            report = web_agent_web_search(query, self.provider, self.model, self.api_key,
+                                          stop_event=self.stop_event)
+            return f'''{{\ntool: web,\nstatus: success,\nquery: "{query}",\nInformation: "{report}"\n}}'''
+        except WebAgentSearchError as e:
+            return f'''{{\ntool: web,\nstatus: error,\nquery: "{query}",\nNote: {e.note},\nInformation: "{e}"\n}}'''
+        except Exception as e:
+            error_msg = f"Web service error: {str(e)}"
+            return f'''{{\ntool: web,\nstatus: error,\nquery: "{query}",\nNote: Browser agent failed to start,\nInformation: "{error_msg}"\n}}'''

@@ -5,7 +5,7 @@ This is additional domain knowledge to work efficiently (use it wisely).
 Build the notebook ONE CELL AT A TIME, in this exact order:
 Step 1. Cell 1: use the `input` action to write a SMALL piece of code (one logical section only, e.g., `!pip install` + imports + load data).
 Step 2. Run it IMMEDIATELY after writing: send the hotkey `shift+enter` (or `ctrl+enter`) right after the `input`. Write + run is ONE combined action sequence:
-    [{"type": "input", "id": <cell_id>, "value": "<your code>"}, {"type": "hotkey", "value": "shift+enter"}]
+    [input {"id": <cell_id>, "text": "<your code>"}, hotkey {"value": "shift+enter"}]
     Then wait for execution to finish.
 Step 3. Check that cell's output:
     - If ERROR, read the traceback of that particular cell, rewrite ONLY that cell (`input` + `shift+enter` again), and re-run. Repeat until it passes.
@@ -44,7 +44,7 @@ Rules: never write multiple cells ahead without running. Never leave a freshly w
         5.2.3. Use `typewrite` to type the replacement - it overwrites the selected line. You can also append `\n` plus extra code in the same `typewrite` to add new lines below it.
         5.2.4. Be extremely careful with indentation - Python is indentation-sensitive, so always check the indentation of the replacement line and any added lines.
         5.2.5. Example Scenario: line 5 has an error because the code incorrectly starts with "dt" instead of "df". In the image and element tree, this word is identified as `[108]<Word="dt", type="OCR_TEXT", active="True", visibility="full" />`. The action sequence to select and replace this line would be:
-            5.2.5.1. [{"type": "left_click", "id": 108, "clicks": 2}, {"type": "hotkey", "value": "shift+end"}, {"type": "typewrite", "value": "df = pd.read_csv('ultimate_student_productivity_dataset_5000.csv')"}]
+            5.2.5.1. [left_click {"id": 108, "clicks": 2}, hotkey {"value": "shift+end"}, typewrite {"text": "df = pd.read_csv('ultimate_student_productivity_dataset_5000.csv')"}]
     5.3. Alternative Method: you may use the terminal to help edit cell content, but the final executed code must always reside inside the notebook cells, never only in terminal scripts.
 6. Colab UI Reference
     6.1. Add a new code cell: click "+ Code" in the top toolbar, or hover just below the current cell and click the "+ Code" button that appears.

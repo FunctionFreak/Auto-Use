@@ -5,10 +5,10 @@ This is additional domain knowledge to work efficiently (use it wisely).
 1. Gmail.com
   - Single recipient:
     - After clicking Compose, fill **To -> Subject -> Body** (ideally in one step/sequence).
-    - Format: `"action": [{"type": "input", "id": 104, "text": "<recipient_email>"},{"type": "input", "id": 105, "text": "<subject>"},{"type": "input", "id": 106, "text": "<body>"}]`
+    - Format: `input {"id": 104, "text": "<recipient_email>"},input {"id": 105, "text": "<subject>"},input {"id": 106, "text": "<body>"}`
   - Multiple recipients:
     - Add all recipients in one go when possible: use `typewrite` then confirm with `enter` to convert them into chips.
-    - Format: `"action": [{"type": "click", "id": 104},{"type": "typewrite", "text": "<r1>"},{"type": "hotkey", "value": "enter"},{"type": "typewrite", "text": "<r2>"},{"type": "hotkey", "value": "enter"},{"type": "typewrite", "text": "<r3>"}]`
+    - Format: `left_click {"id": 104, "clicks": 1},typewrite {"text": "<r1>"},hotkey {"value": "enter"},typewrite {"text": "<r2>"},hotkey {"value": "enter"},typewrite {"text": "<r3>"}`
   - Sending / attachments:
     - Sending or attaching files may require extra steps. Record progress clearly in `memory` (what is completed vs pending).
     - Email Image Handling: Never paste images directly into the body of an email. Always save the image as a local file first, then add it to the email strictly as an attachment.
@@ -21,17 +21,17 @@ This is additional domain knowledge to work efficiently (use it wisely).
   - Calendar is often canvas-heavy, so rely on `hotkey` frequently.
   - Once Calendar is open (any entry point):
     - Use `c` to start creating an event, then use `tab` to move through fields and `enter` to select/confirm.
-- Format: `"action": [{"type": "hotkey", "value": "c"},{"type": "hotkey", "value": "tab"},{"type": "hotkey", "value": "enter"}]`
+- Format: `hotkey {"value": "c"},hotkey {"value": "tab"},hotkey {"value": "enter"}`
   - This opens the event editor so you can set date/time, add guests, add a description, and then save.
 3. Google Sheets Interaction
   - Core Mechanism: Sheets is canvas-heavy. Prioritize `hotkey` and `typewrite`.
     - Navigation (Critical):
       - ALWAYS access cells via `Name Box` + `Enter`.
-      - Format: `[{"type": "input", "id": <name_box_id>, "text": "cell_ref"}, {"type": "hotkey", "value": "enter"}]`
+      - Format: `[input {"id": <name_box_id>, "text": "cell_ref"}, hotkey {"value": "enter"}]`
     - Data Entry (Row-by-Row):
       1. Reset: Start with `ctrl+home`. Verify `<t-name-box>` value is "A1".
       2. Input: Fill row using `tab` traversal.
-      3. Format: `[{"type": "typewrite", "text": "<col1>"}, {"type": "hotkey", "value": "tab"}, {"type": "typewrite", "text": "<col2>"}]`
+      3. Format: `[typewrite {"text": "<col1>"}, hotkey {"value": "tab"}, typewrite {"text": "<col2>"}]`
     - Next Row: Jump to specific start cell of next row via `Name Box` + `Enter`.
     - State: Store web-collected data in `scratchpad` (do not re-search). Track entry row progress in `memory`.
   - Editing & Reading:

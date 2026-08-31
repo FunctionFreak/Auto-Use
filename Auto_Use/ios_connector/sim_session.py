@@ -4,7 +4,9 @@
 
 Same three-call contract the launcher and any UI polls:
 
-    activate(ios_version=None) -> boot a simulator (picked by iOS version,
+    activate(ios_version=None, udid=None, exclude=(), device=None)
+                               -> boot a simulator (picked by iOS version and
+                                  device kind - iphone / ipad / exact name,
                                   newest runtime XCODE CAN BUILD TO when
                                   omitted; naming one this Mac lacks installs
                                   it first) and
@@ -92,7 +94,7 @@ def _named_simulator(udid):
         for runtime_key, devices in json.loads(out.stdout).get("devices", {}).items():
             for d in devices:
                 if d.get("udid") == udid:
-                    return {"udid": udid, "name": d.get("name", "Simulator"),
+                    return {"udid": udid, "name": d.get("name", "Simulator"), "family": _device_family(d),
                             "version": _runtime_version(runtime_key) or "?"}, None
     except Exception as e:
         return None, {"error": f"simctl failed: {e}"}
@@ -117,10 +119,17 @@ def _targetable_udids(refresh=False):
         cached = _DEST_CACHE["udids"]
         if not refresh and cached:
             return cached                      # something is targetable: settled
-        if (not refresh and cached is not None
+        if (not refresh and _DEST_CACHE["at"]
                 and time.time() - _DEST_CACHE["at"] < _DEST_EMPTY_TTL):
-            return cached                      # nothing was, recently — don't spin
+            return cached                      # empty, or a failed probe, recently — don't spin
         if not _WDA_PROJECT.exists():
+            return None
+
+        def _unknown():
+            # A probe that could not enumerate is remembered for the TTL too:
+            # N parallel boots must not each pay (and serialize on) a 300s
+            # timeout that the first one already paid.
+            _DEST_CACHE.update(udids=None, at=time.time())
             return None
         try:
             out = subprocess.run(
@@ -128,10 +137,10 @@ def _targetable_udids(refresh=False):
                  "-scheme", "WebDriverAgentRunner", "-showdestinations"],
                 capture_output=True, text=True, timeout=300)
         except Exception:
-            return None
+            return _unknown()
         text = (out.stdout or "") + "\n" + (out.stderr or "")
         if "destinations for the" not in text:
-            return None  # xcodebuild could not even enumerate — don't filter
+            return _unknown()  # xcodebuild could not even enumerate — don't filter
         # Only what precedes "Ineligible destinations": entries listed THERE are
         # the ones xcodebuild is refusing, each with its own error: reason.
         head = text.split("Ineligible destinations", 1)[0]
@@ -202,8 +211,94 @@ def _download_platform(version=None, log=print):
     return None
 
 
-def _ensure_device_on_runtime(version=None, log=print):
-    """Give a freshly installed runtime an iPhone if it arrived without one.
+_RUNNER_SUFFIX = ".xctrunner"
+
+
+def _expected_runner_bundle_id():
+    """Bundle id of the WebDriverAgentRunner-Runner.app THIS project builds:
+    the WebDriverAgentRunner target's PRODUCT_BUNDLE_IDENTIFIER (the pairing
+    setup rewrites it from com.facebook.* to com.autouse.*) + ".xctrunner"."""
+    base = "com.facebook.WebDriverAgentRunner"
+    try:
+        text = _WDA_PROJECT.joinpath("project.pbxproj").read_text(encoding="utf-8", errors="replace")
+        # Each build configuration block names its Info.plist; the runner's is
+        # WebDriverAgentRunner/Info.plist. Read the id from such a block.
+        for m in re.finditer(r"INFOPLIST_FILE = WebDriverAgentRunner/Info\.plist;(.*?)\};", text, re.S):
+            hit = re.search(r"PRODUCT_BUNDLE_IDENTIFIER = ([^;]+);", m.group(1))
+            if hit:
+                base = hit.group(1).strip().strip('"')
+                break
+    except Exception:
+        pass
+    return base + _RUNNER_SUFFIX
+
+
+def _uninstall_stale_runners(udid, keep, log=print):
+    """Remove WDA runner apps on `udid` whose bundle id is not `keep`. A
+    simulator that was driven both before and after the pairing setup
+    rewrote the project's bundle id ends up with TWO "WebDriverAgent" icons -
+    only the one this build installs is ever used."""
+    try:
+        listed = _simctl("listapps", udid, timeout=30)
+        as_json = subprocess.run(["plutil", "-convert", "json", "-o", "-", "--", "-"],
+                                 input=listed.stdout, capture_output=True, text=True, timeout=15)
+        apps = json.loads(as_json.stdout) if as_json.stdout.strip() else {}
+    except Exception:
+        return
+    for bundle_id in list(apps):
+        if bundle_id.endswith("WebDriverAgentRunner" + _RUNNER_SUFFIX) and bundle_id != keep:
+            try:
+                _simctl("uninstall", udid, bundle_id, timeout=60)
+                log(f"📱 Removed stale WebDriverAgent runner {bundle_id}")
+            except Exception:
+                pass
+
+
+def _device_family(dev):
+    """'iphone' | 'ipad' | '' for a simctl device row, a runtime
+    supportedDeviceType, or a bare name. Typed fields first - a device we
+    created is named "Auto-Use iPhone 17 Pro", which a name prefix misses."""
+    if isinstance(dev, dict):
+        ident = str(dev.get("deviceTypeIdentifier") or dev.get("identifier") or "")
+        fam = str(dev.get("productFamily") or "")
+        for probe in (fam, ident.rsplit(".", 1)[-1]):
+            p = probe.lower()
+            if p.startswith("ipad"):
+                return "ipad"
+            if p.startswith("iphone"):
+                return "iphone"
+        dev = dev.get("name", "")
+    n = str(dev or "").strip().lower()
+    if n.startswith("auto-use "):
+        n = n[len("auto-use "):]
+    return "ipad" if n.startswith("ipad") else ("iphone" if n.startswith("iphone") else "")
+
+
+def _device_spec(device):
+    """Normalise SIM_DEVICE: ("family", "iphone"|"ipad") or ("name", <exact>).
+    Empty / None means iphone - today's behaviour."""
+    d = str(device or "").strip()
+    if not d or d.lower() in ("iphone", "ipad"):
+        return "family", (d.lower() or "iphone")
+    return "name", d
+
+
+def _device_matches(spec, dev):
+    kind, value = spec
+    if kind == "name":
+        name = str(dev.get("name", "") if isinstance(dev, dict) else dev or "").strip().lower()
+        return name in (value.lower(), "auto-use " + value.lower())
+    return _device_family(dev) == value
+
+
+def _describe_device(spec):
+    kind, value = spec
+    return value if kind == "name" else {"iphone": "iPhone", "ipad": "iPad"}[value]
+
+
+def _ensure_device_on_runtime(version=None, log=print, device=None, exclude=()):
+    """Give a freshly installed runtime a device of the requested family if it
+    arrived without one.
 
     A runtime with no devices is invisible to every picker downstream, so a
     successful download would still look like "no simulator found".
@@ -221,22 +316,26 @@ def _ensure_device_on_runtime(version=None, log=print):
     if not pool:
         return
     rt = max(pool, key=lambda r: _version_tuple(r.get("version", "0")))
-    if devices.get(rt["identifier"]):
+    spec = _device_spec(device)
+    if any(_device_matches(spec, d) and d.get("udid") not in exclude
+           for d in devices.get(rt["identifier"], [])):
         return
-    iphone = next((t for t in rt.get("supportedDeviceTypes", [])
-                   if str(t.get("name", "")).startswith("iPhone")), None)
-    if not iphone:
+    dtype = next((t for t in rt.get("supportedDeviceTypes", []) if _device_matches(spec, t)), None)
+    if not dtype:
         return
-    name = "Auto-Use {}".format(iphone["name"])
+    name = "Auto-Use {}".format(dtype["name"])
     log("📱 Creating {} — iOS {} installed with no devices.".format(name, rt.get("version")))
     try:
-        _simctl("create", name, iphone["identifier"], rt["identifier"], timeout=180)
+        _simctl("create", name, dtype["identifier"], rt["identifier"], timeout=180)
     except Exception:
         pass
 
 
-def _pick(want, exclude):
-    """Choose among the simulators Xcode can build to. Returns (device, error)."""
+def _pick(want, exclude, device=None):
+    """Choose among the simulators Xcode can build to. Returns (device, error).
+    `device` narrows the pool to a family ("iphone" / "ipad") or one exact
+    simulator name; a booted device only counts if it matches too."""
+    spec = _device_spec(device)
     try:
         out = _simctl("list", "devices", "available", "-j")
         devices_by_runtime = json.loads(out.stdout).get("devices", {})
@@ -245,14 +344,17 @@ def _pick(want, exclude):
                       "hint": "Simulation needs full Xcode (xcode-select -p should point at Xcode.app)."}
 
     matching = []  # (version_tuple, version_str, device) — before exclude
+    runtime_devices = 0   # devices of ANY kind on the runtimes `want` selects
     for runtime_key, devices in devices_by_runtime.items():
         version = _runtime_version(runtime_key)
         if version is None:
             continue
         if want and not (version == want or version.startswith(want + ".")):
             continue
+        runtime_devices += len(devices)
         for d in devices:
-            matching.append((_version_tuple(version), version, d))
+            if _device_matches(spec, d):
+                matching.append((_version_tuple(version), version, d))
 
     installed = sorted({v for k in devices_by_runtime if (v := _runtime_version(k))})
     # THE filter: what simctl lists is not what xcodebuild will accept. Drop the
@@ -275,11 +377,11 @@ def _pick(want, exclude):
         else:
             newest = max(c[0] for c in eligible)
             pool = [c for c in eligible if c[0] == newest]
-            iphones = [c for c in pool if c[2].get("name", "").startswith("iPhone")]
-            _vt, version, d = (iphones or pool)[0]
-        return {"udid": d["udid"], "name": d.get("name", "Simulator"), "version": version}, None
+            _vt, version, d = pool[0]
+        return {"udid": d["udid"], "name": d.get("name", "Simulator"), "version": version,
+                "family": _device_family(d)}, None
 
-    what = "iOS {}".format(want) if want else "any iOS runtime"
+    what = "{} on {}".format(_describe_device(spec), "iOS {}".format(want) if want else "any iOS runtime")
     if usable:
         # Xcode can build to something — the other tasks just took them all.
         return None, {"code": "sims_exhausted",
@@ -296,26 +398,47 @@ def _pick(want, exclude):
                               "every one. Run  bash ios_setup.sh  — it installs the missing platform (or do "
                               "it by hand: xcodebuild -downloadPlatform iOS), and check "
                               "`xcode-select -p` points at the Xcode you expect.".format(", ".join(installed) or "no runtimes")}
+    if runtime_devices:
+        # The runtime is here, it just has no device of this kind - creatable,
+        # nothing to download.
+        return None, {"code": "no_device",
+                      "error": "No simulator found for {}".format(what),
+                      "hint": "That iOS runtime is installed but has no such device. Add one in "
+                              "Xcode > Window > Devices and Simulators, or check the name with "
+                              "`xcrun simctl list devices available`."}
     return None, {"code": "no_runtime",
                   "error": "No simulator found for {}".format(what),
-                  "hint": "Installed runtimes: {}.".format(", ".join(installed) or "none")}
+                  "hint": "Installed runtimes: {}. Check `xcrun simctl list devices available` for the "
+                          "device names; SIM_DEVICE takes \"iphone\", \"ipad\" or an exact name.".format(
+                              ", ".join(installed) or "none")}
 
 
-def resolve_simulator(ios_version=None, exclude=(), allow_download=None, log=print):
-    """Pick (udid, name, version) for the run.
+def resolve_simulator(ios_version=None, exclude=(), allow_download=None, log=print, device=None):
+    """Pick (udid, name, version, family) for the run.
 
-    Prefers an already-Booted device; otherwise an iPhone on the newest runtime
-    THE SELECTED XCODE CAN BUILD TO — which is a smaller set than simctl lists,
-    see _targetable_udids. `ios_version` pins a runtime by prefix ("26" finds
-    26.5); naming one this Mac does not have installs it. `exclude` skips udids
-    already claimed by other parallel tasks.
+    `device` is the SIM_DEVICE setting: "iphone" (default) / "ipad" / an exact
+    simulator name. Prefers an already-Booted device OF THAT KIND; otherwise
+    one on the newest runtime THE SELECTED XCODE CAN BUILD TO — which is a
+    smaller set than simctl lists, see _targetable_udids. `ios_version` pins a
+    runtime by prefix ("26" finds 26.5); naming one this Mac does not have
+    installs it. `exclude` skips udids already claimed by other parallel tasks.
     Returns (device_dict, error_dict) — exactly one is None.
     """
     want = str(ios_version).strip() if ios_version else ""
     if allow_download is None:
         allow_download = _AUTO_DOWNLOAD
 
-    sim, err = _pick(want, exclude)
+    sim, err = _pick(want, exclude, device)
+    if sim is None and (err.get("code") == "no_device"
+                        or (err.get("code") == "sims_exhausted" and _device_spec(device)[0] == "family")):
+        # Runtime installed but no FREE device of the requested kind (none at
+        # all, or every one already claimed by another parallel task): create
+        # one - a family request means any device of that family will do.
+        with _XCODE_LOCK:
+            _ensure_device_on_runtime(want, log=log, device=device, exclude=exclude)
+            _targetable_udids(refresh=True)
+        sim, err2 = _pick(want, exclude, device)
+        return sim, (None if sim else err2)
     # A run downloads exactly one thing: a runtime the caller NAMED and this Mac
     # does not have. Not "named but unbuildable" — that runtime is already on
     # disk and refetching it changes nothing. Not the missing platform either:
@@ -333,15 +456,15 @@ def resolve_simulator(ios_version=None, exclude=(), allow_download=None, log=pri
                       "bash ios_setup.sh  first, it installs the missing iOS platform.").strip()}
 
     with _XCODE_LOCK:
-        if _pick(want, exclude)[0] is None:  # another task may have just done it
+        if _pick(want, exclude, device)[0] is None:  # another task may have just done it
             derr = _download_platform(want or None, log=log)
             if derr:
                 return None, {**err, "hint": " ".join(
                     p for p in (derr.get("error"), derr.get("hint")) if p)}
-            _ensure_device_on_runtime(want, log=log)
+            _ensure_device_on_runtime(want, log=log, device=device)
             _targetable_udids(refresh=True)
 
-    sim, err = _pick(want, exclude)
+    sim, err = _pick(want, exclude, device)
     return sim, (None if sim else err)
 
 
@@ -472,12 +595,16 @@ class SimulatorSession:
             pass
         return ""
 
+    def _cancelled(self, udid):
+        """deactivate() clears _udid; a boot thread that sees that must stop."""
+        return self._udid != udid
+
     def _boot(self, udid, name):
         state = self._device_state(udid)
         # A device still winding down from a previous run can't be booted yet
         # ("Unable to boot device in current state: Shutting Down").
         waited = 0.0
-        while state == "Shutting Down" and waited < 60.0:
+        while state == "Shutting Down" and waited < 60.0 and not self._cancelled(udid):
             time.sleep(1.0)
             waited += 1.0
             state = self._device_state(udid)
@@ -501,7 +628,9 @@ class SimulatorSession:
             # be "Booted": that state goes stale while a simulator is still
             # coming up or going down, and xcodebuild launching into a
             # half-alive one dies with "Mach error -308 - server died".
-            _simctl("bootstatus", udid, "-b", timeout=300)
+            # No -b: that flag BOOTS a device that isn't booted, which would
+            # resurrect one deactivate() just shut down under a cancelled boot.
+            _simctl("bootstatus", udid, timeout=300)
         except subprocess.TimeoutExpired:
             pass  # fall through to the explicit state check below
         # Show the Simulator window so the run is watchable (best effort).
@@ -517,9 +646,12 @@ class SimulatorSession:
         # simctl hiccup (_device_state returns "" on any error).
         deadline = time.time() + 120.0
         state = self._device_state(udid)
-        while state != "Booted" and time.time() < deadline:
+        while state != "Booted" and time.time() < deadline and not self._cancelled(udid):
             time.sleep(2.0)
             state = self._device_state(udid)
+        if self._cancelled(udid):
+            return {"ok": False, "state": "error", "code": "cancelled",
+                    "error": f"{name}: boot cancelled"}
         if state != "Booted":
             return {"ok": False, "state": "error", "code": "boot_failed",
                     "error": f"{name} did not finish booting (state: {state or 'unknown'})",
@@ -528,12 +660,14 @@ class SimulatorSession:
         return None
 
     # -- public --
-    def activate(self, ios_version=None, udid=None, exclude=()):
+    def activate(self, ios_version=None, udid=None, exclude=(), device=None):
         """Boot a simulator and start WDA on this session's port.
 
         ios_version picks the runtime (newest Xcode can build to when omitted,
-        downloaded when named and missing); udid pins an exact device and
-        exclude skips devices other parallel tasks already claimed."""
+        downloaded when named and missing); device picks the simulator kind
+        ("iphone" - the default - / "ipad" / an exact simulator name); udid
+        pins an exact device and exclude skips devices other parallel tasks
+        already claimed."""
         if not _WDA_PROJECT.exists():
             return {"ok": False, "state": "error",
                     "error": "WebDriverAgent project not found",
@@ -549,7 +683,7 @@ class SimulatorSession:
             if not err:
                 err = _require_targetable(sim)
         else:
-            sim, err = resolve_simulator(ios_version, exclude=exclude)
+            sim, err = resolve_simulator(ios_version, exclude=exclude, device=device)
         if err:
             return {"ok": False, "state": "error", **err}
 
@@ -572,7 +706,18 @@ class SimulatorSession:
             with self._lock:
                 self._udid = self._name = None
             return boot_error
+        if self._cancelled(sim["udid"]):
+            # deactivate() ran while we were booting (Ctrl+C in a parallel
+            # run): leave nothing behind and start no runner.
+            try:
+                _simctl("shutdown", sim["udid"], timeout=60)
+            except Exception:
+                pass
+            return {"ok": False, "state": "error", "code": "cancelled",
+                    "error": f'{sim["name"]}: activation cancelled'}
         active_target.update({"kind": "simulation", "udid": sim["udid"]})
+        # One runner per simulator: drop any left by a build with another id.
+        _uninstall_stale_runners(sim["udid"], _expected_runner_bundle_id())
 
         # Something already serves WDA on the port. Reuse it ONLY if it is a
         # runner living inside OUR simulator (its binary path names the udid);
@@ -588,6 +733,16 @@ class SimulatorSession:
                             "` shows its pid), then retry."}
 
         with self._lock:
+            if self._cancelled(sim["udid"]):
+                # Same race, later: never spawn a runner on a session that has
+                # already been torn down - the child would outlive the run and
+                # boot the simulator back up by itself.
+                try:
+                    _simctl("shutdown", sim["udid"], timeout=60)
+                except Exception:
+                    pass
+                return {"ok": False, "state": "error", "code": "cancelled",
+                        "error": f'{sim["name"]}: activation cancelled'}
             try:
                 # A stable, discoverable path beside the build — a first-time
                 # user should not have to go spelunking in /var/folders for the
